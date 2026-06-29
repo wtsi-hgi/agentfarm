@@ -27,8 +27,8 @@ defaults. Establishes `ItemCreate`/`ItemOut` Pydantic models and Zod
 group. Covers all 6 acceptance tests from A1 (defaults, slug collision,
 slugify rules, empty-slug fallback, bad-enum 422, child sort + implicit edge).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: A2 - Edit item fields and timestamp/slug behaviour
 
@@ -41,8 +41,8 @@ re-derive slug; on state change set `state_changed_at` and set/clear
 `completed_at` for done/abandoned. Editing must not change id, parent, order,
 edges, or comments. Covers all 5 acceptance tests from A2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.3: A3 - Slug re-derivation preserves id-based edges
 
@@ -54,8 +54,8 @@ Implement slug re-derivation on rename in `services/tree.py` /
 A3 (rename keeps edge id/to_id and updates needs label; rename to colliding
 slug yields `-2`; double-rename resolves throughout).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.4: A4 - Delete item with subtree cascade and edge regeneration
 
@@ -67,5 +67,5 @@ edges; re-chain the left sibling group (regenerate implicit edges). Covers all
 2 acceptance tests from A4 (sibling re-chain to a single edge; container delete
 cascades to children and their comments).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

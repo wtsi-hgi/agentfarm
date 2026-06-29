@@ -44,7 +44,13 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     resolved = _resolve_db_path(db_path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(resolved)
+    # ``check_same_thread=False``: the ``get_db`` request dependency is a sync
+    # generator, which FastAPI runs in a worker thread, while the connection may
+    # be used from the event-loop thread of an ``async`` endpoint. Each request
+    # still gets its own connection (see ``get_db``), so the connection is never
+    # shared concurrently; relaxing the thread check just permits this in-request
+    # hand-off that SQLite otherwise forbids.
+    conn = sqlite3.connect(resolved, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     # Connection-scoped: must run for every connection, every time.
     conn.execute("PRAGMA foreign_keys = ON")
