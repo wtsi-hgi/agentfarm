@@ -1,0 +1,61 @@
+-- Source of truth for the SQLite schema (spec: "SQLite schema").
+--
+-- Applied idempotently at startup via db/migrate.py (CREATE TABLE IF NOT
+-- EXISTS makes re-application a no-op). All ids are text UUIDv4. Timestamps are
+-- ISO-8601 UTC strings (YYYY-MM-DDTHH:MM:SS.ffffffZ) so lexical sort equals
+-- chronological sort. Booleans are integers 0/1.
+--
+-- The ON DELETE CASCADE clauses below only take effect when the connection has
+-- PRAGMA foreign_keys = ON (SQLite defaults this OFF). db/connection.py enables
+-- it on every connection.
+
+CREATE TABLE IF NOT EXISTS items (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  slug            TEXT NOT NULL UNIQUE,
+  parent_id       TEXT REFERENCES items(id) ON DELETE CASCADE,
+  sort_order      REAL NOT NULL,          -- order among siblings
+  state           TEXT NOT NULL DEFAULT 'not-started',
+  mode            TEXT NOT NULL DEFAULT 'prompt-agent',
+  effort          TEXT NOT NULL DEFAULT 'medium',
+  blocked_external      INTEGER NOT NULL DEFAULT 0,
+  blocked_note          TEXT,
+  blocked_followup_date TEXT,             -- ISO date or NULL
+  created_by      TEXT NOT NULL,
+  updated_by      TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  state_changed_at TEXT NOT NULL,
+  completed_at    TEXT                    -- set when state done/abandoned
+);
+
+CREATE TABLE IF NOT EXISTS dependencies (
+  id          TEXT PRIMARY KEY,
+  from_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  to_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,              -- 'implicit' | 'explicit'
+  UNIQUE (from_id, to_id)
+);  -- edge means: from_id depends on (needs) to_id
+
+CREATE TABLE IF NOT EXISTS comments (
+  id          TEXT PRIMARY KEY,
+  item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  author      TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS markers (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  at          TEXT NOT NULL,              -- the named point in time
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (         -- v2 seam, unused in v1 logic
+  id          TEXT PRIMARY KEY,
+  item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  created_at  TEXT NOT NULL
+);

@@ -26,8 +26,8 @@ everywhere. Un-ignore and commit those files. Edit `.gitignore`; ensure
 (`git check-ignore frontend/lib/contracts.ts` reports not ignored and
 `frontend/tests/contracts.test.ts` imports `@/lib/contracts` and runs).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: N1 - Environment configuration
 
@@ -41,8 +41,8 @@ Extend `config.py` `Settings` with `data_dir` (`AGENTFARM_DATA_DIR`),
 markdown mirror both live under `data_dir`. Covers all 3 acceptance tests from
 N1 (whitelist split, data_dir placement, owner defaults to OS user).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.3: DB and enums foundation
 
@@ -57,5 +57,5 @@ the existing contract test harness runs. No story-level acceptance tests; this
 realises the SQLite schema and Enums/weights sections the later phases depend
 on.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
