@@ -773,7 +773,7 @@ async def test_nested_container_completeness_propagates_to_ancestors(
         parent_id = parent.json()["id"]
         child_container = await _create(client, {"title": "Q", "parent_id": parent_id})
         child_container_id = child_container.json()["id"]
-        leaf = await _create(
+        await _create(
             client,
             {"title": "leaf", "parent_id": child_container_id, "state": "done"},
         )
@@ -785,12 +785,7 @@ async def test_nested_container_completeness_propagates_to_ancestors(
         _insert_explicit_edge(fresh_db, parent_dependent_id, parent_id)
         _insert_explicit_edge(fresh_db, child_dependent_id, child_container_id)
 
-    actionable = _actionable(fresh_db)
-    assert parent_dependent_id in actionable
-    assert child_dependent_id in actionable
-    assert leaf.json()["id"] not in actionable
-    assert child_container_id not in actionable
-    assert parent_id not in actionable
+    assert _actionable(fresh_db) == {parent_dependent_id, child_dependent_id}
 
 
 # --- F2: Keyboard structure operations (Enter / Tab / Shift-Tab) ------------
