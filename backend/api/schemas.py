@@ -19,6 +19,12 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class NotImplementedResponse(BaseModel):
+    """Response model for intentionally unimplemented v2 seam endpoints."""
+
+    detail: str
+
+
 class LoginRequest(BaseModel):
     """Request body for ``POST /auth/login`` (spec: K1)."""
 
@@ -157,6 +163,15 @@ class CommentOut(BaseModel):
     body: str
     created_at: str
     updated_at: str
+
+
+class RunOut(BaseModel):
+    """Response model for a stub item run (spec: M1)."""
+
+    id: str
+    item_id: str
+    status: Literal["pending"]
+    created_at: str
 
 
 class ItemOut(BaseModel):

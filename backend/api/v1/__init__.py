@@ -6,7 +6,18 @@ endpoints over time without breaking existing clients.
 
 from fastapi import APIRouter
 
-from . import auth, comments, dependencies, greetings, health, items, markers, priority
+from . import (
+    auth,
+    comments,
+    dependencies,
+    greetings,
+    health,
+    items,
+    markers,
+    priority,
+    runs,
+    spawn,
+)
 
 api_router = APIRouter()
 
@@ -18,5 +29,7 @@ api_router.include_router(dependencies.router, tags=["dependencies"])
 api_router.include_router(priority.router, tags=["priority"])
 api_router.include_router(comments.router, tags=["comments"])
 api_router.include_router(markers.router, tags=["markers"])
+api_router.include_router(runs.router, tags=["runs"])
+api_router.include_router(spawn.router, tags=["spawn"])
 
 __all__ = ["api_router"]

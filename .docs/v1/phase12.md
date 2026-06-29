@@ -26,8 +26,8 @@ POST `/items/{id}/runs` creates a stub run row (`status=="pending"`) and GET
 `/items/{id}/runs` lists runs. Covers the 1 acceptance test from M1 (create then
 list returns the pending run with `item_id==I`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 12.2: M2 - Spawn/stream boundary returns 501 [parallel with 12.1]
 
@@ -38,8 +38,8 @@ Implemented over the intended SSE/WebSocket boundary, performing no work in v1.
 Covers the 1 acceptance test from M2 (any item -> 501 with a not-implemented
 detail).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
