@@ -28,8 +28,8 @@ payload. Covers all 2 acceptance tests from H1 (flags for the A/B(B1,B2)/C
 outline with all present; `treeSchema` parses and a payload missing
 `actionable` fails safeParse).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after Item 11.1 is reviewed)
 
@@ -43,8 +43,8 @@ mode toggles that filter the tree (all show when none selected). Covers all 2
 acceptance tests from H2 (5 distinct colour entries, defined token per Mode;
 review-only toggle shows only review items, none shows both).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 11.3: H3 - Leverage sort is display-only [parallel with 11.2, 11.4, 11.5]
 
@@ -56,8 +56,8 @@ leverage sort that leaves stored `sort_order` and dependency edges unchanged
 from H3 (priority order `[A1,B1,G1]` while a later GET `/tree` keeps original
 stored order).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 11.4: H4 - New item stays visible until refresh [parallel with 11.2, 11.3, 11.5]
 
@@ -69,8 +69,8 @@ affordance until the view is refreshed/re-filtered. Covers all 2 acceptance
 tests from H4 (new non-actionable item stays visible with the affordance;
 refresh then hides it).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 11.5: H5 - Product switcher / quick jump [parallel with 11.2, 11.3, 11.4]
 
@@ -83,8 +83,8 @@ ancestors, mutating nothing. Covers all 3 acceptance tests from H5 (option list
 is exactly the roots; selecting a product focuses/scrolls it with no storage
 change; arbitrary nested target is focused with ancestors expanded).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 The Server Actions (`app/actions.ts`) and `middleware.ts` wiring noted in the
 spec's Implementation Order for this phase support the items above (Server

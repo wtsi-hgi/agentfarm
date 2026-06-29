@@ -39,6 +39,19 @@ async def _priority(client: AsyncClient):
     return await client.get("/api/v1/priority")
 
 
+async def _tree(client: AsyncClient):
+    return await client.get("/api/v1/tree")
+
+
+def _dependency_edges(db_path) -> set[tuple[str, str]]:
+    """Return stored dependency edges as ``(from_id, to_id)`` pairs."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT from_id, to_id FROM dependencies ORDER BY from_id, to_id"
+        ).fetchall()
+    return {(row["from_id"], row["to_id"]) for row in rows}
+
+
 def _downstream(db_path, item_id: str) -> set[str]:
     """Return downstream ids through the spec-defined leverage service boundary."""
     with get_connection(db_path) as conn:
@@ -154,11 +167,14 @@ async def _build_e1_setup(client: AsyncClient) -> dict[str, str]:
     )
 
     ids = {
+        "Alpha": alpha.json()["id"],
         "A1": a1.json()["id"],
         "A2": a2.json()["id"],
+        "Beta": beta.json()["id"],
         "B1": b1.json()["id"],
         "B2": b2.json()["id"],
         "B3": b3.json()["id"],
+        "Gamma": gamma.json()["id"],
         "G1": g1.json()["id"],
         "G2": g2.json()["id"],
     }
@@ -204,6 +220,38 @@ async def test_priority_orders_e1_by_leverage_rank_without_score(fresh_db) -> No
     assert [entry["rank"] for entry in body] == [1, 2, 3]
     assert [entry["title"] for entry in body] == ["A1", "B1", "G1"]
     assert all("score" not in entry for entry in body)
+
+
+@pytest.mark.anyio
+async def test_priority_order_does_not_mutate_tree_order_or_edges_h3(
+    fresh_db,
+) -> None:
+    """H3: leverage priority is display-only; stored tree and edges stay put."""
+    async with _client() as client:
+        ids = await _build_e1_setup(client)
+        before_edges = _dependency_edges(fresh_db)
+
+        priority = await _priority(client)
+        tree = await _tree(client)
+
+    assert priority.status_code == 200
+    assert [entry["id"] for entry in priority.json()] == [
+        ids["A1"],
+        ids["B1"],
+        ids["G1"],
+    ]
+
+    assert tree.status_code == 200
+    payload = tree.json()
+
+    def child_titles(parent_id: str) -> list[str]:
+        children = [entry for entry in payload if entry["parent_id"] == parent_id]
+        return [entry["title"] for entry in children]
+
+    assert child_titles(ids["Alpha"]) == ["A1", "A2"]
+    assert child_titles(ids["Beta"]) == ["B1", "B2", "B3"]
+    assert child_titles(ids["Gamma"]) == ["G1", "G2"]
+    assert _dependency_edges(fresh_db) == before_edges
 
 
 @pytest.mark.anyio

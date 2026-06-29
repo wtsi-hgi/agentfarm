@@ -536,6 +536,52 @@ async def test_double_rename_resolves_needs_label_throughout(fresh_db) -> None:
     assert _tree_item(tree_after_bar.json(), a_id)["needs"] == ["bar"]
 
 
+# --- H1: Collapse not remove -------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_tree_marks_actionable_and_complete_without_omitting_items(
+    fresh_db,
+) -> None:
+    """H1: GET /tree returns every item plus work-now flags.
+
+    The phase text's A/B(B1,B2)/C acceptance line predates the corrected
+    sibling-independent model. Under the core rules, A, B1, B2, and C are
+    independent open leaves and therefore actionable; B is only structural
+    because it has children.
+    """
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        b1 = await _create(client, {"title": "B1", "parent_id": b.json()["id"]})
+        b2 = await _create(client, {"title": "B2", "parent_id": b.json()["id"]})
+        c = await _create(client, {"title": "C"})
+
+        response = await _tree(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    ids = {
+        "A": a.json()["id"],
+        "B": b.json()["id"],
+        "B1": b1.json()["id"],
+        "B2": b2.json()["id"],
+        "C": c.json()["id"],
+    }
+    assert {entry["id"] for entry in payload} == set(ids.values())
+
+    assert _tree_item(payload, ids["A"])["actionable"] is True
+    assert _tree_item(payload, ids["B"])["actionable"] is False
+    assert _tree_item(payload, ids["B1"])["actionable"] is True
+    assert _tree_item(payload, ids["B2"])["actionable"] is True
+    assert _tree_item(payload, ids["C"])["actionable"] is True
+
+    for item_id in ids.values():
+        item = _tree_item(payload, item_id)
+        assert item["complete"] is False
+        assert item["needs"] == []
+
+
 # --- A4: Delete item with subtree cascade and dependency cleanup ------------
 
 

@@ -4,6 +4,8 @@ import { backendJson } from '@/lib/backend-client'
 import {
   healthResponseSchema,
   messageResponseSchema,
+  priorityResponseSchema,
+  treeSchema,
   whoamiSchema,
 } from '@/lib/contracts'
 import { type GreetingState } from '@/lib/greeting-state'
@@ -45,6 +47,14 @@ export async function fetchInitialGreeting() {
 
 export async function fetchHealth() {
   return backendJson('/api/v1/health', healthResponseSchema)
+}
+
+export async function fetchTree() {
+  return backendJson('/api/v1/tree', treeSchema)
+}
+
+export async function fetchPriority() {
+  return backendJson('/api/v1/priority', priorityResponseSchema)
 }
 
 export async function login(

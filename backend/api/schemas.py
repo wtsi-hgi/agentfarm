@@ -213,9 +213,12 @@ class TreeItemOut(ItemOut):
     (Core domain rules / A3). Implicit (tree-derived) edges are not surfaced as
     needs labels.
 
-    Subclassing ``ItemOut`` and adding fields keeps the shape extensible: a
-    later phase (H1) adds the ``actionable`` / ``complete`` booleans here
-    without restructuring this model or its callers.
+    ``actionable`` is the current work-now predicate from
+    :func:`services.leverage.is_actionable`; ``complete`` is the recursive
+    structural predicate from :func:`services.tree.is_complete` (H1). These
+    are display/projection flags only: GET ``/tree`` still returns every item.
     """
 
     needs: list[str]
+    actionable: bool
+    complete: bool

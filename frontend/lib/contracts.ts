@@ -85,3 +85,15 @@ export const priorityItemSchema = itemSchema
 export const priorityResponseSchema = z.array(priorityItemSchema)
 
 export type PriorityItem = z.infer<typeof priorityItemSchema>
+
+export const treeItemSchema = itemSchema
+  .extend({
+    needs: z.array(z.string()),
+    actionable: z.boolean(),
+    complete: z.boolean(),
+  })
+  .strict()
+
+export const treeSchema = z.array(treeItemSchema)
+
+export type TreeItem = z.infer<typeof treeItemSchema>

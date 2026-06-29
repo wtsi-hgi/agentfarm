@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.v1.authz import require_owner
 from db.connection import get_db
 from models.enums import State, is_complete
-from services import graph, tree
+from services import graph, leverage, tree
 from services.clock import now
 from services.identity import current_actor
 
@@ -354,7 +354,7 @@ async def move_item(
 async def get_tree(
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[TreeItemOut]:
-    """Return every item in tree order, each with its live ``needs`` labels (A3).
+    """Return every item in tree order with live labels and work flags (A3/H1).
 
     Items are returned in preorder depth-first order (roots by ``sort_order``
     then ``id``, then each item's descendants recursively in the same order),
@@ -365,6 +365,10 @@ async def get_tree(
     edges are stored by ``to_id`` (an item id) and the slug is looked up live,
     a renamed target's label updates automatically while the stored edge is
     unchanged. Implicit (tree-derived) edges are not shown as needs labels.
+
+    H1 adds per-item ``actionable`` and ``complete`` booleans for the work-now
+    projection. They are computed per item without filtering: every stored item
+    remains present in the response, including collapsed/non-actionable ones.
     """
     rows = {
         row["id"]: row
@@ -374,7 +378,14 @@ async def get_tree(
     for item_id in tree.items_in_tree_order(conn):
         item = _row_to_item(rows[item_id])
         needs = tree.explicit_needs_slugs(conn, item_id)
-        result.append(TreeItemOut(**item.model_dump(), needs=needs))
+        result.append(
+            TreeItemOut(
+                **item.model_dump(),
+                needs=needs,
+                actionable=leverage.is_actionable(conn, item_id),
+                complete=tree.is_complete(conn, item_id),
+            )
+        )
     return result
 
 

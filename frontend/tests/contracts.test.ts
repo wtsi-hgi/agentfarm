@@ -5,6 +5,7 @@ import {
   itemSchema,
   messageResponseSchema,
   priorityResponseSchema,
+  treeSchema,
 } from '@/lib/contracts'
 
 describe('shared API contracts', () => {
@@ -108,6 +109,43 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     const result = priorityResponseSchema.safeParse([
       { ...validPriorityItem, score: 16 },
     ])
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('treeSchema (mirrors backend TreeItemOut[])', () => {
+  const validTreeItem = {
+    id: '11111111-1111-4111-8111-111111111111',
+    title: 'A',
+    slug: 'a',
+    parent_id: null,
+    sort_order: 1,
+    state: 'not-started',
+    mode: 'prompt-agent',
+    effort: 'medium',
+    blocked_external: false,
+    blocked_note: null,
+    blocked_followup_date: null,
+    created_by: 'alice',
+    updated_by: 'alice',
+    created_at: '2026-06-29T00:00:00.000000Z',
+    updated_at: '2026-06-29T00:00:00.000000Z',
+    state_changed_at: '2026-06-29T00:00:00.000000Z',
+    completed_at: null,
+    needs: ['build-api'],
+    actionable: true,
+    complete: false,
+  }
+
+  it('parses tree items with needs and work-now flags', () => {
+    expect(treeSchema.parse([validTreeItem])).toEqual([validTreeItem])
+  })
+
+  it('rejects tree items missing actionable', () => {
+    const { actionable: _actionable, ...withoutActionable } = validTreeItem
+
+    const result = treeSchema.safeParse([withoutActionable])
+
     expect(result.success).toBe(false)
   })
 })
