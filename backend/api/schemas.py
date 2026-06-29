@@ -75,6 +75,34 @@ class MoveRequest(BaseModel):
     after_id: str | None = None
 
 
+class MarkerCreate(BaseModel):
+    """Request body for ``POST /markers`` (spec: I1)."""
+
+    name: str
+    at: str | None = None
+
+
+class MarkerOut(BaseModel):
+    """Response model for a named time marker (spec: I1)."""
+
+    id: str
+    name: str
+    at: str
+    created_at: str
+
+
+class CommentCreate(BaseModel):
+    """Request body for ``POST /items/{id}/comments`` (spec: J1)."""
+
+    body: str
+
+
+class CommentUpdate(BaseModel):
+    """Request body for ``PATCH /comments/{id}`` (spec: J1)."""
+
+    body: str
+
+
 class DependencyCreate(BaseModel):
     """Request body for ``POST /dependencies`` (spec: D1).
 
@@ -104,6 +132,17 @@ class DependencyOut(BaseModel):
     from_id: str
     to_id: str
     kind: Literal["explicit"]
+
+
+class CommentOut(BaseModel):
+    """Response model for a flat item comment (spec: J1)."""
+
+    id: str
+    item_id: str
+    author: str
+    body: str
+    created_at: str
+    updated_at: str
 
 
 class ItemOut(BaseModel):

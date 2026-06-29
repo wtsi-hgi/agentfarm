@@ -25,5 +25,5 @@ chosen timestamp falls in the window. Establishes the `MarkerOut` model. Covers
 all 3 acceptance tests from I1 (since/changed includes only later-changed item;
 between/created window; "since the last marker" resolves to the greatest `at`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

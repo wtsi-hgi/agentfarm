@@ -27,5 +27,5 @@ comment -> 403 `"cannot modify another user's comment"`), and GET
 viewer's comment; author edits own; author deletes own; list ordered by
 created_at asc).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
