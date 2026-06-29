@@ -279,6 +279,34 @@ async def test_create_unknown_after_id_returns_404_without_insert(fresh_db) -> N
     assert _item_count(fresh_db) == 1
 
 
+@pytest.mark.anyio
+async def test_create_after_id_outside_parent_returns_404_without_insert_or_edges(
+    fresh_db,
+) -> None:
+    """POST /items requires ``after_id`` to be in the requested sibling group."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "Parent"})
+        other_parent = await _create(client, {"title": "Other parent"})
+        anchor = await _create(
+            client,
+            {"title": "Anchor", "parent_id": other_parent.json()["id"]},
+        )
+
+        response = await _create(
+            client,
+            {
+                "title": "Wrong group",
+                "parent_id": parent.json()["id"],
+                "after_id": anchor.json()["id"],
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "item not found"}
+    assert _item_count(fresh_db) == 3
+    assert _dependencies(fresh_db) == []
+
+
 # --- A2: Edit item fields and timestamp/slug behaviour ----------------------
 
 
@@ -1205,6 +1233,41 @@ async def test_move_unknown_new_parent_returns_404(fresh_db) -> None:
     assert response.json()["detail"] == "item not found"
     # x is unmoved (still a root).
     assert _item_row(fresh_db, x_id)["parent_id"] is None
+
+
+@pytest.mark.anyio
+async def test_move_after_id_outside_destination_returns_404_without_move_or_edges(
+    fresh_db,
+) -> None:
+    """Move requires ``after_id`` to belong to the destination sibling group."""
+    async with _client() as client:
+        source_parent = await _create(client, {"title": "Source"})
+        destination_parent = await _create(client, {"title": "Destination"})
+        other_parent = await _create(client, {"title": "Other"})
+        x = await _create(
+            client, {"title": "x", "parent_id": source_parent.json()["id"]}
+        )
+        anchor = await _create(
+            client, {"title": "anchor", "parent_id": other_parent.json()["id"]}
+        )
+        x_id = x.json()["id"]
+        before = _item_row(fresh_db, x_id)
+
+        response = await _move(
+            client,
+            x_id,
+            {
+                "new_parent_id": destination_parent.json()["id"],
+                "after_id": anchor.json()["id"],
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "item not found"}
+    after = _item_row(fresh_db, x_id)
+    assert after["parent_id"] == before["parent_id"]
+    assert after["sort_order"] == before["sort_order"]
+    assert _dependencies(fresh_db) == []
 
 
 @pytest.mark.anyio

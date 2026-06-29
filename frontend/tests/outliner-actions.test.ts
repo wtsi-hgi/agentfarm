@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   addDependency,
@@ -23,8 +23,17 @@ const cacheMocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
 }))
 
+const sessionMocks = vi.hoisted(() => ({
+  readSessionIdentity: vi.fn(),
+}))
+
 vi.mock('next/cache', () => ({
   revalidatePath: cacheMocks.revalidatePath,
+}))
+
+vi.mock('@/lib/session', () => ({
+  readSessionIdentity: sessionMocks.readSessionIdentity,
+  setSessionCookie: vi.fn(),
 }))
 
 const baseItem = {
@@ -64,7 +73,29 @@ function requestBody(init: RequestInit | undefined) {
   return init?.body ? JSON.parse(init.body.toString()) : null
 }
 
+function requestAuthHeaders(init: RequestInit | undefined) {
+  const headers = new Headers(init?.headers)
+  return {
+    username: headers.get('x-agentfarm-username'),
+    role: headers.get('x-agentfarm-role'),
+  }
+}
+
+function expectedAuthHeaders(count: number) {
+  return Array.from({ length: count }, () => ({
+    username: 'alice',
+    role: 'owner',
+  }))
+}
+
 describe('outliner mutation Server Actions', () => {
+  beforeEach(() => {
+    sessionMocks.readSessionIdentity.mockResolvedValue({
+      username: 'alice',
+      role: 'owner',
+    })
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.clearAllMocks()
@@ -144,6 +175,9 @@ describe('outliner mutation Server Actions', () => {
         ([url]) => new URL(url.toString()).pathname === '/api/v1/dependencies'
       )
     ).toBe(false)
+    expect(
+      fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(6))
     expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(6)
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
@@ -199,6 +233,9 @@ describe('outliner mutation Server Actions', () => {
         body: null,
       },
     ])
+    expect(
+      fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(3))
   })
 
   it('exposes comment and marker workflows through validated Server Actions', async () => {
@@ -292,6 +329,11 @@ describe('outliner mutation Server Actions', () => {
       },
       { method: 'GET', path: '/api/v1/changes', body: null },
     ])
+    expect(
+      fetch.mock.calls
+        .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
+        .map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(4))
   })
 
   it('fails fast when a mutation response does not match its contract', async () => {

@@ -43,7 +43,8 @@ class ItemCreate(BaseModel):
     """Request body for ``POST /items`` (spec: A1).
 
     Only ``title`` is required. ``parent_id``/``after_id`` place the item in the
-    tree; ``mode``/``effort``/``state`` default to the documented values. The
+    tree; when provided, ``after_id`` must be a sibling in the requested parent
+    group. ``mode``/``effort``/``state`` default to the documented values. The
     enum-typed fields make FastAPI reject an out-of-set token with HTTP 422
     whose ``detail`` names the offending field.
     """
@@ -87,8 +88,7 @@ class MoveRequest(BaseModel):
     parent; ``None`` (sent explicitly or simply omitted) promotes the item to a
     root/product. Cross-product moves are allowed. ``after_id`` positions the
     moved item immediately after that sibling in the destination group, or
-    appends it at the end of the group when omitted/null (or when the referenced
-    sibling is absent from the destination).
+    appends it at the end of the group when omitted/null.
     """
 
     new_parent_id: str | None = None

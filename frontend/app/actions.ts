@@ -24,7 +24,7 @@ import {
   type State,
 } from '@/lib/contracts'
 import { type GreetingState } from '@/lib/greeting-state'
-import { setSessionCookie } from '@/lib/session'
+import { readSessionIdentity, setSessionCookie } from '@/lib/session'
 
 export type LoginState = {
   status: 'idle' | 'success' | 'error'
@@ -91,12 +91,27 @@ function jsonInit(method: string, body?: unknown): RequestInit {
   }
 }
 
+async function authenticatedInit(init: RequestInit): Promise<RequestInit> {
+  const identity = await readSessionIdentity()
+  if (!identity) {
+    return init
+  }
+
+  const headers = new Headers(init.headers)
+  headers.set('x-agentfarm-username', identity.username)
+  headers.set('x-agentfarm-role', identity.role)
+  return {
+    ...init,
+    headers,
+  }
+}
+
 async function mutation<T>(
   path: string,
   schema: ZodSchema<T>,
   init: RequestInit
 ): Promise<T> {
-  const result = await backendJson(path, schema, init)
+  const result = await backendJson(path, schema, await authenticatedInit(init))
   revalidatePath(PRIMARY_PATH)
   return result
 }

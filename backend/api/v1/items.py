@@ -71,6 +71,13 @@ def _parent_id_of(conn: sqlite3.Connection, item_id: str) -> str | None:
     return row["parent_id"] if row is not None else None
 
 
+def _is_in_sibling_group(
+    conn: sqlite3.Connection, item_id: str, parent_id: str | None
+) -> bool:
+    """Return whether ``item_id`` belongs to the sibling group under ``parent_id``."""
+    return _parent_id_of(conn, item_id) == parent_id
+
+
 def _preceding_sibling_id(conn: sqlite3.Connection, item_id: str) -> str | None:
     """Return the id of ``item_id``'s immediately preceding sibling, or ``None``.
 
@@ -110,15 +117,19 @@ async def create_item(
 
     The server assigns the ``id`` (UUIDv4), derives a unique ``slug`` from the
     title, computes ``sort_order`` within the sibling group (appended, or after
-    ``after_id``), records the acting user as ``created_by``/``updated_by``, and
-    stamps all four creation timestamps with one ``now`` (``completed_at`` stays
-    null). Defaults fill any omitted field. Sibling order is organisational only:
-    creation does not add a dependency on neighbouring items.
+    ``after_id`` when that anchor is in the requested sibling group), records
+    the acting user as ``created_by``/``updated_by``, and stamps all four
+    creation timestamps with one ``now`` (``completed_at`` stays null). Defaults
+    fill any omitted field. Sibling order is organisational only: creation does
+    not add a dependency on neighbouring items.
     """
     if payload.parent_id is not None and not _item_exists(conn, payload.parent_id):
         raise HTTPException(status_code=404, detail="item not found")
-    if payload.after_id is not None and not _item_exists(conn, payload.after_id):
-        raise HTTPException(status_code=404, detail="item not found")
+    if payload.after_id is not None:
+        if not _item_exists(conn, payload.after_id):
+            raise HTTPException(status_code=404, detail="item not found")
+        if not _is_in_sibling_group(conn, payload.after_id, payload.parent_id):
+            raise HTTPException(status_code=404, detail="item not found")
 
     item_id = str(uuid.uuid4())
     slug = tree.derive_unique_slug(conn, payload.title)
@@ -310,17 +321,18 @@ async def move_item(
 
     Moves ``item_id`` under ``new_parent_id`` (``None`` promotes it to a
     root/product) and positions it immediately after ``after_id`` in the
-    destination group, appending at the end when ``after_id`` is omitted or not a
-    member of that group. Cross-product moves are allowed. Identity is preserved
-    (same ``id``; explicit edges and comments, stored by id, are untouched).
-    Both the source and destination sibling groups run legacy implicit-edge
-    cleanup via :func:`services.tree.reparent_item`.
+    destination group, appending at the end when ``after_id`` is omitted.
+    Cross-product moves are allowed. Identity is preserved (same ``id``;
+    explicit edges and comments, stored by id, are untouched). Both the source
+    and destination sibling groups run legacy implicit-edge cleanup via
+    :func:`services.tree.reparent_item`.
 
     Validation runs BEFORE any mutation, in this order:
 
-    1. **404** ``item not found`` if ``item_id`` is unknown, or if a non-null
-       ``new_parent_id`` / ``after_id`` references an unknown item (consistent
-       with the spec's not-found policy).
+    1. **404** ``item not found`` if ``item_id`` is unknown, if a non-null
+       ``new_parent_id`` / ``after_id`` references an unknown item, or if
+       ``after_id`` is not in the destination sibling group (consistent with the
+       spec's not-found policy).
     2. **422** ``cannot move into own descendant`` if ``new_parent_id`` is the
        item itself or any descendant of it -- such a move would detach a cycle of
        items from the tree.
@@ -339,8 +351,11 @@ async def move_item(
     # A referenced destination parent or anchor sibling must exist (404 policy).
     if new_parent_id is not None and not _item_exists(conn, new_parent_id):
         raise HTTPException(status_code=404, detail="item not found")
-    if after_id is not None and not _item_exists(conn, after_id):
-        raise HTTPException(status_code=404, detail="item not found")
+    if after_id is not None:
+        if not _item_exists(conn, after_id):
+            raise HTTPException(status_code=404, detail="item not found")
+        if not _is_in_sibling_group(conn, after_id, new_parent_id):
+            raise HTTPException(status_code=404, detail="item not found")
 
     # Reparenting into the item's own subtree (including itself) would corrupt
     # the tree; reject before mutating.
