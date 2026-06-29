@@ -55,6 +55,14 @@ async def _move(client: AsyncClient, item_id: str, body: dict):
     return await client.post(f"/api/v1/items/{item_id}/move", json=body)
 
 
+async def _post_dependency(client: AsyncClient, body: dict):
+    return await client.post("/api/v1/dependencies", json=body)
+
+
+async def _delete_dependency(client: AsyncClient, dependency_id: str):
+    return await client.delete(f"/api/v1/dependencies/{dependency_id}")
+
+
 def _dependency_rows(db_path) -> list[dict]:
     """Return dependency rows as plain dicts."""
     with get_connection(db_path) as conn:
@@ -110,6 +118,21 @@ async def _build_outline(client: AsyncClient) -> dict[str, str]:
     }
 
 
+async def _build_cross_product_pair(client: AsyncClient) -> dict[str, str]:
+    """Create ``X`` and ``Deploy DB`` leaves under separate products."""
+    alpha = await _create(client, {"title": "Product Alpha"})
+    beta = await _create(client, {"title": "Product Beta"})
+    x = await _create(client, {"title": "X", "parent_id": alpha.json()["id"]})
+    deploy_db = await _create(
+        client,
+        {"title": "Deploy DB", "parent_id": beta.json()["id"]},
+    )
+    return {
+        "X": x.json()["id"],
+        "deploy_db": deploy_db.json()["id"],
+    }
+
+
 @pytest.mark.anyio
 async def test_siblings_do_not_gain_implicit_dependencies(fresh_db) -> None:
     """Sibling order at root and within a section creates no dependency rows."""
@@ -117,6 +140,226 @@ async def test_siblings_do_not_gain_implicit_dependencies(fresh_db) -> None:
         await _build_outline(client)
 
     assert _dependency_edges(fresh_db) == set()
+
+
+@pytest.mark.anyio
+async def test_post_dependency_by_slug_stores_explicit_edge_by_target_id(
+    fresh_db,
+) -> None:
+    """D1: ``needs_slug`` is resolved once and stored as an id edge."""
+    async with _client() as client:
+        ids = await _build_cross_product_pair(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "needs_slug": "deploy-db"},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["from_id"] == ids["X"]
+    assert created.json()["to_id"] == ids["deploy_db"]
+    assert created.json()["kind"] == "explicit"
+    assert _dependency_rows(fresh_db) == [
+        {
+            "id": created.json()["id"],
+            "from_id": ids["X"],
+            "to_id": ids["deploy_db"],
+            "kind": "explicit",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_post_dependency_accepts_target_id(fresh_db) -> None:
+    """D1: callers may provide the already-resolved ``to_id``."""
+    async with _client() as client:
+        ids = await _build_cross_product_pair(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "to_id": ids["deploy_db"]},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["from_id"] == ids["X"]
+    assert created.json()["to_id"] == ids["deploy_db"]
+    assert created.json()["kind"] == "explicit"
+    assert _dependency_edges(fresh_db, kind="explicit") == {
+        (ids["X"], ids["deploy_db"])
+    }
+
+
+@pytest.mark.anyio
+async def test_post_dependency_blocks_until_slug_target_done(fresh_db) -> None:
+    """D1: an explicit edge created by slug gates actionability until done."""
+    async with _client() as client:
+        ids = await _build_cross_product_pair(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "needs_slug": "deploy-db"},
+        )
+        assert created.status_code == 200
+        assert _actionable(fresh_db) == {ids["deploy_db"]}
+
+        done = await _patch(client, ids["deploy_db"], {"state": "done"})
+        assert done.status_code == 200
+
+    assert _actionable(fresh_db) == {ids["X"]}
+
+
+@pytest.mark.anyio
+async def test_post_dependency_unknown_slug_returns_422(fresh_db) -> None:
+    """D1: an unknown ``needs_slug`` is rejected without inserting an edge."""
+    async with _client() as client:
+        x = await _create(client, {"title": "X"})
+
+        rejected = await _post_dependency(
+            client,
+            {"from_id": x.json()["id"], "needs_slug": "missing-target"},
+        )
+
+    assert rejected.status_code == 422
+    assert rejected.json() == {"detail": "unknown dependency: missing-target"}
+    assert _dependency_rows(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_post_dependency_rejects_direct_cycle(fresh_db) -> None:
+    """D2: adding the reverse of an existing edge is rejected."""
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+
+        created = await _post_dependency(client, {"from_id": a_id, "to_id": b_id})
+        rejected = await _post_dependency(client, {"from_id": b_id, "to_id": a_id})
+
+    assert created.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db, kind="explicit") == {(a_id, b_id)}
+
+
+@pytest.mark.anyio
+async def test_post_dependency_rejects_transitive_cycle(fresh_db) -> None:
+    """D2: reachability across a chain prevents closing a longer cycle."""
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        c = await _create(client, {"title": "C"})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+        c_id = c.json()["id"]
+
+        first = await _post_dependency(client, {"from_id": a_id, "to_id": b_id})
+        second = await _post_dependency(client, {"from_id": b_id, "to_id": c_id})
+        rejected = await _post_dependency(client, {"from_id": c_id, "to_id": a_id})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db, kind="explicit") == {
+        (a_id, b_id),
+        (b_id, c_id),
+    }
+
+
+@pytest.mark.anyio
+async def test_post_dependency_rejects_self_edge(fresh_db) -> None:
+    """D2: an item cannot depend on itself."""
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        a_id = a.json()["id"]
+
+        rejected = await _post_dependency(client, {"from_id": a_id, "to_id": a_id})
+
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_rows(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_post_dependency_rejects_opposite_section_edge(fresh_db) -> None:
+    """D2: section-origin edges participate in the same cycle check."""
+    async with _client() as client:
+        ids = await _build_outline(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["B"], "to_id": ids["A"]},
+        )
+        rejected = await _post_dependency(
+            client,
+            {"from_id": ids["A"], "to_id": ids["B"]},
+        )
+
+    assert created.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["B"], ids["A"])}
+
+
+@pytest.mark.anyio
+async def test_delete_dependency_restores_section_leaf_actionability(
+    fresh_db,
+) -> None:
+    """D3: deleting an explicit edge lets the depending section run independently."""
+    async with _client() as client:
+        ids = await _build_outline(client)
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["B"], "to_id": ids["A"]},
+        )
+        edge_id = created.json()["id"]
+
+        assert created.status_code == 200
+        assert _actionable(fresh_db) == {ids["A"], ids["C"]}
+
+        deleted = await _delete_dependency(client, edge_id)
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": edge_id}
+    assert _dependency_rows(fresh_db) == []
+    assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["B2"], ids["C"]}
+
+
+@pytest.mark.anyio
+async def test_deleted_dependency_does_not_reappear_after_later_edits(
+    fresh_db,
+) -> None:
+    """D3: unrelated item mutations do not recreate a deleted explicit edge."""
+    async with _client() as client:
+        ids = await _build_outline(client)
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["B2"], "to_id": ids["A"]},
+        )
+        edge_id = created.json()["id"]
+        deleted = await _delete_dependency(client, edge_id)
+
+        assert created.status_code == 200
+        assert deleted.status_code == 200
+        assert _dependency_rows(fresh_db) == []
+
+        patched = await _patch(client, ids["A"], {"title": "A renamed"})
+        moved = await _move(client, ids["B2"], {"new_parent_id": None})
+
+    assert patched.status_code == 200
+    assert moved.status_code == 200
+    assert _dependency_rows(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_delete_dependency_unknown_id_returns_404(fresh_db) -> None:
+    """D3: deleting a missing edge follows the API's not-found policy."""
+    async with _client() as client:
+        response = await _delete_dependency(client, str(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "dependency not found"}
 
 
 @pytest.mark.anyio

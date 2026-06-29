@@ -26,8 +26,8 @@ unknown slug -> 422 `"unknown dependency: <slug>"`. Covers all 3 acceptance
 tests from D1 (cross-tree edge stored by id; actionability flips when target
 completes; unknown-slug 422).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.2: D2 - Cycle rejection across dependency graph
 
@@ -38,8 +38,8 @@ In `services/graph.py`, reject any edge whose `to_id` can already reach
 `"dependency cycle rejected"` and no edge added. Covers all 4 acceptance tests
 from D2 (direct cycle, transitive cycle, self-edge, opposite section edge).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 4.3: D3 - Delete explicit dependency edge
 
@@ -51,5 +51,5 @@ tests that removal makes the depending leaves actionable once no other blocking
 dependencies remain, survives unrelated PATCHes/structural edits, and does not
 reappear automatically.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

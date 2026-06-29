@@ -1,6 +1,8 @@
 """Pydantic models used across the API layer."""
 
-from pydantic import BaseModel
+from typing import Literal, Self
+
+from pydantic import BaseModel, model_validator
 
 from models.enums import Effort, Mode, State
 
@@ -73,6 +75,37 @@ class MoveRequest(BaseModel):
     after_id: str | None = None
 
 
+class DependencyCreate(BaseModel):
+    """Request body for ``POST /dependencies`` (spec: D1).
+
+    ``from_id`` is the depending item or section. Callers may provide either a
+    resolved ``to_id`` or a typed ``needs_slug``; the endpoint resolves slugs at
+    creation time and always stores the edge by id.
+    """
+
+    from_id: str
+    to_id: str | None = None
+    needs_slug: str | None = None
+
+    @model_validator(mode="after")
+    def target_is_unambiguous(self) -> Self:
+        """Require exactly one supported target reference form."""
+        has_to_id = self.to_id is not None
+        has_needs_slug = self.needs_slug is not None
+        if has_to_id == has_needs_slug:
+            raise ValueError("provide exactly one of to_id or needs_slug")
+        return self
+
+
+class DependencyOut(BaseModel):
+    """Response model for an explicit dependency edge (spec: D1)."""
+
+    id: str
+    from_id: str
+    to_id: str
+    kind: Literal["explicit"]
+
+
 class ItemOut(BaseModel):
     """Response model for a single item (spec: A1).
 
@@ -101,11 +134,11 @@ class ItemOut(BaseModel):
 
 
 class DeletedResponse(BaseModel):
-    """Response model for ``DELETE /items/{id}`` (spec: A4).
+    """Response model for delete endpoints.
 
-    Confirms the delete by echoing the removed item's id. The schema's
-    ``ON DELETE CASCADE`` removes the item's subtree, comments, runs, and
-    incident edges as a side effect, so only the requested id is reported.
+    Confirms the delete by echoing the removed resource id. Item deletion (A4)
+    also relies on schema cascades for subtrees, comments, runs, and incident
+    dependency edges; dependency deletion (D3) removes only the requested edge.
     """
 
     deleted: bool
