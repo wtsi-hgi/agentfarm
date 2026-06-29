@@ -1,0 +1,234 @@
+'use client'
+
+import * as React from 'react'
+import { Check, MessageSquare, Pencil, Send, Trash2, X } from 'lucide-react'
+
+import {
+  createComment,
+  deleteComment,
+  editComment,
+  fetchComments,
+} from '@/app/actions'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import type { Comment, TreeItem } from '@/lib/contracts'
+import { cn } from '@/lib/utils'
+
+type CommentsPanelProps = {
+  item: TreeItem | null
+  className?: string
+}
+
+export function CommentsPanel({ item, className }: CommentsPanelProps) {
+  const [comments, setComments] = React.useState<Comment[]>([])
+  const [draft, setDraft] = React.useState('')
+  const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [editingBody, setEditingBody] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+
+  const itemId = item?.id ?? null
+
+  const loadComments = React.useCallback(async () => {
+    if (!itemId) {
+      setComments([])
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    try {
+      setComments(await fetchComments(itemId))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load')
+    } finally {
+      setLoading(false)
+    }
+  }, [itemId])
+
+  React.useEffect(() => {
+    void loadComments()
+  }, [loadComments])
+
+  async function addCurrentComment(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!itemId || !draft.trim()) {
+      return
+    }
+
+    setError(null)
+    try {
+      await createComment(itemId, { body: draft.trim() })
+      setDraft('')
+      await loadComments()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to add')
+    }
+  }
+
+  async function saveComment(commentId: string) {
+    if (!editingBody.trim()) {
+      return
+    }
+
+    setError(null)
+    try {
+      await editComment(commentId, { body: editingBody.trim() })
+      setEditingId(null)
+      setEditingBody('')
+      await loadComments()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to save')
+    }
+  }
+
+  async function removeComment(commentId: string) {
+    setError(null)
+    try {
+      await deleteComment(commentId)
+      await loadComments()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to delete')
+    }
+  }
+
+  return (
+    <aside
+      className={cn(
+        'border-border flex min-h-0 flex-col border-l pl-4',
+        className
+      )}
+      aria-label="Comments"
+    >
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-foreground flex items-center gap-2 text-sm font-semibold">
+            <MessageSquare className="size-4" aria-hidden="true" />
+            Comments
+          </div>
+          <div className="text-muted-foreground truncate text-xs">
+            {item ? item.title : 'Select a row'}
+          </div>
+        </div>
+        {loading ? (
+          <span className="text-muted-foreground text-xs">Loading</span>
+        ) : null}
+      </div>
+
+      <div className="min-h-24 flex-1 space-y-2 overflow-y-auto pr-1">
+        {comments.map((comment) => (
+          <div
+            key={comment.id}
+            className="border-border bg-muted/20 rounded-md border p-2"
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-muted-foreground truncate text-xs">
+                {comment.author}
+              </span>
+              <div className="flex items-center gap-1">
+                {editingId === comment.id ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label="Save comment"
+                      onClick={() => void saveComment(comment.id)}
+                    >
+                      <Check className="size-3.5" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label="Cancel comment edit"
+                      onClick={() => {
+                        setEditingId(null)
+                        setEditingBody('')
+                      }}
+                    >
+                      <X className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label="Edit comment"
+                      onClick={() => {
+                        setEditingId(comment.id)
+                        setEditingBody(comment.body)
+                      }}
+                    >
+                      <Pencil className="size-3.5" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label="Delete comment"
+                      onClick={() => void removeComment(comment.id)}
+                    >
+                      <Trash2 className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+            {editingId === comment.id ? (
+              <Input
+                value={editingBody}
+                onChange={(event) => setEditingBody(event.target.value)}
+                aria-label="Comment body"
+                className="h-8"
+              />
+            ) : (
+              <p className="text-foreground text-sm leading-snug">
+                {comment.body}
+              </p>
+            )}
+          </div>
+        ))}
+        {comments.length === 0 && !loading ? (
+          <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
+            No comments
+          </div>
+        ) : null}
+      </div>
+
+      <form
+        className="mt-3 flex items-center gap-2"
+        onSubmit={addCurrentComment}
+      >
+        <Input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          disabled={!item}
+          aria-label="New comment"
+          placeholder="Add comment"
+          className="h-8"
+        />
+        <Button
+          type="submit"
+          size="icon"
+          disabled={!item || !draft.trim()}
+          aria-label="Add comment"
+          className="size-8"
+        >
+          <Send className="size-3.5" aria-hidden="true" />
+        </Button>
+      </form>
+      {error ? (
+        <div className="text-destructive mt-2 text-xs" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </aside>
+  )
+}

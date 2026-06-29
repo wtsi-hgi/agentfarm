@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  commentListSchema,
+  commentSchema,
+  deletedResponseSchema,
+  dependencySchema,
   healthResponseSchema,
   itemSchema,
+  markerListSchema,
+  markerSchema,
   messageResponseSchema,
   priorityResponseSchema,
+  markerChangeItemsSchema,
   treeSchema,
 } from '@/lib/contracts'
 
@@ -147,5 +154,87 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     const result = treeSchema.safeParse([withoutActionable])
 
     expect(result.success).toBe(false)
+  })
+})
+
+describe('mutation response contracts', () => {
+  it('parses DeletedResponse payloads', () => {
+    const payload = { deleted: true, id: 'item-1' }
+
+    expect(deletedResponseSchema.parse(payload)).toEqual(payload)
+  })
+
+  it('parses explicit dependency payloads', () => {
+    const payload = {
+      id: 'dep-1',
+      from_id: 'item-1',
+      to_id: 'item-2',
+      kind: 'explicit',
+    }
+
+    expect(dependencySchema.parse(payload)).toEqual(payload)
+    expect(
+      dependencySchema.safeParse({ ...payload, kind: 'implicit' }).success
+    ).toBe(false)
+  })
+})
+
+describe('comment contracts', () => {
+  const comment = {
+    id: 'comment-1',
+    item_id: 'item-1',
+    author: 'alice',
+    body: 'Looks good',
+    created_at: '2026-06-29T00:00:00.000000Z',
+    updated_at: '2026-06-29T00:00:00.000000Z',
+  }
+
+  it('parses CommentOut payloads and lists', () => {
+    expect(commentSchema.parse(comment)).toEqual(comment)
+    expect(commentListSchema.parse([comment])).toEqual([comment])
+  })
+
+  it('rejects comments without authors', () => {
+    const { author: _author, ...withoutAuthor } = comment
+
+    expect(commentSchema.safeParse(withoutAuthor).success).toBe(false)
+  })
+})
+
+describe('marker contracts', () => {
+  const marker = {
+    id: 'marker-1',
+    name: 'Before launch',
+    at: '2026-06-29T00:00:00.000000Z',
+    created_at: '2026-06-29T00:00:00.000000Z',
+  }
+
+  it('parses MarkerOut payloads and lists', () => {
+    expect(markerSchema.parse(marker)).toEqual(marker)
+    expect(markerListSchema.parse([marker])).toEqual([marker])
+  })
+
+  it('uses ItemOut for marker change windows', () => {
+    const item = {
+      id: 'changed-1',
+      title: 'Changed item',
+      slug: 'changed-item',
+      parent_id: null,
+      sort_order: 1,
+      state: 'not-started',
+      mode: 'prompt-agent',
+      effort: 'medium',
+      blocked_external: false,
+      blocked_note: null,
+      blocked_followup_date: null,
+      created_by: 'alice',
+      updated_by: 'alice',
+      created_at: '2026-06-29T00:00:00.000000Z',
+      updated_at: '2026-06-29T01:00:00.000000Z',
+      state_changed_at: '2026-06-29T00:00:00.000000Z',
+      completed_at: null,
+    }
+
+    expect(markerChangeItemsSchema.parse([item])).toEqual([item])
   })
 })

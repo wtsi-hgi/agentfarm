@@ -97,3 +97,59 @@ export const treeItemSchema = itemSchema
 export const treeSchema = z.array(treeItemSchema)
 
 export type TreeItem = z.infer<typeof treeItemSchema>
+
+export const deletedResponseSchema = z.object({
+  deleted: z.boolean(),
+  id: z.string(),
+})
+
+export type DeletedResponse = z.infer<typeof deletedResponseSchema>
+
+export const dependencySchema = z
+  .object({
+    id: z.string(),
+    from_id: z.string(),
+    to_id: z.string(),
+    kind: z.literal('explicit'),
+  })
+  .strict()
+
+export type Dependency = z.infer<typeof dependencySchema>
+
+export const commentSchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    author: z.string(),
+    body: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  })
+  .strict()
+
+export const commentListSchema = z.array(commentSchema)
+
+export type Comment = z.infer<typeof commentSchema>
+
+export const markerSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    at: z.string(),
+    created_at: z.string(),
+  })
+  .strict()
+
+export const markerListSchema = z.array(markerSchema)
+
+export type Marker = z.infer<typeof markerSchema>
+
+export const markerChangeFieldSchema = z.enum([
+  'created',
+  'changed',
+  'completed',
+])
+
+export type MarkerChangeField = z.infer<typeof markerChangeFieldSchema>
+
+export const markerChangeItemsSchema = z.array(itemSchema)
