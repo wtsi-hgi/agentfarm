@@ -108,6 +108,21 @@ export async function createNextSibling(
   })
 }
 
+export async function createFirstRoot(
+  title: string,
+  actions: Pick<RowMutationActions, 'createItem'>
+): Promise<{ id: string }> {
+  const trimmedTitle = title.trim()
+  if (!trimmedTitle) {
+    throw new Error('Title is required')
+  }
+
+  return actions.createItem({
+    title: trimmedTitle,
+    parent_id: null,
+  })
+}
+
 export async function applyRowKeyboardCommand(
   item: TreeItem,
   text: string,

@@ -53,29 +53,103 @@ def _delete_group_implicit_edges(
     )
 
 
+def _self_and_ancestor_ids(conn: sqlite3.Connection, item_id: str) -> list[str]:
+    """Return ``item_id`` followed by its ancestors up to the root."""
+    ids: list[str] = []
+    current: str | None = item_id
+    visited: set[str] = set()
+    while current is not None and current not in visited:
+        visited.add(current)
+        row = conn.execute(
+            "SELECT parent_id FROM items WHERE id = ?", (current,)
+        ).fetchone()
+        if row is None:
+            break
+        ids.append(current)
+        current = row["parent_id"]
+    return ids
+
+
+def _descendant_ids(conn: sqlite3.Connection, item_id: str) -> list[str]:
+    """Return every descendant id under ``item_id``."""
+    descendants: list[str] = []
+    frontier = [item_id]
+    visited = {item_id}
+
+    while frontier:
+        current = frontier.pop()
+        rows = conn.execute(
+            "SELECT id FROM items WHERE parent_id = ?", (current,)
+        ).fetchall()
+        for row in rows:
+            child_id = row["id"]
+            if child_id in visited:
+                continue
+            visited.add(child_id)
+            descendants.append(child_id)
+            frontier.append(child_id)
+
+    return descendants
+
+
+def _self_and_descendant_ids(conn: sqlite3.Connection, item_id: str) -> set[str]:
+    """Return ``item_id`` and every id nested below it."""
+    return {item_id, *_descendant_ids(conn, item_id)}
+
+
+def _dependency_target_ids(conn: sqlite3.Connection, item_ids: list[str]) -> list[str]:
+    """Return explicit dependency targets originating from any supplied id."""
+    if not item_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in item_ids)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT to_id
+        FROM dependencies
+        WHERE from_id IN ({placeholders})
+        """,
+        tuple(item_ids),
+    ).fetchall()
+    return [row["to_id"] for row in rows]
+
+
+def _reachable_successor_ids(conn: sqlite3.Connection, item_id: str) -> set[str]:
+    """Return ids reachable from ``item_id`` in the effective dependency graph."""
+    successors = set(_descendant_ids(conn, item_id))
+
+    for target_id in _dependency_target_ids(
+        conn, _self_and_ancestor_ids(conn, item_id)
+    ):
+        successors.add(target_id)
+        successors.update(_descendant_ids(conn, target_id))
+
+    return successors
+
+
 def would_create_cycle(conn: sqlite3.Connection, from_id: str, to_id: str) -> bool:
     """Return whether adding edge ``from_id -> to_id`` would create a cycle.
 
     True if ``from_id == to_id`` (a self-edge), or if ``to_id`` can already
-    reach ``from_id`` over the dependency graph. In that case, adding
-    ``from_id -> to_id`` would close a directed cycle.
+    reach ``from_id`` or one of its descendants over the effective dependency
+    graph. Effective reachability includes explicit edges attached to the
+    current item or any ancestor section, and a reached container includes its
+    subtree because depending on a container waits for the whole container.
     """
     if from_id == to_id:
         return True
 
+    cycle_targets = _self_and_descendant_ids(conn, from_id)
     visited: set[str] = set()
     frontier: list[str] = [to_id]
     while frontier:
         current = frontier.pop()
-        if current == from_id:
+        if current in cycle_targets:
             return True
         if current in visited:
             continue
         visited.add(current)
-        rows = conn.execute(
-            "SELECT to_id FROM dependencies WHERE from_id = ?", (current,)
-        ).fetchall()
-        frontier.extend(row["to_id"] for row in rows)
+        frontier.extend(_reachable_successor_ids(conn, current) - visited)
     return False
 
 

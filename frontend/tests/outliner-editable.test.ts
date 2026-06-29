@@ -6,6 +6,7 @@ import { Outliner } from '@/components/outliner'
 import {
   NEW_ITEM_TITLE,
   applyRowKeyboardCommand,
+  createFirstRoot,
   moveRowAfter,
   submitRowText,
 } from '@/lib/outliner-mutations'
@@ -120,6 +121,29 @@ describe('editable outliner behaviours', () => {
       after_id: 'target',
     })
     expect(actions.createDependency).not.toHaveBeenCalled()
+  })
+
+  it('creates the first root item without deriving dependency edges', async () => {
+    const actions = mutationActions()
+
+    await createFirstRoot(' First product ', actions)
+
+    expect(actions.createItem).toHaveBeenCalledWith({
+      title: 'First product',
+      parent_id: null,
+    })
+    expect(actions.createItem.mock.calls[0]?.[0]).not.toHaveProperty('after_id')
+    expect(actions.createDependency).not.toHaveBeenCalled()
+  })
+
+  it('renders a first-root creator in the primary surface when empty', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(Outliner, { items: [] })
+    )
+
+    expect(markup).toContain('aria-label="First root title"')
+    expect(markup).toContain('Create root')
+    expect(markup).toContain('aria-label="Create root"')
   })
 
   it('renders editable row, comment, move, delete, and marker controls from the primary surface', () => {

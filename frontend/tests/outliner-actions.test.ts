@@ -182,6 +182,48 @@ describe('outliner mutation Server Actions', () => {
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
 
+  it('creates a first root item without calling dependency endpoints', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'POST' && pathname === '/api/v1/items') {
+        return jsonResponse(item({ id: 'created', title: 'First product' }))
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await createItem({
+      title: 'First product',
+      parent_id: null,
+    })
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      {
+        method: 'POST',
+        path: '/api/v1/items',
+        body: {
+          title: 'First product',
+          parent_id: null,
+        },
+      },
+    ])
+    expect(
+      fetch.mock.calls.some(
+        ([url]) => new URL(url.toString()).pathname === '/api/v1/dependencies'
+      )
+    ).toBe(false)
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+  })
+
   it('calls explicit dependency endpoints without deriving them from moves', async () => {
     const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const pathname = new URL(url.toString()).pathname

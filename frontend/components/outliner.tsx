@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { Plus } from 'lucide-react'
 
 import {
   addDependency,
@@ -19,11 +20,15 @@ import {
   focusAndScrollOutlinerItem,
   resolveJumpState,
 } from '@/components/product-switcher'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ModeToggles } from '@/components/view-controls'
 import type { Mode, PriorityItem, TreeItem } from '@/lib/contracts'
 import {
   applyRowKeyboardCommand,
+  createFirstRoot,
   moveRowAfter,
+  NEW_ITEM_TITLE,
   submitRowText,
   type RowKeyboardCommand,
   type RowMutationActions,
@@ -59,6 +64,64 @@ type OutlinerProps = {
 }
 
 type ChildMap = Map<string | null, TreeItem[]>
+
+type FirstRootCreatorProps = {
+  onCreate: (title: string) => Promise<void>
+}
+
+function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
+  const [draft, setDraft] = React.useState(NEW_ITEM_TITLE)
+  const [pending, setPending] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const trimmedDraft = draft.trim()
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!trimmedDraft || pending) {
+      return
+    }
+
+    setPending(true)
+    setError(null)
+    try {
+      await onCreate(trimmedDraft)
+      setDraft(NEW_ITEM_TITLE)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Action failed')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <form
+      className="bg-muted/30 flex min-h-12 flex-col gap-2 px-2 py-2 sm:flex-row sm:items-center"
+      onSubmit={handleSubmit}
+    >
+      <Input
+        aria-label="First root title"
+        className="h-9 min-w-0 flex-1"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <Button
+        type="submit"
+        size="sm"
+        aria-label="Create root"
+        disabled={pending || !trimmedDraft}
+        className="shrink-0"
+      >
+        <Plus className="size-3.5" aria-hidden="true" />
+        Create root
+      </Button>
+      {error ? (
+        <div className="text-destructive text-xs" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </form>
+  )
+}
 
 function makePriorityRanks(
   priorityItems: readonly Pick<PriorityItem, 'id' | 'rank'>[] = []
@@ -433,6 +496,13 @@ export function Outliner({
     setSelectedItemId(draggedItem.id)
   }
 
+  async function createRoot(title: string) {
+    const created = await createFirstRoot(title, mutationActions)
+    setSessionNewlyAddedIds((current) => new Set(current).add(created.id))
+    setFocusedItemId(created.id)
+    setSelectedItemId(created.id)
+  }
+
   return (
     <div className={cn('space-y-3', className)}>
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
@@ -455,87 +525,91 @@ export function Outliner({
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="divide-border border-border min-w-0 divide-y border-y text-sm">
-          {rows.map(
-            ({
-              item,
-              depth,
-              hasChildren,
-              collapsed,
-              filteredOutNewlyAdded,
-            }) => {
-              const targets = moveTargets(items, item)
+          {items.length === 0 ? (
+            <FirstRootCreator onCreate={createRoot} />
+          ) : (
+            rows.map(
+              ({
+                item,
+                depth,
+                hasChildren,
+                collapsed,
+                filteredOutNewlyAdded,
+              }) => {
+                const targets = moveTargets(items, item)
 
-              return (
-                <div
-                  key={item.id}
-                  data-outliner-item-id={item.id}
-                  tabIndex={-1}
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData('text/plain', item.id)
-                    setDraggingItemId(item.id)
-                  }}
-                  onDragEnd={() => setDraggingItemId(null)}
-                  onDragOver={(event) => {
-                    const draggedId =
-                      draggingItemId ||
-                      event.dataTransfer.getData('text/plain') ||
-                      null
-                    if (draggedId && draggedId !== item.id) {
-                      event.preventDefault()
-                    }
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault()
-                    const draggedId =
-                      draggingItemId ||
-                      event.dataTransfer.getData('text/plain') ||
-                      null
-                    setDraggingItemId(null)
-                    if (draggedId) {
-                      void moveDraggedAfter(draggedId, item.id)
-                    }
-                  }}
-                  className={cn(
-                    'focus-visible:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-inset',
-                    focusedItemId === item.id && 'bg-accent/60',
-                    draggingItemId === item.id && 'opacity-60'
-                  )}
-                >
-                  <OutlinerRow
-                    item={item}
-                    depth={depth}
-                    hasChildren={hasChildren}
-                    collapsed={collapsed}
-                    selected={selectedItemId === item.id}
-                    canMoveUp={Boolean(targets.upAfterId)}
-                    canMoveDown={Boolean(targets.downAfterId)}
-                    onToggle={toggle}
-                    onSelect={(itemId) => setSelectedItemId(itemId)}
-                    onSubmitText={submitText}
-                    onKeyboardCommand={runKeyboardCommand}
-                    onDelete={removeItem}
-                    onMoveUp={moveUp}
-                    onMoveDown={moveDown}
-                    onOpenComments={(itemId) => {
-                      setSelectedItemId(itemId)
-                      setFocusedItemId(itemId)
+                return (
+                  <div
+                    key={item.id}
+                    data-outliner-item-id={item.id}
+                    tabIndex={-1}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', item.id)
+                      setDraggingItemId(item.id)
                     }}
-                  />
-                  {filteredOutNewlyAdded ? (
-                    <div
-                      className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
-                      style={{
-                        paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+                    onDragEnd={() => setDraggingItemId(null)}
+                    onDragOver={(event) => {
+                      const draggedId =
+                        draggingItemId ||
+                        event.dataTransfer.getData('text/plain') ||
+                        null
+                      if (draggedId && draggedId !== item.id) {
+                        event.preventDefault()
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault()
+                      const draggedId =
+                        draggingItemId ||
+                        event.dataTransfer.getData('text/plain') ||
+                        null
+                      setDraggingItemId(null)
+                      if (draggedId) {
+                        void moveDraggedAfter(draggedId, item.id)
+                      }
+                    }}
+                    className={cn(
+                      'focus-visible:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                      focusedItemId === item.id && 'bg-accent/60',
+                      draggingItemId === item.id && 'opacity-60'
+                    )}
+                  >
+                    <OutlinerRow
+                      item={item}
+                      depth={depth}
+                      hasChildren={hasChildren}
+                      collapsed={collapsed}
+                      selected={selectedItemId === item.id}
+                      canMoveUp={Boolean(targets.upAfterId)}
+                      canMoveDown={Boolean(targets.downAfterId)}
+                      onToggle={toggle}
+                      onSelect={(itemId) => setSelectedItemId(itemId)}
+                      onSubmitText={submitText}
+                      onKeyboardCommand={runKeyboardCommand}
+                      onDelete={removeItem}
+                      onMoveUp={moveUp}
+                      onMoveDown={moveDown}
+                      onOpenComments={(itemId) => {
+                        setSelectedItemId(itemId)
+                        setFocusedItemId(itemId)
                       }}
-                    >
-                      added this session, currently filtered out
-                    </div>
-                  ) : null}
-                </div>
-              )
-            }
+                    />
+                    {filteredOutNewlyAdded ? (
+                      <div
+                        className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
+                        style={{
+                          paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+                        }}
+                      >
+                        added this session, currently filtered out
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              }
+            )
           )}
         </div>
         <CommentsPanel item={selectedItem} />

@@ -303,6 +303,50 @@ async def test_post_dependency_rejects_opposite_section_edge(fresh_db) -> None:
 
 
 @pytest.mark.anyio
+async def test_post_dependency_rejects_inherited_section_cycle(fresh_db) -> None:
+    """D2: descendants inherit their section's explicit dependencies."""
+    async with _client() as client:
+        ids = await _build_outline(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["B"], "to_id": ids["A"]},
+        )
+        rejected = await _post_dependency(
+            client,
+            {"from_id": ids["A"], "to_id": ids["B1"]},
+        )
+
+    assert created.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["B"], ids["A"])}
+
+
+@pytest.mark.anyio
+async def test_post_dependency_rejects_cycle_through_container_target(
+    fresh_db,
+) -> None:
+    """D2: depending on a container reaches its descendant leaves."""
+    async with _client() as client:
+        ids = await _build_outline(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["A"], "to_id": ids["B"]},
+        )
+        rejected = await _post_dependency(
+            client,
+            {"from_id": ids["B1"], "to_id": ids["A"]},
+        )
+
+    assert created.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["A"], ids["B"])}
+
+
+@pytest.mark.anyio
 async def test_delete_dependency_restores_section_leaf_actionability(
     fresh_db,
 ) -> None:
