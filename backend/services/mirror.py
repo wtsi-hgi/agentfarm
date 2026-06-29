@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from config import settings
 from services import tree
 
 MIRROR_FILENAME = "tree.md"
@@ -77,6 +78,17 @@ def commit_tree(conn: sqlite3.Connection, mirror_dir: Path) -> MirrorCommitResul
     _git(repo_dir, "commit", "-m", "Update markdown mirror")
     commit = _git(repo_dir, "rev-parse", "HEAD").stdout.strip()
     return MirrorCommitResult(changed=True, commit=commit)
+
+
+def commit_current_tree(conn: sqlite3.Connection) -> MirrorCommitResult:
+    """Render and commit the tree to the configured mirror repo.
+
+    Endpoint mutators call this inside their request transaction after their DB
+    changes have succeeded. If rendering or git commit fails, the exception
+    propagates and the request transaction rolls back instead of silently
+    diverging from the mirror.
+    """
+    return commit_tree(conn, settings.mirror_dir)
 
 
 def _ensure_repo(repo_dir: Path) -> None:

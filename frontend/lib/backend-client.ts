@@ -5,7 +5,7 @@ import { errorResponseSchema } from './contracts'
 
 const DEFAULT_PORT = process.env.BACKEND_PORT ?? '8000'
 const backendOrigin = new URL(
-  process.env.BACKEND_URL ?? `http://127.0.0.1:${DEFAULT_PORT}`
+  process.env.BACKEND_URL ?? `https://127.0.0.1:${DEFAULT_PORT}`
 )
 const DISPATCHER_OPTIONS_SYMBOL = Symbol.for(
   'agentfarm.backendDispatcherOptions'

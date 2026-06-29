@@ -69,6 +69,8 @@ while [[ ${#} -gt 0 ]]; do
   esac
 done
 
+FRONTEND_BACKEND_URL="${BACKEND_URL:-https://127.0.0.1:${BACKEND_PORT}}"
+
 echo "Running frontend format and lint check on changed files..."
 
 # Get list of changed files in frontend directory that match supported extensions
@@ -80,7 +82,7 @@ if [ -n "$CHANGED_FILES" ]; then
     # Strip 'frontend/' prefix for running commands inside the directory
     RELATIVE_FILES=$(echo "$CHANGED_FILES" | sed 's/^frontend\///')
     RELATIVE_ESLINT_FILES=$(echo "$ESLINT_FILES" | sed 's/^frontend\///' || true)
-    
+
     # Run prettier on all files, eslint only on JS/TS files
     LINT_FAILED=0
     if ! (cd frontend && echo "$RELATIVE_FILES" | xargs pnpm prettier --write > /dev/null 2>&1); then
@@ -91,7 +93,7 @@ if [ -n "$CHANGED_FILES" ]; then
             LINT_FAILED=1
         fi
     fi
-    
+
     if [ "$LINT_FAILED" -eq 1 ]; then
         echo "Format or lint check failed on changed files. Running again with output:"
         (cd frontend && echo "$RELATIVE_FILES" | xargs pnpm prettier --write)
@@ -128,7 +130,7 @@ if [ -n "$BACKEND_CHANGED" ]; then
         if [ -x "backend/.venv/bin/ruff" ]; then
             RUFF_CMD="backend/.venv/bin/ruff"
         fi
-        
+
         if ! $RUFF_CMD check backend/ > /dev/null 2>&1; then
             echo "Backend lint check failed:"
             $RUFF_CMD check backend/
@@ -176,7 +178,7 @@ setsid bash -lc "cd backend && BACKEND_PORT=${BACKEND_PORT} ./run_uvicorn.sh" > 
 BACK_PID=$!
 
 echo "Starting frontend on port ${FRONTEND_PORT} (logs: logs/frontend.log)"
-setsid bash -lc "cd frontend && FRONTEND_PORT=${FRONTEND_PORT} BACKEND_PORT=${BACKEND_PORT} pnpm dev" > logs/frontend.log 2>&1 &
+setsid env FRONTEND_PORT="${FRONTEND_PORT}" BACKEND_PORT="${BACKEND_PORT}" BACKEND_URL="${FRONTEND_BACKEND_URL}" bash -lc "cd frontend && pnpm dev" > logs/frontend.log 2>&1 &
 FRONT_PID=$!
 
 echo "Frontend PID: ${FRONT_PID}, Backend PID: ${BACK_PID}"
@@ -186,17 +188,23 @@ if command -v curl >/dev/null; then
     wait_for_url() {
         local url="$1"
         local name="$2"
-    local pid="${3:-}"
+        local pid="${3:-}"
+        local curl_tls_flag="${4:-}"
+        local curl_args=()
         local max_attempts=60
         local attempt=1
 
+        if [[ -n "$curl_tls_flag" ]]; then
+            curl_args+=("$curl_tls_flag")
+        fi
+
         echo -n "Waiting for $name to be ready at $url..."
         while [ $attempt -le $max_attempts ]; do
-      if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
-        echo " Failed! $name process exited early (PID $pid)."
-        return 1
-      fi
-            if curl -s -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
+            if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+                echo " Failed! $name process exited early (PID $pid)."
+                return 1
+            fi
+            if curl "${curl_args[@]}" -s -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
                 echo " Ready!"
                 return 0
             fi
@@ -208,7 +216,7 @@ if command -v curl >/dev/null; then
         return 1
     }
 
-    wait_for_url "http://localhost:${BACKEND_PORT}/api/v1/health" "Backend" "${BACK_PID}"
+    wait_for_url "https://localhost:${BACKEND_PORT}/api/v1/health" "Backend" "${BACK_PID}" "-k"
     wait_for_url "http://localhost:${FRONTEND_PORT}/api/health" "Frontend" "${FRONT_PID}"
     # Warm up the main page so the first browser visit is fast
     wait_for_url "http://localhost:${FRONTEND_PORT}/" "Frontend (Warmup)" "${FRONT_PID}"

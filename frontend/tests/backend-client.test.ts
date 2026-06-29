@@ -42,6 +42,30 @@ describe('backend client TLS dispatch', () => {
     })
   })
 
+  it('defaults to the HTTPS dev backend origin when BACKEND_URL is absent', async () => {
+    vi.stubEnv('BACKEND_URL', undefined)
+    vi.stubEnv('BACKEND_PORT', '9443')
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: 'ok' }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    const { backendJson } = await import('@/lib/backend-client')
+
+    await backendJson('/api/v1/health', z.object({ status: z.string() }))
+
+    const [url, init] = fetch.mock.calls[0]
+    expect(url.toString()).toBe('https://127.0.0.1:9443/api/v1/health')
+    expect(init?.dispatcher).toBeDefined()
+    expect(init?.dispatcher).toMatchObject({
+      [Symbol.for('agentfarm.backendDispatcherOptions')]: {
+        connect: { rejectUnauthorized: false },
+      },
+    })
+  })
+
   it('does not attach a dispatcher for http backend origins', async () => {
     vi.stubEnv('BACKEND_URL', 'http://127.0.0.1:8000')
     const fetch = vi.fn().mockResolvedValue(

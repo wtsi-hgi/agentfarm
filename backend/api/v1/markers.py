@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.v1.authz import require_owner
 from db.connection import get_db
+from services import mirror
 from services.clock import now
 
 from ..schemas import ItemOut, MarkerCreate, MarkerOut
@@ -70,7 +71,9 @@ async def create_marker(
     )
 
     row = conn.execute("SELECT * FROM markers WHERE id = ?", (marker_id,)).fetchone()
-    return _row_to_marker(row)
+    marker = _row_to_marker(row)
+    mirror.commit_current_tree(conn)
+    return marker
 
 
 @router.get("/markers", response_model=list[MarkerOut])

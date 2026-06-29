@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_owner
 from db.connection import get_db
-from services import graph
+from services import graph, mirror
 
 from ..schemas import DeletedResponse, DependencyCreate, DependencyOut
 
@@ -76,7 +76,9 @@ async def create_dependency(
         f"SELECT {_DEPENDENCY_COLUMNS} FROM dependencies WHERE id = ?",
         (dependency_id,),
     ).fetchone()
-    return _row_to_dependency(row)
+    dependency = _row_to_dependency(row)
+    mirror.commit_current_tree(conn)
+    return dependency
 
 
 @router.delete("/dependencies/{dependency_id}", response_model=DeletedResponse)
@@ -97,4 +99,5 @@ async def delete_dependency(
         "DELETE FROM dependencies WHERE id = ? AND kind = 'explicit'",
         (dependency_id,),
     )
+    mirror.commit_current_tree(conn)
     return DeletedResponse(deleted=True, id=dependency_id)

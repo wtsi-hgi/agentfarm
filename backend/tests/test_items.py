@@ -106,6 +106,13 @@ def _item_row(db_path, item_id: str) -> dict:
     return dict(row)
 
 
+def _item_count(db_path) -> int:
+    """Return the number of persisted items."""
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT count(*) AS c FROM items").fetchone()
+    return int(row["c"])
+
+
 def _actionable(db_path) -> set[str]:
     """Return actionable item ids through the leverage service boundary."""
     with get_connection(db_path) as conn:
@@ -240,6 +247,36 @@ async def test_child_sorts_after_sibling_without_dependency(fresh_db) -> None:
 
     # Sibling order is organisational only; no dependency is derived.
     assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_create_unknown_parent_id_returns_404_without_insert(fresh_db) -> None:
+    """POST /items rejects an unknown parent before writing anything."""
+    async with _client() as client:
+        response = await _create(
+            client,
+            {"title": "Orphan", "parent_id": str(uuid.uuid4())},
+        )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "item not found"}
+    assert _item_count(fresh_db) == 0
+
+
+@pytest.mark.anyio
+async def test_create_unknown_after_id_returns_404_without_insert(fresh_db) -> None:
+    """POST /items rejects an unknown sibling anchor before writing the item."""
+    async with _client() as client:
+        existing = await _create(client, {"title": "Existing"})
+        response = await _create(
+            client,
+            {"title": "Unanchored", "after_id": str(uuid.uuid4())},
+        )
+
+    assert existing.status_code == 200
+    assert response.status_code == 404
+    assert response.json() == {"detail": "item not found"}
+    assert _item_count(fresh_db) == 1
 
 
 # --- A2: Edit item fields and timestamp/slug behaviour ----------------------

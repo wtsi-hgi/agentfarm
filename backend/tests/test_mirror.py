@@ -7,8 +7,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
-from db.migrate import apply_schema
+import config
+from db.migrate import apply_migrations, apply_schema
 from services.mirror import MIRROR_FILENAME, commit_tree, render_tree
 
 
@@ -23,6 +25,39 @@ def conn() -> sqlite3.Connection:
         yield connection
     finally:
         connection.close()
+
+
+@pytest.fixture
+def fresh_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the FastAPI app at fresh on-disk data under ``tmp_path``."""
+    monkeypatch.setattr(config.settings, "data_dir", tmp_path)
+    apply_migrations()
+    return tmp_path
+
+
+def _client() -> AsyncClient:
+    """An ``AsyncClient`` bound to the ASGI app (no network)."""
+    from main import app
+
+    transport = ASGITransport(app=app)
+    return AsyncClient(transport=transport, base_url="http://testserver")
+
+
+async def _create_item(client: AsyncClient, body: dict) -> dict:
+    """Create an item over HTTP and return the response body."""
+    response = await client.post("/api/v1/items", json=body)
+    assert response.status_code == 200
+    return response.json()
+
+
+def _mirror_dir(data_dir: Path) -> Path:
+    """Return the configured mirror repo path under a test data dir."""
+    return data_dir / "mirror"
+
+
+def _mirror_text(data_dir: Path) -> str:
+    """Return the rendered mirror file text."""
+    return (_mirror_dir(data_dir) / MIRROR_FILENAME).read_text(encoding="utf-8")
 
 
 def _insert_item(
@@ -216,6 +251,116 @@ def test_commit_tree_commits_needs_slug_churn_after_rename(
     rendered = (mirror_dir / MIRROR_FILENAME).read_text(encoding="utf-8")
     assert rendered.splitlines()[0] == "- [ ] X (needs: deploy-database)"
     assert _git(mirror_dir, "show", f"HEAD:{MIRROR_FILENAME}") == rendered
+
+
+@pytest.mark.anyio
+async def test_item_mutations_commit_markdown_mirror_via_http(
+    fresh_app_data: Path,
+) -> None:
+    """Item create/update endpoints render and commit the configured mirror."""
+    mirror_dir = _mirror_dir(fresh_app_data)
+
+    async with _client() as client:
+        item = await _create_item(client, {"title": "Alpha"})
+
+        assert (mirror_dir / ".git").is_dir()
+        assert _mirror_text(fresh_app_data) == "- [ ] Alpha"
+        assert _git(mirror_dir, "rev-list", "--count", "HEAD") == "1"
+
+        renamed = await client.patch(
+            f"/api/v1/items/{item['id']}",
+            json={"title": "Beta"},
+        )
+        assert renamed.status_code == 200
+
+        assert _mirror_text(fresh_app_data) == "- [ ] Beta"
+        assert _git(mirror_dir, "rev-list", "--count", "HEAD") == "2"
+
+        unchanged_render = await client.patch(
+            f"/api/v1/items/{item['id']}",
+            json={"effort": "long"},
+        )
+
+    assert unchanged_render.status_code == 200
+    assert _mirror_text(fresh_app_data) == "- [ ] Beta"
+    assert _git(mirror_dir, "rev-list", "--count", "HEAD") == "2"
+
+
+@pytest.mark.anyio
+async def test_dependency_mutations_update_markdown_mirror_via_http(
+    fresh_app_data: Path,
+) -> None:
+    """Dependency create/delete endpoints update live needs labels in the mirror."""
+    mirror_dir = _mirror_dir(fresh_app_data)
+
+    async with _client() as client:
+        dependent = await _create_item(client, {"title": "Dependent"})
+        target = await _create_item(client, {"title": "Target"})
+        before_dependency = _git(mirror_dir, "rev-list", "--count", "HEAD")
+
+        created = await client.post(
+            "/api/v1/dependencies",
+            json={"from_id": dependent["id"], "to_id": target["id"]},
+        )
+        assert created.status_code == 200
+
+        assert _mirror_text(fresh_app_data).splitlines()[0] == (
+            "- [ ] Dependent (needs: target)"
+        )
+        assert int(_git(mirror_dir, "rev-list", "--count", "HEAD")) == (
+            int(before_dependency) + 1
+        )
+
+        deleted = await client.delete(f"/api/v1/dependencies/{created.json()['id']}")
+
+    assert deleted.status_code == 200
+    assert _mirror_text(fresh_app_data).splitlines()[0] == "- [ ] Dependent"
+
+
+@pytest.mark.anyio
+async def test_marker_mutation_initialises_markdown_mirror_via_http(
+    fresh_app_data: Path,
+) -> None:
+    """Marker creation also runs the configured mirror hook."""
+    mirror_dir = _mirror_dir(fresh_app_data)
+
+    async with _client() as client:
+        created = await client.post("/api/v1/markers", json={"name": "Checkpoint"})
+
+    assert created.status_code == 200
+    assert (mirror_dir / ".git").is_dir()
+    assert _mirror_text(fresh_app_data) == ""
+    assert _git(mirror_dir, "rev-list", "--count", "HEAD") == "1"
+
+
+@pytest.mark.anyio
+async def test_comment_mutations_do_not_commit_markdown_mirror(
+    fresh_app_data: Path,
+) -> None:
+    """Comment creates/updates/deletes stay out of the markdown mirror."""
+    mirror_dir = _mirror_dir(fresh_app_data)
+
+    async with _client() as client:
+        item = await _create_item(client, {"title": "Discuss"})
+        committed = _git(mirror_dir, "rev-list", "--count", "HEAD")
+
+        created = await client.post(
+            f"/api/v1/items/{item['id']}/comments",
+            json={"body": "Looks good"},
+        )
+        assert created.status_code == 200
+
+        edited = await client.patch(
+            f"/api/v1/comments/{created.json()['id']}",
+            json={"body": "Still looks good"},
+        )
+        assert edited.status_code == 200
+
+        deleted = await client.delete(f"/api/v1/comments/{created.json()['id']}")
+
+    assert deleted.status_code == 200
+    assert _git(mirror_dir, "rev-list", "--count", "HEAD") == committed
+    assert _mirror_text(fresh_app_data) == "- [ ] Discuss"
 
 
 def _git(repo: Path, *args: str) -> str:

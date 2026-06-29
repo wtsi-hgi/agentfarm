@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.v1.authz import require_owner
 from db.connection import get_db
 from models.enums import State, is_complete
-from services import graph, leverage, tree
+from services import graph, leverage, mirror, tree
 from services.clock import now
 from services.identity import current_actor
 
@@ -115,6 +115,11 @@ async def create_item(
     null). Defaults fill any omitted field. Sibling order is organisational only:
     creation does not add a dependency on neighbouring items.
     """
+    if payload.parent_id is not None and not _item_exists(conn, payload.parent_id):
+        raise HTTPException(status_code=404, detail="item not found")
+    if payload.after_id is not None and not _item_exists(conn, payload.after_id):
+        raise HTTPException(status_code=404, detail="item not found")
+
     item_id = str(uuid.uuid4())
     slug = tree.derive_unique_slug(conn, payload.title)
     sort_order = tree.compute_sort_order(conn, payload.parent_id, payload.after_id)
@@ -161,7 +166,9 @@ async def create_item(
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
     ).fetchone()
-    return _row_to_item(row)
+    item = _row_to_item(row)
+    mirror.commit_current_tree(conn)
+    return item
 
 
 @router.delete("/items/{item_id}", response_model=DeletedResponse)
@@ -203,6 +210,7 @@ async def delete_item(
     # are already gone via cascade; no order-derived replacement edge is added.
     graph.regenerate_group(conn, parent_id)
 
+    mirror.commit_current_tree(conn)
     return DeletedResponse(deleted=True, id=item_id)
 
 
@@ -241,7 +249,9 @@ async def indent_item(
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
     ).fetchone()
-    return _row_to_item(row)
+    item = _row_to_item(row)
+    mirror.commit_current_tree(conn)
+    return item
 
 
 @router.post("/items/{item_id}/outdent", response_model=ItemOut)
@@ -284,7 +294,9 @@ async def outdent_item(
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
     ).fetchone()
-    return _row_to_item(row)
+    item = _row_to_item(row)
+    mirror.commit_current_tree(conn)
+    return item
 
 
 @router.post("/items/{item_id}/move", response_model=ItemOut)
@@ -347,7 +359,9 @@ async def move_item(
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
     ).fetchone()
-    return _row_to_item(row)
+    item = _row_to_item(row)
+    mirror.commit_current_tree(conn)
+    return item
 
 
 @router.get("/tree", response_model=list[TreeItemOut])
@@ -469,4 +483,6 @@ async def update_item(
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
     ).fetchone()
-    return _row_to_item(row)
+    item = _row_to_item(row)
+    mirror.commit_current_tree(conn)
+    return item
