@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     whitelist_raw: str = Field(default="", alias="AGENTFARM_WHITELIST")
 
     # TLS: paths to an existing cert/key pair; when unset a self-signed pair is
-    # generated at startup under ``data_dir`` (Phase 14).
+    # generated at startup under ``data_dir`` (K4).
     tls_cert: str | None = Field(default=None, alias="AGENTFARM_TLS_CERT")
     tls_key: str | None = Field(default=None, alias="AGENTFARM_TLS_KEY")
 

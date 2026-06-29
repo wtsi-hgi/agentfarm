@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.v1.authz import require_identity
 from db.connection import get_db
 from services.clock import now
 from services.identity import current_actor
@@ -52,6 +53,7 @@ def _ensure_author(row: sqlite3.Row) -> None:
 async def create_comment(
     item_id: str,
     payload: CommentCreate,
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> CommentOut:
     """Create a comment on an existing item, authored by the current actor."""
@@ -97,6 +99,7 @@ async def list_comments(
 async def update_comment(
     comment_id: str,
     payload: CommentUpdate,
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> CommentOut:
     """Edit a comment body, allowed only for its original author."""
@@ -116,6 +119,7 @@ async def update_comment(
 @router.delete("/comments/{comment_id}", response_model=DeletedResponse)
 async def delete_comment(
     comment_id: str,
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> DeletedResponse:
     """Delete a comment, allowed only for its original author."""

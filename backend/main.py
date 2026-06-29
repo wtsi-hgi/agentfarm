@@ -10,6 +10,8 @@ from httpx import AsyncClient
 from api import api_v1_router
 from config import settings
 from db.migrate import apply_migrations
+from services.auth_ldap import validate_dn_template
+from services.tls import prepare_tls_paths
 
 logger = logging.getLogger("llm_kb.api")
 
@@ -36,6 +38,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "Starting %s", settings.app_name, extra={"version": settings.app_version}
     )
+
+    if settings.ldap_dn_template is not None:
+        validate_dn_template(settings.ldap_dn_template)
+
+    tls_paths = prepare_tls_paths(
+        data_dir=settings.data_dir,
+        configured_cert=settings.tls_cert,
+        configured_key=settings.tls_key,
+    )
+    app.state.tls_cert_path = tls_paths.cert
+    app.state.tls_key_path = tls_paths.key
+    logger.info("TLS ready with certificate at %s", tls_paths.cert)
 
     # Initialise the SQLite database under data_dir: ensure the directory
     # exists (handled by the connection helper) and apply the schema

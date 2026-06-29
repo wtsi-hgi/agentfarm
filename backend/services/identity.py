@@ -1,25 +1,24 @@
-"""The acting user for a mutation, resolved in exactly one place.
-
-Item ``created_by`` / ``updated_by`` (and later comment authorship) record "the
-authenticated owner". Real session-based authentication is not built until a
-later phase; until then the actor is the configured owner
-(``settings.owner``).
-
-Resolving it through :func:`current_actor` (rather than reading
-``settings.owner`` at every call site) means the later auth phase can swap this
-single function for one that reads the request's session identity without
-touching the item/edge logic.
-"""
+"""The acting user for a mutation, resolved in exactly one place."""
 
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
+
 from config import settings
+
+_current_actor: ContextVar[str | None] = ContextVar("current_actor", default=None)
+
+
+def set_current_actor(username: str) -> Token[str | None]:
+    """Set the current request actor and return a reset token."""
+    return _current_actor.set(username)
+
+
+def reset_current_actor(token: Token[str | None]) -> None:
+    """Restore the actor context to its previous value."""
+    _current_actor.reset(token)
 
 
 def current_actor() -> str:
-    """Return the username to record as the actor for a mutation.
-
-    For now this is the configured owner. A later phase replaces the body with
-    the authenticated session identity; callers and stored data are unaffected.
-    """
-    return settings.owner
+    """Return the username to record as the actor for a mutation."""
+    return _current_actor.get() or settings.owner

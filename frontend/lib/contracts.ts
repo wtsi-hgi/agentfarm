@@ -19,6 +19,13 @@ export const errorResponseSchema = z.object({
 
 export type ErrorResponse = z.infer<typeof errorResponseSchema>
 
+export const whoamiSchema = z.object({
+  username: z.string().min(1),
+  role: z.enum(['owner', 'viewer']),
+})
+
+export type WhoAmI = z.infer<typeof whoamiSchema>
+
 // Closed enum sets, mirroring backend models/enums.py (exact lowercase values).
 export const stateSchema = z.enum([
   'not-started',

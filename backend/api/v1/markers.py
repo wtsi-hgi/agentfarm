@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from api.v1.authz import require_owner
 from db.connection import get_db
 from services.clock import now
 
@@ -52,6 +53,7 @@ def _marker_at(conn: sqlite3.Connection, marker_id: str) -> str:
 @router.post("/markers", response_model=MarkerOut)
 async def create_marker(
     payload: MarkerCreate,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> MarkerOut:
     """Create a named marker, defaulting ``at`` to the current clock instant."""

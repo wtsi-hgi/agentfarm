@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.v1.authz import require_owner
 from db.connection import get_db
 from services import graph
 
@@ -50,6 +51,7 @@ def _resolve_target_id(conn: sqlite3.Connection, payload: DependencyCreate) -> s
 @router.post("/dependencies", response_model=DependencyOut)
 async def create_dependency(
     payload: DependencyCreate,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> DependencyOut:
     """Create an explicit dependency edge, resolving ``needs_slug`` once (D1)."""
@@ -80,6 +82,7 @@ async def create_dependency(
 @router.delete("/dependencies/{dependency_id}", response_model=DeletedResponse)
 async def delete_dependency(
     dependency_id: str,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> DeletedResponse:
     """Delete an explicit dependency edge by id (D3)."""

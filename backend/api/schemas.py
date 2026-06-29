@@ -19,6 +19,20 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class LoginRequest(BaseModel):
+    """Request body for ``POST /auth/login`` (spec: K1)."""
+
+    username: str
+    password: str
+
+
+class WhoAmI(BaseModel):
+    """Authenticated identity returned by auth endpoints (spec: K1/K2)."""
+
+    username: str
+    role: Literal["owner", "viewer"]
+
+
 class ItemCreate(BaseModel):
     """Request body for ``POST /items`` (spec: A1).
 

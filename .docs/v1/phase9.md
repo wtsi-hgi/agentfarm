@@ -28,8 +28,8 @@ interface; validate the template contains the placeholder at startup) and POST
 tests from K1 (successful stub bind; failed bind -> 401; missing-placeholder
 startup error; correct bind DN from `%s` template).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 9.2: K2 - Owner and whitelist roles
 
@@ -42,8 +42,8 @@ implicitly allowed even if absent from the whitelist. Covers all 4 acceptance
 tests from K2 (owner role; viewer role; non-whitelisted 403; owner allowed
 despite absence from whitelist).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 9.3: K3 - Owner-only mutations; viewer read+comment
 
@@ -57,8 +57,8 @@ routes, with the backend re-checking role server-side. Covers all 4 acceptance
 tests from K3 (viewer mutation 403 and no create; viewer GET 200; viewer
 comment 200; no/invalid session rejected without mutation).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 9.4: K4 - Sessions and self-signed TLS
 
@@ -73,5 +73,5 @@ acceptance tests from K4 (self-signed cert generated and parses; configured
 files reused; session cookie is httpOnly; fetch agent has
 `rejectUnauthorized: false` for the self-signed origin).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

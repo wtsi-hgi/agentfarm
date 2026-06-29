@@ -18,6 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.v1.authz import require_owner
 from db.connection import get_db
 from models.enums import State, is_complete
 from services import graph, tree
@@ -102,6 +103,7 @@ def _preceding_sibling_id(conn: sqlite3.Connection, item_id: str) -> str | None:
 @router.post("/items", response_model=ItemOut)
 async def create_item(
     payload: ItemCreate,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> ItemOut:
     """Create an item with server-assigned id/slug/order/timestamps (A1).
@@ -165,6 +167,7 @@ async def create_item(
 @router.delete("/items/{item_id}", response_model=DeletedResponse)
 async def delete_item(
     item_id: str,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> DeletedResponse:
     """Delete an item and its whole subtree, then clean the group it left (A4).
@@ -206,6 +209,7 @@ async def delete_item(
 @router.post("/items/{item_id}/indent", response_model=ItemOut)
 async def indent_item(
     item_id: str,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> ItemOut:
     """Indent an item: make it the first child of its preceding sibling (F2 Tab).
@@ -243,6 +247,7 @@ async def indent_item(
 @router.post("/items/{item_id}/outdent", response_model=ItemOut)
 async def outdent_item(
     item_id: str,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> ItemOut:
     """Outdent an item: move it up one level, after its former parent (F2 Shift-Tab).
@@ -286,6 +291,7 @@ async def outdent_item(
 async def move_item(
     item_id: str,
     payload: MoveRequest,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> ItemOut:
     """Reparent and/or reorder an item (and its whole subtree) (G1).
@@ -376,6 +382,7 @@ async def get_tree(
 async def update_item(
     item_id: str,
     payload: ItemUpdate,
+    _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> ItemOut:
     """Edit any subset of an item's fields (A2).
