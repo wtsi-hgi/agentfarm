@@ -133,6 +133,12 @@ class ItemOut(BaseModel):
     completed_at: str | None
 
 
+class PriorityItemOut(ItemOut):
+    """A ranked actionable leaf from GET ``/priority`` (spec: E1)."""
+
+    rank: int
+
+
 class DeletedResponse(BaseModel):
     """Response model for delete endpoints.
 

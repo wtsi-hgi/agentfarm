@@ -28,8 +28,8 @@ in `api/v1/priority.py` returning actionable leaves only, each with a 1-based
 (actionable set `{A1,B1,G1}`; order `[A1,B1,G1]` with ranks `1,2,3` and no
 score field).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 1 (parallel, after Item 5.1 is reviewed)
 
@@ -41,8 +41,8 @@ In `services/leverage.py`, confirm `MODE_WEIGHT` doubles only prompt-agent
 downstream. Covers the 1 acceptance test from E2 (`H1=16`, `I1=8`, order
 `[H1,I1]`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.3: E3 - Division by own effort [parallel with 5.2, 5.4, 5.5, 5.6]
 
@@ -52,8 +52,8 @@ In `services/leverage.py`, confirm dividing by the item's own effort ranks a
 cheap item above a costly one with equal downstream. Covers the 1 acceptance
 test from E3 (`A1=16/1` ranks strictly above `G1=16/8`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.4: E4 - Transitive downstream over open leaves only; containers excluded [parallel with 5.2, 5.3, 5.5, 5.6]
 
@@ -65,8 +65,8 @@ acceptance tests from E4 (container excluded / open child included =>
 `score(J1)=6`; completed leaf excluded => `score(K1)=0`; deeper explicit chain =>
 `score(M1)=17`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.5: E5 - Tie-break ordering [parallel with 5.2, 5.3, 5.4, 5.6]
 
@@ -77,8 +77,8 @@ scores: `updated_at` desc, then `created_at` desc, then `id` asc (inject
 clock/id generator for determinism). Covers all 3 acceptance tests from E5
 (updated_at desc; created_at desc; id asc).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.6: E6 - blocked_external excludes from actionable, not from downstream [parallel with 5.2, 5.3, 5.4, 5.5]
 
@@ -90,8 +90,8 @@ an upstream item's downstream/score. Covers all 2 acceptance tests from E6
 (`V1` blocked leaf absent; `W2` blocked but still downstream of `W1` =>
 `score(W1)=16`, actionable set exactly `{W1}`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
