@@ -24,8 +24,8 @@ completeness, explicit `>needs:` shown as a `(needs: slug, ...)` suffix using
 current slugs, comments excluded. Covers all 3 acceptance tests from L1 (exact
 nested output for the A/B(B1,B2)/C outline; needs suffix; no comment text).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 10.2: L2 - Commit to dedicated git repo, skip unchanged
 
@@ -38,5 +38,5 @@ Covers all 4 acceptance tests from L2 (first commit created under data dir;
 no-op render skips commit; title edit creates a new commit with updated content;
 slug-change render churns the committed `needs:` label).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
