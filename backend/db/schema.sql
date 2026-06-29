@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
   id          TEXT PRIMARY KEY,
   from_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   to_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  kind        TEXT NOT NULL,              -- 'implicit' | 'explicit'
+  kind        TEXT NOT NULL,              -- 'explicit' in v1; 'implicit' legacy
   UNIQUE (from_id, to_id)
 );  -- edge means: from_id depends on (needs) to_id
 

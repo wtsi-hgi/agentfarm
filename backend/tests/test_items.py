@@ -2,9 +2,8 @@
 
 Behaviour is exercised through the public HTTP surface (POST ``/items``) using
 ``httpx.AsyncClient`` + ``ASGITransport`` against the FastAPI ``app``, asserting
-both status codes and JSON payloads. Persisted edge state (the implicit sibling
-chain) is read back from the database, a supported boundary, because GET
-``/tree`` is not introduced until a later item.
+both status codes and JSON payloads. Persisted dependency state is read back
+from the database where relevant, a supported boundary.
 
 Database isolation: ``config.settings.data_dir`` is redirected to pytest's
 ``tmp_path`` and the schema applied per test, so every test runs against a
@@ -21,7 +20,7 @@ from httpx import ASGITransport, AsyncClient
 import config
 from db.connection import get_connection
 from db.migrate import apply_migrations
-from services import clock
+from services import clock, leverage
 
 
 @pytest.fixture
@@ -88,11 +87,29 @@ async def _delete(client: AsyncClient, item_id: str):
     return await client.delete(f"/api/v1/items/{item_id}")
 
 
+async def _indent(client: AsyncClient, item_id: str):
+    return await client.post(f"/api/v1/items/{item_id}/indent")
+
+
+async def _outdent(client: AsyncClient, item_id: str):
+    return await client.post(f"/api/v1/items/{item_id}/outdent")
+
+
+async def _move(client: AsyncClient, item_id: str, body: dict):
+    return await client.post(f"/api/v1/items/{item_id}/move", json=body)
+
+
 def _item_row(db_path, item_id: str) -> dict:
     """Return one item's persisted row as a plain dict (a supported boundary)."""
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
     return dict(row)
+
+
+def _actionable(db_path) -> set[str]:
+    """Return actionable item ids through the leverage service boundary."""
+    with get_connection(db_path) as conn:
+        return set(leverage.actionable_item_ids(conn))
 
 
 def _comments(db_path, item_id: str) -> list[dict]:
@@ -206,8 +223,8 @@ async def test_bad_enum_returns_422_naming_field(fresh_db) -> None:
 
 
 @pytest.mark.anyio
-async def test_child_sorts_after_sibling_with_implicit_edge(fresh_db) -> None:
-    """Test 6: a second child sorts after the first and gets ``c2 -> c1`` implicit."""
+async def test_child_sorts_after_sibling_without_dependency(fresh_db) -> None:
+    """Test 6: a second child sorts after the first without creating a dependency."""
     async with _client() as client:
         parent = await _create(client, {"title": "Parent"})
         parent_id = parent.json()["id"]
@@ -221,14 +238,8 @@ async def test_child_sorts_after_sibling_with_implicit_edge(fresh_db) -> None:
     # c2 sorts strictly after c1 among the siblings.
     assert c2_body["sort_order"] > c1_body["sort_order"]
 
-    # An implicit dependency c2 -> c1 exists (asserted via persisted DB state).
-    edges = _dependencies(fresh_db)
-    implicit = [e for e in edges if e["kind"] == "implicit"]
-    assert any(
-        e["from_id"] == c2_body["id"] and e["to_id"] == c1_body["id"] for e in implicit
-    ), implicit
-    # The chain is a single edge for two siblings (no spurious edges).
-    assert len(implicit) == 1
+    # Sibling order is organisational only; no dependency is derived.
+    assert _dependencies(fresh_db) == []
 
 
 # --- A2: Edit item fields and timestamp/slug behaviour ----------------------
@@ -427,9 +438,8 @@ async def test_rename_keeps_edge_and_updates_needs_label(fresh_db) -> None:
     becomes ``build-the-api-gateway``.
     """
     async with _client() as client:
-        # A and B live in different products so the only edge between them is
-        # the explicit one under test (root siblings would also gain an
-        # implicit chain edge, which is not what A3 exercises).
+        # A and B live in different products; the only edge between them is the
+        # explicit one under test.
         prod_b = await _create(client, {"title": "Product B"})
         prod_a = await _create(client, {"title": "Product A"})
         b = await _create(
@@ -490,7 +500,7 @@ async def test_double_rename_resolves_needs_label_throughout(fresh_db) -> None:
     """A3 test 3: B renamed twice (-> Foo, -> Bar); the edge A -> B resolves
     throughout (same edge id/to_id) and A's final needs label is ``bar``."""
     async with _client() as client:
-        # Different products so the explicit A -> B is the only edge between them.
+        # Different products; the explicit A -> B is the only edge between them.
         prod_b = await _create(client, {"title": "Product B"})
         prod_a = await _create(client, {"title": "Product A"})
         b = await _create(
@@ -526,18 +536,17 @@ async def test_double_rename_resolves_needs_label_throughout(fresh_db) -> None:
     assert _tree_item(tree_after_bar.json(), a_id)["needs"] == ["bar"]
 
 
-# --- A4: Delete item with subtree cascade and edge regeneration -------------
+# --- A4: Delete item with subtree cascade and dependency cleanup ------------
 
 
 @pytest.mark.anyio
-async def test_delete_middle_sibling_rechains_to_single_edge(fresh_db) -> None:
-    """A4 test 1: deleting the middle of root siblings ``[a,b,c]`` re-chains the
-    group to a single implicit edge ``c->a`` with nothing referencing ``b``.
+async def test_delete_middle_sibling_preserves_order_without_dependency(
+    fresh_db,
+) -> None:
+    """A4 test 1: deleting the middle of ``[a,b,c]`` leaves ``[a,c]``.
 
-    The group is built via POST ``/items`` so the implicit chain (``b->a``,
-    ``c->b``) is the real, regenerated one. After DELETE ``b`` its incident
-    implicit edges are cascade-removed and the remaining siblings re-derive a
-    single clean chain. Asserted both via persisted edge state and GET ``/tree``.
+    Any dependency rows incident to ``b`` are cascade-removed, but no replacement
+    edge is derived between the remaining siblings.
     """
     async with _client() as client:
         a = await _create(client, {"title": "a"})
@@ -547,13 +556,9 @@ async def test_delete_middle_sibling_rechains_to_single_edge(fresh_db) -> None:
         b_id = b.json()["id"]
         c_id = c.json()["id"]
 
-        # Precondition: the real implicit chain is b->a, c->b (and only those).
-        implicit_before = [
-            e for e in _dependencies(fresh_db) if e["kind"] == "implicit"
-        ]
-        assert {(e["from_id"], e["to_id"]) for e in implicit_before} == {
-            (b_id, a_id),
-            (c_id, b_id),
+        _insert_explicit_edge(fresh_db, c_id, b_id)
+        assert {(e["from_id"], e["to_id"]) for e in _dependencies(fresh_db)} == {
+            (c_id, b_id)
         }
 
         response = await _delete(client, b_id)
@@ -569,11 +574,10 @@ async def test_delete_middle_sibling_rechains_to_single_edge(fresh_db) -> None:
         remaining = {row["id"] for row in conn.execute("SELECT id FROM items")}
     assert remaining == {a_id, c_id}
 
-    # Exactly one implicit edge c->a remains; no edge references b.
-    implicit = [e for e in _dependencies(fresh_db) if e["kind"] == "implicit"]
-    assert len(implicit) == 1
-    assert (implicit[0]["from_id"], implicit[0]["to_id"]) == (c_id, a_id)
-    assert all(b_id not in (e["from_id"], e["to_id"]) for e in _dependencies(fresh_db))
+    payload = sorted(tree.json(), key=lambda entry: entry["sort_order"])
+    assert [entry["id"] for entry in payload] == [a_id, c_id]
+
+    assert _dependencies(fresh_db) == []
 
 
 @pytest.mark.anyio
@@ -616,3 +620,647 @@ async def test_delete_container_cascades_to_children_and_comments(fresh_db) -> N
     assert remaining_items == set()
     assert comment_count == 0
     assert _comments(fresh_db, c1_id) == []
+
+
+# --- B1: Container retains but ignores mode/effort --------------------------
+
+
+@pytest.mark.anyio
+async def test_container_retains_mode_effort_but_is_not_actionable(
+    fresh_db,
+) -> None:
+    """B1 tests 1-2: a parent with children is structural, then leaf again.
+
+    Downstream scoring is intentionally not implemented in this phase, so this
+    proves the currently available behavior: a child makes ``L`` a container
+    for actionability while leaving its stored work tokens untouched; deleting
+    the last child makes ``L`` an actionable leaf again with those retained
+    values.
+    """
+    async with _client() as client:
+        leaf = await _create(
+            client, {"title": "L", "mode": "prompt-agent", "effort": "long"}
+        )
+        leaf_id = leaf.json()["id"]
+
+        child = await _create(client, {"title": "c", "parent_id": leaf_id})
+        child_id = child.json()["id"]
+        tree_with_child = await _tree(client)
+
+        assert child.status_code == 200
+        assert _tree_item(tree_with_child.json(), child_id)["parent_id"] == leaf_id
+        assert leaf_id not in _actionable(fresh_db)
+        assert child_id in _actionable(fresh_db)
+        assert _item_row(fresh_db, leaf_id)["mode"] == "prompt-agent"
+        assert _item_row(fresh_db, leaf_id)["effort"] == "long"
+
+        deleted = await _delete(client, child_id)
+        tree_without_child = await _tree(client)
+
+    assert deleted.status_code == 200
+    assert _tree_item(tree_without_child.json(), leaf_id)["parent_id"] is None
+    assert leaf_id in _actionable(fresh_db)
+    assert _item_row(fresh_db, leaf_id)["mode"] == "prompt-agent"
+    assert _item_row(fresh_db, leaf_id)["effort"] == "long"
+
+
+# --- B2: Container completeness is derived ----------------------------------
+
+
+@pytest.mark.anyio
+async def test_container_with_mixed_done_and_in_progress_children_is_incomplete(
+    fresh_db,
+) -> None:
+    """B2 test 1: a dependency on ``P`` waits while any child remains open."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "P"})
+        parent_id = parent.json()["id"]
+        await _create(client, {"title": "c1", "parent_id": parent_id, "state": "done"})
+        c2 = await _create(
+            client,
+            {"title": "c2", "parent_id": parent_id, "state": "implement"},
+        )
+        dependent = await _create(client, {"title": "D"})
+        dependent_id = dependent.json()["id"]
+
+        _insert_explicit_edge(fresh_db, dependent_id, parent_id)
+
+    actionable = _actionable(fresh_db)
+    assert dependent_id not in actionable
+    assert c2.json()["id"] in actionable
+    assert parent_id not in actionable
+
+
+@pytest.mark.anyio
+async def test_container_with_done_and_abandoned_children_is_complete(
+    fresh_db,
+) -> None:
+    """B2 test 2: ``done`` and ``abandoned`` leaves both satisfy a container."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "P"})
+        parent_id = parent.json()["id"]
+        c1 = await _create(
+            client, {"title": "c1", "parent_id": parent_id, "state": "done"}
+        )
+        c2 = await _create(
+            client, {"title": "c2", "parent_id": parent_id, "state": "abandoned"}
+        )
+        dependent = await _create(client, {"title": "D"})
+        dependent_id = dependent.json()["id"]
+
+        _insert_explicit_edge(fresh_db, dependent_id, parent_id)
+
+    actionable = _actionable(fresh_db)
+    assert dependent_id in actionable
+    assert c1.json()["id"] not in actionable
+    assert c2.json()["id"] not in actionable
+    assert parent_id not in actionable
+
+
+@pytest.mark.anyio
+async def test_nested_container_completeness_propagates_to_ancestors(
+    fresh_db,
+) -> None:
+    """B2 test 3: nested completion satisfies dependencies on ``Q`` and ``P``."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "P"})
+        parent_id = parent.json()["id"]
+        child_container = await _create(client, {"title": "Q", "parent_id": parent_id})
+        child_container_id = child_container.json()["id"]
+        leaf = await _create(
+            client,
+            {"title": "leaf", "parent_id": child_container_id, "state": "done"},
+        )
+        parent_dependent = await _create(client, {"title": "depends on P"})
+        child_dependent = await _create(client, {"title": "depends on Q"})
+        parent_dependent_id = parent_dependent.json()["id"]
+        child_dependent_id = child_dependent.json()["id"]
+
+        _insert_explicit_edge(fresh_db, parent_dependent_id, parent_id)
+        _insert_explicit_edge(fresh_db, child_dependent_id, child_container_id)
+
+    actionable = _actionable(fresh_db)
+    assert parent_dependent_id in actionable
+    assert child_dependent_id in actionable
+    assert leaf.json()["id"] not in actionable
+    assert child_container_id not in actionable
+    assert parent_id not in actionable
+
+
+# --- F2: Keyboard structure operations (Enter / Tab / Shift-Tab) ------------
+
+
+def _implicit_edges(db_path) -> set[tuple[str, str]]:
+    """Return all legacy implicit edges as ``(from_id, to_id)`` tuples."""
+    return {
+        (e["from_id"], e["to_id"])
+        for e in _dependencies(db_path)
+        if e["kind"] == "implicit"
+    }
+
+
+@pytest.mark.anyio
+async def test_enter_next_sibling_create_preserves_independence(fresh_db) -> None:
+    """F2 test 1 (Enter): a next-sibling create is POST ``/items`` with the
+    current item's ``parent_id`` and ``after_id``; the new sibling sorts after
+    the current item without gaining a dependency edge.
+    """
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        a_body = a.json()
+
+        b = await _create(
+            client,
+            {"title": "b", "parent_id": a_body["parent_id"], "after_id": a_body["id"]},
+        )
+
+    assert b.status_code == 200
+    b_body = b.json()
+    a_id = a_body["id"]
+    b_id = b_body["id"]
+    # b is a sibling of a (same parent) sorting strictly after it.
+    assert b_body["parent_id"] == a_body["parent_id"]
+    assert b_body["sort_order"] > a_body["sort_order"]
+    # Sibling order is independent by default.
+    assert (b_id, a_id) not in _implicit_edges(fresh_db)
+    assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_indent_makes_preceding_sibling_a_container(fresh_db) -> None:
+    """F2 test 2 (Tab): indenting ``b`` (top-level ``[a,b]``) makes it the first
+    child of ``a``; ``a`` becomes a container and ``b`` has no dependency edge
+    just because it is nested.
+    """
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        b = await _create(client, {"title": "b"})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+
+        # Precondition: root siblings are independent.
+        assert _dependencies(fresh_db) == []
+
+        response = await _indent(client, b_id)
+
+        tree = await _tree(client)
+
+    assert response.status_code == 200
+    # b is now a's first (and only) child.
+    assert response.json()["id"] == b_id
+    assert response.json()["parent_id"] == a_id
+    assert _item_row(fresh_db, b_id)["parent_id"] == a_id
+
+    # a is now a container: GET /tree lists b as a's child, and a is no longer a
+    # root sibling of b.
+    payload = tree.json()
+    assert {entry["id"] for entry in payload} == {a_id, b_id}
+    assert _tree_item(payload, a_id)["parent_id"] is None
+    assert _tree_item(payload, b_id)["parent_id"] == a_id
+
+    # Nesting does not create dependency edges.
+    assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_outdent_moves_up_one_level_and_depends_on_former_parent(
+    fresh_db,
+) -> None:
+    """F2 test 3 (Shift-Tab): outdenting child ``b`` of container ``a`` makes
+    ``b`` a sibling of ``a`` (``a``'s parent), positioned immediately after
+    ``a``; if ``a`` now has no children it is a leaf again.
+    """
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        a_id = a.json()["id"]
+        b = await _create(client, {"title": "b", "parent_id": a_id})
+        b_id = b.json()["id"]
+        # Precondition: b is a's only child (a is a container).
+        assert _item_row(fresh_db, b_id)["parent_id"] == a_id
+
+        response = await _outdent(client, b_id)
+
+        tree = await _tree(client)
+
+    assert response.status_code == 200
+    b_body = response.json()
+    assert b_body["id"] == b_id
+    # b is now a sibling of a at root (a's former parent was None).
+    assert b_body["parent_id"] == a.json()["parent_id"]
+    assert b_body["parent_id"] is None
+    assert _item_row(fresh_db, b_id)["parent_id"] is None
+    # b sorts strictly after a.
+    assert b_body["sort_order"] > a.json()["sort_order"]
+
+    # Outdenting changes structure only; dependencies remain empty.
+    assert _dependencies(fresh_db) == []
+
+    # a now has no children, so it is a leaf again: GET /tree lists both at root,
+    # neither nested under the other.
+    payload = tree.json()
+    assert {entry["id"] for entry in payload} == {a_id, b_id}
+    assert _tree_item(payload, a_id)["parent_id"] is None
+    assert _tree_item(payload, b_id)["parent_id"] is None
+
+
+@pytest.mark.anyio
+async def test_indent_first_item_is_rejected(fresh_db) -> None:
+    """Indenting an item with no preceding sibling is invalid (422)."""
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        a_id = a.json()["id"]
+
+        response = await _indent(client, a_id)
+
+    assert response.status_code == 422
+    assert "indent" in str(response.json()["detail"])
+    # The item is unmoved (still a root item).
+    assert _item_row(fresh_db, a_id)["parent_id"] is None
+
+
+@pytest.mark.anyio
+async def test_outdent_root_item_is_rejected(fresh_db) -> None:
+    """Outdenting an item already at root (no parent) is invalid (422)."""
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        a_id = a.json()["id"]
+
+        response = await _outdent(client, a_id)
+
+    assert response.status_code == 422
+    assert "outdent" in str(response.json()["detail"])
+    assert _item_row(fresh_db, a_id)["parent_id"] is None
+
+
+@pytest.mark.anyio
+async def test_indent_unknown_id_returns_404(fresh_db) -> None:
+    """Indenting an unknown item id is a 404."""
+    async with _client() as client:
+        response = await _indent(client, str(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "item not found"
+
+
+@pytest.mark.anyio
+async def test_outdent_unknown_id_returns_404(fresh_db) -> None:
+    """Outdenting an unknown item id is a 404."""
+    async with _client() as client:
+        response = await _outdent(client, str(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "item not found"
+
+
+# --- F3: Identity-preserving structural edits -------------------------------
+
+
+@pytest.mark.anyio
+async def test_indent_then_outdent_preserves_id_edge_and_comment(
+    fresh_db,
+) -> None:
+    """F3: indent then outdent keeps the same item, explicit edge, and comment."""
+    timestamp = "2026-06-29T00:00:00.000000Z"
+
+    async with _client() as client:
+        a = await _create(client, {"title": "a"})
+        b = await _create(client, {"title": "b"})
+        z = await _create(client, {"title": "z"})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+        z_id = z.json()["id"]
+
+        edge_id = _insert_explicit_edge(fresh_db, b_id, z_id)
+        comment_id = _insert_comment(fresh_db, b_id, "keep me", timestamp)
+
+        indented = await _indent(client, b_id)
+        outdented = await _outdent(client, b_id)
+
+    assert indented.status_code == 200
+    assert indented.json()["id"] == b_id
+    assert indented.json()["parent_id"] == a_id
+
+    assert outdented.status_code == 200
+    assert outdented.json()["id"] == b_id
+    assert outdented.json()["parent_id"] is None
+
+    edges = _dependencies(fresh_db)
+    explicit = [edge for edge in edges if edge["kind"] == "explicit"]
+    assert explicit == [
+        {"id": edge_id, "from_id": b_id, "to_id": z_id, "kind": "explicit"}
+    ]
+
+    assert _comments(fresh_db, b_id) == [
+        {
+            "id": comment_id,
+            "item_id": b_id,
+            "author": "tester",
+            "body": "keep me",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+    ]
+
+
+# --- G1: Move subtree across products ---------------------------------------
+
+
+@pytest.mark.anyio
+async def test_move_across_products_reparents_without_order_dependency(
+    fresh_db,
+) -> None:
+    """G1 test 1: moving ``x`` from product ``P1`` to product ``P2`` after ``y``
+    reparents ``x`` and sorts it after ``y`` without deriving ``x -> y``.
+
+    Built entirely via the create + move primitives. Asserted via both the move
+    response and GET ``/tree`` plus persisted dependency state.
+    """
+    async with _client() as client:
+        p1 = await _create(client, {"title": "P1"})
+        p2 = await _create(client, {"title": "P2"})
+        p1_id = p1.json()["id"]
+        p2_id = p2.json()["id"]
+        x = await _create(client, {"title": "x", "parent_id": p1_id})
+        y = await _create(client, {"title": "y", "parent_id": p2_id})
+        x_id = x.json()["id"]
+        y_id = y.json()["id"]
+
+        response = await _move(client, x_id, {"new_parent_id": p2_id, "after_id": y_id})
+
+        tree = await _tree(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    # Identity preserved and reparented under P2.
+    assert body["id"] == x_id
+    assert body["parent_id"] == p2_id
+    assert _item_row(fresh_db, x_id)["parent_id"] == p2_id
+
+    # x sorts strictly after y within P2.
+    x_order = _item_row(fresh_db, x_id)["sort_order"]
+    y_order = _item_row(fresh_db, y_id)["sort_order"]
+    assert x_order > y_order
+
+    # Placement is not a dependency.
+    implicit = _implicit_edges(fresh_db)
+    assert (x_id, y_id) not in implicit
+    assert {edge for edge in implicit if x_id in edge} == set()
+
+    # GET /tree confirms the new structure: x is under P2, P1 has no children.
+    payload = tree.json()
+    assert _tree_item(payload, x_id)["parent_id"] == p2_id
+    p1_children = [e["id"] for e in payload if e["parent_id"] == p1_id]
+    assert p1_children == []
+    p2_children = [e["id"] for e in payload if e["parent_id"] == p2_id]
+    assert set(p2_children) == {x_id, y_id}
+
+
+@pytest.mark.anyio
+async def test_move_promote_to_root_keeps_explicit_edge(fresh_db) -> None:
+    """G1 test 2: promoting ``x`` to a product (``new_parent_id`` null) makes it a
+    root item while its explicit edge ``x -> z`` survives unchanged (same edge id
+    and ``to_id``).
+
+    The explicit edge is inserted directly (the dependencies endpoint is a later
+    phase). Promotion only changes ``x``'s ``parent_id``/``sort_order``; explicit
+    edges are untouched.
+    """
+    async with _client() as client:
+        # x starts as a child of a container so promotion is a real reparent.
+        parent = await _create(client, {"title": "Parent"})
+        parent_id = parent.json()["id"]
+        x = await _create(client, {"title": "x", "parent_id": parent_id})
+        z = await _create(client, {"title": "z"})
+        x_id = x.json()["id"]
+        z_id = z.json()["id"]
+        assert _item_row(fresh_db, x_id)["parent_id"] == parent_id
+
+        edge_id = _insert_explicit_edge(fresh_db, x_id, z_id)
+
+        response = await _move(client, x_id, {"new_parent_id": None})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == x_id
+    # x is now a product (root item).
+    assert body["parent_id"] is None
+    assert _item_row(fresh_db, x_id)["parent_id"] is None
+
+    # The explicit edge x -> z is byte-for-byte unchanged (same id and to_id).
+    edges = _dependencies(fresh_db)
+    explicit = [e for e in edges if e["kind"] == "explicit"]
+    assert len(explicit) == 1
+    assert explicit[0]["id"] == edge_id
+    assert explicit[0]["from_id"] == x_id
+    assert explicit[0]["to_id"] == z_id
+
+
+@pytest.mark.anyio
+async def test_move_into_own_descendant_is_rejected(fresh_db) -> None:
+    """G1 test 3: moving container ``C`` into its own descendant ``d`` is a 422
+    and nothing moves.
+
+    Building ``C > ... > d`` and asking to reparent ``C`` under ``d`` would
+    corrupt the tree (a cycle in the parent relation), so it is rejected before
+    any mutation; the tree is left exactly as it was.
+    """
+    async with _client() as client:
+        c = await _create(client, {"title": "C"})
+        c_id = c.json()["id"]
+        mid = await _create(client, {"title": "mid", "parent_id": c_id})
+        mid_id = mid.json()["id"]
+        d = await _create(client, {"title": "d", "parent_id": mid_id})
+        d_id = d.json()["id"]
+
+        before = {iid: _item_row(fresh_db, iid) for iid in (c_id, mid_id, d_id)}
+
+        response = await _move(client, c_id, {"new_parent_id": d_id})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "cannot move into own descendant"
+
+    # Nothing moved: every item keeps its prior parent and sort_order.
+    for iid in (c_id, mid_id, d_id):
+        row = _item_row(fresh_db, iid)
+        assert row["parent_id"] == before[iid]["parent_id"]
+        assert row["sort_order"] == before[iid]["sort_order"]
+
+
+@pytest.mark.anyio
+async def test_move_into_self_is_rejected(fresh_db) -> None:
+    """Guard: moving an item into itself is a 422 (self is its own descendant)."""
+    async with _client() as client:
+        c = await _create(client, {"title": "C"})
+        c_id = c.json()["id"]
+        child = await _create(client, {"title": "child", "parent_id": c_id})
+        child_id = child.json()["id"]
+
+        response = await _move(client, c_id, {"new_parent_id": c_id})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "cannot move into own descendant"
+    # Unchanged: C is still a root, child is still under C.
+    assert _item_row(fresh_db, c_id)["parent_id"] is None
+    assert _item_row(fresh_db, child_id)["parent_id"] == c_id
+
+
+@pytest.mark.anyio
+async def test_move_unknown_item_returns_404(fresh_db) -> None:
+    """Guard: moving an unknown item id is a 404."""
+    async with _client() as client:
+        response = await _move(client, str(uuid.uuid4()), {"new_parent_id": None})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "item not found"
+
+
+@pytest.mark.anyio
+async def test_move_unknown_new_parent_returns_404(fresh_db) -> None:
+    """Guard: a ``new_parent_id`` that references no item is a 404, nothing moves."""
+    async with _client() as client:
+        x = await _create(client, {"title": "x"})
+        x_id = x.json()["id"]
+
+        response = await _move(client, x_id, {"new_parent_id": str(uuid.uuid4())})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "item not found"
+    # x is unmoved (still a root).
+    assert _item_row(fresh_db, x_id)["parent_id"] is None
+
+
+@pytest.mark.anyio
+async def test_move_after_reverse_dependency_is_allowed(fresh_db) -> None:
+    """Moving after an item does not add the reverse edge or create a cycle.
+
+    Setup: products ``P`` (child ``a``) and ``Q`` (child ``b``) with an explicit
+    edge ``a -> b`` (a needs b). Moving ``b`` under ``P`` after ``a`` is allowed
+    because order does not create ``b -> a``.
+    """
+    async with _client() as client:
+        p = await _create(client, {"title": "P"})
+        q = await _create(client, {"title": "Q"})
+        p_id = p.json()["id"]
+        q_id = q.json()["id"]
+        a = await _create(client, {"title": "a", "parent_id": p_id})
+        b = await _create(client, {"title": "b", "parent_id": q_id})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+
+        # Explicit edge a -> b inserted directly (a depends on b).
+        _insert_explicit_edge(fresh_db, a_id, b_id)
+
+        response = await _move(client, b_id, {"new_parent_id": p_id, "after_id": a_id})
+
+    assert response.status_code == 200
+
+    # Applied: b is now under P, the explicit edge a -> b remains, and no
+    # implicit b -> a was added.
+    assert _item_row(fresh_db, b_id)["parent_id"] == p_id
+    edges = _dependencies(fresh_db)
+    assert [(e["from_id"], e["to_id"], e["kind"]) for e in edges] == [
+        (a_id, b_id, "explicit")
+    ]
+    assert (b_id, a_id) not in _implicit_edges(fresh_db)
+
+
+# --- G2: Merge (reparent children, remove emptied item) ---------------------
+
+
+@pytest.mark.anyio
+async def test_merge_via_move_children_then_delete_source(fresh_db) -> None:
+    """G2 test 1: merging ``src`` into ``dst`` by moving ``src``'s children under
+    ``dst`` (after ``d1``) and deleting the emptied ``src`` yields ``dst`` with
+    children ``[d1, s1, s2]`` and no ``src``.
+
+    Exercised purely through the move + delete primitives (no merge endpoint).
+    """
+    async with _client() as client:
+        src = await _create(client, {"title": "src"})
+        dst = await _create(client, {"title": "dst"})
+        src_id = src.json()["id"]
+        dst_id = dst.json()["id"]
+        s1 = await _create(client, {"title": "s1", "parent_id": src_id})
+        s2 = await _create(client, {"title": "s2", "parent_id": src_id})
+        d1 = await _create(client, {"title": "d1", "parent_id": dst_id})
+        s1_id = s1.json()["id"]
+        s2_id = s2.json()["id"]
+        d1_id = d1.json()["id"]
+
+        # Move s1 after d1, then s2 after the just-moved s1.
+        move1 = await _move(client, s1_id, {"new_parent_id": dst_id, "after_id": d1_id})
+        move2 = await _move(client, s2_id, {"new_parent_id": dst_id, "after_id": s1_id})
+        deleted = await _delete(client, src_id)
+
+        tree = await _tree(client)
+
+    assert move1.status_code == 200
+    assert move2.status_code == 200
+    assert deleted.status_code == 200
+
+    # src no longer exists.
+    with get_connection(fresh_db) as conn:
+        src_count = conn.execute(
+            "SELECT count(*) AS c FROM items WHERE id = ?", (src_id,)
+        ).fetchone()["c"]
+    assert src_count == 0
+
+    # dst has children [d1, s1, s2] in stored order.
+    payload = tree.json()
+    dst_children = [
+        e["id"]
+        for e in sorted(
+            (e for e in payload if e["parent_id"] == dst_id),
+            key=lambda e: e["sort_order"],
+        )
+    ]
+    assert dst_children == [d1_id, s1_id, s2_id]
+
+    # The stored order is not a dependency chain.
+    assert _implicit_edges(fresh_db) == set()
+
+
+# --- G3: Split (new root items, move subtrees under them) -------------------
+
+
+@pytest.mark.anyio
+async def test_split_create_root_then_move_subtree(fresh_db) -> None:
+    """G3 test 1: split ``s1`` out of container ``src`` into a brand-new product
+    ``R`` via the create + move primitives (no split endpoint).
+
+    After creating root ``R`` (``parent_id==null``) and moving ``s1`` under it:
+    ``R`` is a product, ``R`` has exactly child ``[s1]``, ``s1.parent_id==R``,
+    and neither ``s1`` nor ``s2`` gains a dependency edge from the split.
+    """
+    async with _client() as client:
+        src = await _create(client, {"title": "src"})
+        src_id = src.json()["id"]
+        s1 = await _create(client, {"title": "s1", "parent_id": src_id})
+        s2 = await _create(client, {"title": "s2", "parent_id": src_id})
+        s1_id = s1.json()["id"]
+        s2_id = s2.json()["id"]
+
+        # Precondition: siblings under src are independent.
+        assert _implicit_edges(fresh_db) == set()
+
+        # Create a new product root R, then move s1 under it.
+        r = await _create(client, {"title": "R", "parent_id": None})
+        r_id = r.json()["id"]
+        moved = await _move(client, s1_id, {"new_parent_id": r_id})
+
+        tree = await _tree(client)
+
+    assert r.json()["parent_id"] is None
+    assert moved.status_code == 200
+
+    # R is a product with exactly child [s1]; s1's parent is R.
+    payload = tree.json()
+    assert _tree_item(payload, r_id)["parent_id"] is None
+    r_children = [e["id"] for e in payload if e["parent_id"] == r_id]
+    assert r_children == [s1_id]
+    assert _item_row(fresh_db, s1_id)["parent_id"] == r_id
+
+    implicit = _implicit_edges(fresh_db)
+    assert {edge for edge in implicit if edge[0] == s1_id} == set()
+    assert (s2_id, s1_id) not in implicit
+    assert all(frm != s2_id for (frm, to) in implicit)

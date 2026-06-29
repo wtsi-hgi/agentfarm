@@ -51,7 +51,7 @@ review-only toggle shows only review items, none shows both).
 spec.md section: H3
 
 Wire GET `/priority` ordering into `components/outliner.tsx` as a display-only
-leverage sort that leaves stored `sort_order` and implicit edges unchanged
+leverage sort that leaves stored `sort_order` and dependency edges unchanged
 (`api/v1/priority.py` already exists from Phase 5). Covers the 1 acceptance test
 from H3 (priority order `[A1,B1,G1]` while a later GET `/tree` keeps original
 stored order).

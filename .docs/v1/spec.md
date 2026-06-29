@@ -12,14 +12,14 @@ mirror makes the tree shareable and diffable.
 
 Everything is an item in a single unbounded tree. Root items are products; any
 item may have nested children. A leaf (no children) is directly actionable; a
-container (>=1 child) is structural. Sequencing comes from implicit
-dependencies derived from tree structure (sibling order = sequence, nesting =
-sub-section) combined with explicit `>needs:` edges; the combined graph is
-always acyclic. An unblock-leverage priority engine ranks actionable leaves so
-cheap work that unblocks large downstream work surfaces first. The single
-primary surface is a keyboard outliner with inline tokens; "work now" is a
-projection (collapse, colour, mode toggles, leverage sort, time markers) of the
-same editable tree.
+container (>=1 child) is structural. Sibling order is organisational only:
+root items and subsection siblings are independent by default. Sequencing comes
+from explicit `>needs:` edges, which may be attached to leaves or to whole
+sections/containers; the dependency graph is always acyclic. An unblock-leverage
+priority engine ranks actionable leaves so cheap work that unblocks large
+downstream work surfaces first. The single primary surface is a keyboard
+outliner with inline tokens; "work now" is a projection (collapse, colour, mode
+toggles, leverage sort, time markers) of the same editable tree.
 
 This spec covers the full stack: FastAPI + SQLite backend, Next.js Server-
 Action BFF, Zod contracts, LDAP auth with owner/viewer roles, self-signed TLS,
@@ -63,7 +63,7 @@ Backend (`backend/`, Python 3.11+, FastAPI + Uvicorn + Pydantic):
       services/
         __init__.py
         tree.py                  # tree ops, slug derivation, reparent/move
-        graph.py                 # implicit-edge generation, cycle check
+        graph.py                 # dependency graph helpers, cycle check
         leverage.py              # unblock-leverage scoring + ordering
         mirror.py                # render markdown + git commit
         auth_ldap.py             # ldap3 direct-bind, whitelist, roles
@@ -134,7 +134,7 @@ so lexical sort equals chronological sort. Booleans are integers 0/1.
       id          TEXT PRIMARY KEY,
       from_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
       to_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-      kind        TEXT NOT NULL,              -- 'implicit' | 'explicit'
+      kind        TEXT NOT NULL,              -- 'explicit' in v1
       UNIQUE (from_id, to_id)
     );  -- edge means: from_id depends on (needs) to_id
 
@@ -192,44 +192,36 @@ Slug derivation (`services/tree.py`):
 - Re-derive on every title change. Slugs are display/typing only; never stored
   as a reference (edges store ids).
 
-Implicit edges (`services/graph.py`), regenerated for affected sibling groups
-on any structural change (create, delete, indent/outdent, reorder, drag):
+Dependencies (`services/graph.py`, `services/leverage.py`):
 
-- Sibling chain: for children of one parent ordered by `sort_order`, each item
-  (after the first) gets edge `item -> previous_sibling`.
-- Sub-section entry: the first child of a container gets edge
-  `first_child -> container.previous_sibling` when that predecessor exists.
-- Sub-section completion is expressed by the next-sibling edge to the container
-  plus the rule that a container is complete only when all children are
-  complete (no extra stored edge to leaves needed).
-- All generated edges have `kind='implicit'`. Regeneration deletes only the
-  implicit edges incident to the affected group before re-inserting; explicit
-  edges and comments are never touched.
-- Manual removal of one implicit edge (C3) persists across non-structural
-  PATCHes but is, by design, recomputed away by the next structural change to
-  that sibling group: regeneration deletes the group's implicit edges and
-  re-derives the full chain, so the removed edge reappears. Re-removal is then
-  required to restore the parallelism.
+- Sibling order is organisational only. Creating, moving, indenting, outdenting,
+  reordering, or deleting items never creates dependency edges between siblings.
+- Dependencies are explicit `>needs:` edges stored in `dependencies` with
+  `kind='explicit'`. Edges store ids, not slugs.
+- An edge may originate from a leaf or from a container/root section. A
+  dependency attached to a container applies to every descendant leaf of that
+  container.
+- A dependency target may itself be a container. Such a dependency is satisfied
+  only when that whole container is complete recursively.
+- Structural edits preserve explicit dependency edges and comments because they
+  are stored by item id.
 
-Cycle rejection: before inserting any edge (implicit or explicit), check that
-`to_id` cannot already reach `from_id` over the combined graph. If it can, or
-`from_id == to_id`, reject with HTTP 409 and body
-`{"detail": "dependency cycle rejected"}`. Implicit regeneration that would
-create a cycle (only possible via interaction with explicit edges) skips the
-offending implicit edge and surfaces the same 409 to the triggering op.
+Cycle rejection: before inserting any edge, check that `to_id` cannot already
+reach `from_id` over the dependency graph. If it can, or `from_id == to_id`,
+reject with HTTP 409 and body `{"detail": "dependency cycle rejected"}`.
 
 Actionable leaf: leaf (no children) AND not complete AND `blocked_external`
-false AND every dependency (implicit + explicit) target is complete.
-Containers are never actionable.
+false AND every dependency target on that leaf or on any ancestor section is
+complete. Containers are never actionable.
 
 Unblock-leverage (`services/leverage.py`):
 
-- `Downstream(L)` = every item reachable by following reverse edges from L
-  (items that depend on L directly or transitively) that is an open leaf (not
-  complete AND not a container). Note `blocked_external` does NOT exclude a leaf
-  from any `Downstream(...)` set: a `blocked_external` leaf is itself NOT
-  actionable (absent from `/priority`) yet STILL counts as a downstream open
-  leaf contributing to an upstream item's score. Actionability (excludes
+- `Downstream(L)` = every open leaf (not complete AND not a container) whose
+  own dependencies or ancestor-section dependencies depend on L directly or
+  transitively. Note `blocked_external` does NOT exclude a leaf from any
+  `Downstream(...)` set: a `blocked_external` leaf is itself NOT actionable
+  (absent from `/priority`) yet STILL counts as a downstream open leaf
+  contributing to an upstream item's score. Actionability (excludes
   `blocked_external`) and downstream membership (keys only on not-complete and
   not-container) are deliberately distinct.
 - `score(L) = (sum over D in Downstream(L) of EFFORT_WEIGHT[D.effort] *
@@ -251,7 +243,7 @@ require owner role (enforced at Next.js middleware + re-checked server-side).
     POST   /items/{id}/outdent    move up one level
     GET    /tree                  full tree (items + edges) in tree order
     POST   /dependencies          add explicit edge {from_id,to_id|needs_slug}
-    DELETE /dependencies/{id}     remove edge (implicit or explicit)
+    DELETE /dependencies/{id}     remove explicit edge
     GET    /priority              actionable leaves in leverage order
     POST   /items/{id}/comments   add comment (owner or viewer)
     PATCH  /comments/{id}         edit own comment
@@ -303,7 +295,7 @@ POST `/items` body `{title, parent_id?, after_id?, mode?, effort?, state?}`.
 Server sets id (UUIDv4), derives slug, computes `sort_order` (after `after_id`
 or appended at end of the sibling group), sets `created_by`/`updated_by` to the
 authenticated owner, and all four timestamps to now. Defaults apply when fields
-omitted. Creating an item regenerates implicit edges for its sibling group.
+omitted. Creating an item does not create dependency edges.
 
 **Package:** `backend/`
 **File:** `api/v1/items.py`, `services/tree.py`, `db/connection.py`
@@ -340,7 +332,7 @@ omitted. Creating an item regenerates implicit edges for its sibling group.
    `detail` containing `mode`.
 6. Given parent `P` with children `[c1]`, when POST `/items`
    `{"title":"c2","parent_id":"P"}`, then `c2.parent_id=="P"` and `c2` sorts
-   after `c1`, and a dependency `c2 -> c1` of kind `implicit` exists.
+   after `c1`, and no dependency edge is created.
 
 ### A2: Edit item fields and timestamp/slug behaviour
 
@@ -396,14 +388,14 @@ referencing it update, while stored edges (by id) are unchanged.
 3. Given `B` renamed twice (`->"Foo"`, then `->"Bar"`), edge `A -> B` resolves
    throughout and the final displayed needs label is `bar`.
 
-### A4: Delete item with subtree cascade and edge regeneration
+### A4: Delete item with subtree cascade and dependency cleanup
 
 As the owner, I want to delete an item or subtree, so that obsolete work is
 removed.
 
 DELETE `/items/{id}` removes the item and (via cascade) its descendants,
-comments, runs, and incident edges. The sibling group it left is re-chained
-(implicit edges regenerated) so order remains a single chain.
+comments, runs, and incident edges. Remaining siblings keep their relative
+order; no replacement dependency edge is created.
 
 **Package:** `backend/`
 **File:** `api/v1/items.py`, `services/graph.py`
@@ -411,9 +403,9 @@ comments, runs, and incident edges. The sibling group it left is re-chained
 
 **Acceptance tests:**
 
-1. Given siblings `[a,b,c]` under root with implicit chain `b->a`, `c->b`,
-   when DELETE `b`, then `a` and `c` remain, `b` is gone, and a single
-   implicit edge `c->a` exists (no edge references `b`).
+1. Given siblings `[a,b,c]` under root and an explicit edge that references
+   `b`, when DELETE `b`, then `a` and `c` remain in order, `b` is gone, and no
+   edge references `b`; no replacement edge `c->a` is created.
 2. Given container `P` with children `[c1,c2]` and comments on `c1`, when
    DELETE `P`, then `P`, `c1`, `c2`, and `c1`'s comments are all gone.
 
@@ -463,14 +455,14 @@ that downstream sequencing is correct.
 
 ---
 
-## C. Implicit dependencies (worked example)
+## C. Dependency semantics and section inheritance
 
-### C1: Implicit edges from tree structure
+### C1: Siblings are independent by default
 
-As the owner, I want sibling order and nesting to imply dependencies, so that I
-do not hand-wire sequencing.
+As the owner, I want sibling products and subsections to run independently by
+default, so that the outline expresses structure without over-sequencing work.
 
-Build the outline below and assert exact edges and readiness.
+Build the outline below and assert no edges are generated from order alone.
 
     A
     B
@@ -479,61 +471,50 @@ Build the outline below and assert exact edges and readiness.
     C
 
 **Package:** `backend/`
-**File:** `services/graph.py`, `api/v1/items.py`
+**File:** `services/graph.py`, `services/leverage.py`, `api/v1/items.py`
 **Test file:** `tests/test_dependencies.py`
 
 **Acceptance tests:**
 
 1. Given the outline above (A,B,C top-level in order; B1,B2 children of B in
-   order; nothing complete), when implicit edges are generated, then the set of
-   implicit edges (as `from->to`) is exactly `{B->A, C->B, B2->B1, B1->A}` and
-   no others.
-2. Given that outline, when actionability is computed, then exactly `{A}` is
-   actionable; `B` is a container (not actionable); `B1`,`B2`,`C` are not
-   actionable.
-3. Given `A` is set to done, then exactly `{B1}` is actionable.
-4. Given `A` and `B1` done, then exactly `{B2}` is actionable.
-5. Given `A`,`B1`,`B2` done, then `B` is complete and exactly `{C}` is
-   actionable.
+   order; nothing complete), then the dependency table is empty.
+2. Given that outline, when actionability is computed, then exactly
+   `{A,B1,B2,C}` is actionable; `B` is a container and is not actionable.
 
-### C2: Implicit edges regenerate on structural change
+### C2: Explicit section dependencies gate descendant leaves
 
-As the owner, I want edges to follow restructuring, so that the graph always
-matches the tree.
+As the owner, I want to declare that one section depends on another, so that I
+can sequence only the sections that genuinely require sequencing.
 
 **Package:** `backend/`
-**File:** `services/graph.py`, `api/v1/items.py`
+**File:** `services/leverage.py`, `services/tree.py`
 **Test file:** `tests/test_dependencies.py`
 
 **Acceptance tests:**
 
-1. Given siblings `[a,b,c]` with implicit `b->a`,`c->b`, when `c` is moved
-   before `b` (order `[a,c,b]`), then implicit edges become exactly
-   `{c->a, b->c}`.
-2. Given outline `A; B(B1,B2); C`, when `B1` is outdented to top level between
-   `B` and `C` (order `A,B,B1,C`; `B` now has only `B2`), then `B1`'s implicit
-   edge is `B1->B` (depends on whole preceding sub-section), `B2`'s entry edge
-   is `B2->A` (B2 is now first child of B), and `C->B1` holds.
+1. Given the C1 outline and explicit edge `B->A`, then descendant leaves `B1`
+   and `B2` inherit that section dependency; exactly `{A,C}` is actionable.
+2. Given `A` is set to done, then `{B1,B2,C}` are actionable.
+3. Given explicit edge `C->B`, then `C` is blocked until the whole `B` section
+   is complete; completing only `B1` does not unblock `C`, but completing both
+   `B1` and `B2` does.
 
-### C3: Removing one implicit edge enables parallelism
+### C3: Structural edits preserve explicit dependencies
 
-As the owner, I want to delete a single implicit edge, so that two siblings run
-in parallel.
+As the owner, I want dependencies to stay attached to item ids while I
+restructure, so that recategorisation does not lose sequencing.
 
 **Package:** `backend/`
-**File:** `api/v1/dependencies.py`
+**File:** `services/tree.py`, `api/v1/items.py`
 **Test file:** `tests/test_dependencies.py`
 
 **Acceptance tests:**
 
-1. Given siblings `[a,b]` with implicit edge `b->a` and nothing complete, when
-   DELETE that edge, then both `a` and `b` are actionable, and the edge does
-   not reappear after an unrelated PATCH to `a`'s title (non-structural change).
-2. Given siblings `[a,b]` whose implicit edge `b->a` was deleted (both
-   actionable), when a structural change to that sibling group occurs (create
-   sibling `c` after `b`), then the group's implicit edges are regenerated to
-   the full chain `{b->a, c->b}` (the manually removed `b->a` reappears by
-   design) and `b` is no longer actionable (its dep `a` is incomplete).
+1. Given item `b` with explicit edge `b->a`, when `b` is moved, indented, or
+   outdented, then the same edge id still points from `b` to `a`.
+2. Given siblings `[a,b]` with no explicit edge, when a structural change to
+   that sibling group occurs (create sibling `c` after `b`), then no dependency
+   edge is generated.
 
 ---
 
@@ -561,7 +542,7 @@ id at entry time and stores `kind='explicit'`. Alternatively `{from_id,to_id}`.
 3. Given POST `/dependencies` with `needs_slug` matching no item, then 422 with
    `detail=="unknown dependency: <slug>"`.
 
-### D2: Cycle rejection across combined graph
+### D2: Cycle rejection across dependency graph
 
 As the owner, I want cycles rejected, so that the graph stays acyclic.
 
@@ -577,8 +558,28 @@ As the owner, I want cycles rejected, so that the graph stays acyclic.
 2. Given chain `A->B->C` (explicit), when POST `{"from_id":"C","to_id":"A"}`,
    then 409 (transitive cycle) and no edge added.
 3. Given POST `{"from_id":"A","to_id":"A"}`, then 409 (self-edge).
-4. Given implicit chain `b->a` and explicit `a->b` attempted, then 409 and the
-   explicit edge is not added (implicit chain preserved).
+4. Given section edge `B->A`, when POST `/dependencies` `{"from_id":"A",
+   "to_id":"B"}`, then 409 and the explicit edge is not added.
+
+### D3: Delete explicit edge restores independence
+
+As the owner, I want to remove a dependency edge, so that items or sections can
+run independently again.
+
+DELETE `/dependencies/{id}` removes the explicit edge with that id. Removing an
+edge never creates a replacement edge from sibling order.
+
+**Package:** `backend/`
+**File:** `api/v1/dependencies.py`
+**Test file:** `tests/test_dependencies.py`
+
+**Acceptance tests:**
+
+1. Given explicit edge `B->A` and `A` incomplete, then `B` (or descendants of
+   section `B`) is not actionable; when DELETE that edge, `B`'s eligible leaves
+   become actionable if no other dependency blocks them.
+2. Given the edge from test 1 is deleted, when an unrelated PATCH or structural
+   edit occurs, then the edge does not reappear.
 
 ---
 
@@ -598,7 +599,7 @@ Setup (three independent product roots; first child of each is actionable):
 
     Alpha:  A1(quick,prompt-agent) -> A2(long,prompt-agent)   [A2 needs A1]
     Beta:   B1(quick,prompt-agent) -> B2(medium,review)
-                                    -> B3(medium,review)       [chain]
+                                    -> B3(medium,review)       [B2 needs B1; B3 needs B2]
     Gamma:  G1(long,prompt-agent)  -> G2(long,prompt-agent)    [G2 needs G1]
 
 **Package:** `backend/`
@@ -657,7 +658,7 @@ so that containers and finished work do not inflate priority.
 Setup:
 
     J1(quick) ; J2(container) with child J2a(medium,prompt-agent)
-    edges: J2 needs J1 (sibling); J2a needs J1 (sub-section entry)
+    edges: J2 needs J1 (section dependency inherited by J2a)
     K1(quick) -> K2(long,prompt-agent, state=done)   [K2 needs K1]
 
 **Package:** `backend/`
@@ -669,9 +670,9 @@ Setup:
 1. `Downstream(J1)` excludes container `J2` and includes open leaf `J2a`;
    `score(J1) = 3*2/1 = 6`.
 2. `Downstream(K1)` excludes the completed leaf `K2`; `score(K1) = 0/1 = 0`.
-3. Given a deeper chain `M1(quick) -> M2(quick,review) ->
-   M3(long,prompt-agent)` all open leaves, `Downstream(M1) = {M2, M3}` and
-   `score(M1) = (1*1 + 8*2)/1 = 17` (M2 mode review => weight 1).
+3. Given explicit edges `M2->M1` and `M3->M2` with all leaves open,
+   `Downstream(M1) = {M2, M3}` and `score(M1) = (1*1 + 8*2)/1 = 17`
+   (M2 mode review => weight 1).
 
 ### E5: Tie-break ordering
 
@@ -774,10 +775,10 @@ remaining text (tokens stripped, whitespace collapsed) is the title.
 As the owner, I want Enter/Tab/Shift-Tab to build the tree, so that outlining
 feels like a markdown editor.
 
-Outliner row actions map to backend ops: Enter -> create next sibling (depends
-on previous sibling); Tab -> indent (become first child of preceding sibling,
-which becomes a container); Shift-Tab -> outdent (become sibling of former
-parent, depends on that parent). Each row is identity-bound by item id.
+Outliner row actions map to backend ops: Enter -> create next sibling
+(independent by default); Tab -> indent (become first child of preceding
+sibling, which becomes a container); Shift-Tab -> outdent (become sibling of
+former parent, independent by default). Each row is identity-bound by item id.
 
 **Package:** `backend/` (behaviour asserted at API)
 **File:** `api/v1/items.py`, `services/tree.py`
@@ -787,14 +788,12 @@ parent, depends on that parent). Each row is identity-bound by item id.
 
 1. Given item `a` at top level, when POST `/items/{a}` next-sibling create
    `b` (Enter), then `b.parent_id==a.parent_id`, `b` sorts after `a`, and edge
-   `b->a` (implicit) exists.
+   `b->a` does not exist unless explicitly added.
 2. Given top-level `[a,b]`, when POST `/items/{b}/indent` (Tab), then
-   `b.parent_id==a`, `a` is now a container, and `b`'s entry edge is `b->`
-   (none, since `a` has no predecessor) i.e. `b` has no implicit predecessor
-   inside `a`.
+   `b.parent_id==a`, `a` is now a container, and no dependency edge is created.
 3. Given `a` container with child `b`, when POST `/items/{b}/outdent`
    (Shift-Tab), then `b.parent_id==a.parent_id` (a's parent), `b` sorts after
-   `a`, and implicit edge `b->a` exists; if `a` now has no children `a` is a
+   `a`, and no dependency edge is created; if `a` now has no children `a` is a
    leaf again.
 
 ### F3: Identity-preserving structural edits
@@ -810,8 +809,7 @@ re-categorisation is lossless.
 
 1. Given item `b` with an explicit edge `b->z` and one comment, when `b` is
    indented then outdented, then `b.id` is unchanged, the explicit edge `b->z`
-   and the comment both still exist, and implicit edges for the affected groups
-   are regenerated.
+   and the comment both still exist.
 
 ---
 
@@ -824,9 +822,8 @@ follows understanding.
 
 POST `/items/{id}/move` `{new_parent_id?, after_id?}`. `new_parent_id=null`
 promotes to root (product). Cross-product moves allowed. Identity preserved;
-implicit edges regenerated for both the source and destination sibling groups;
-explicit edges and comments retained. Move rejected if it would create a cycle
-(409) or if `new_parent_id` is a descendant of the moved item (422
+explicit edges and comments retained. Move rejected if `new_parent_id` is a
+descendant of the moved item (422
 `{"detail":"cannot move into own descendant"}`).
 
 **Package:** `backend/`
@@ -837,8 +834,8 @@ explicit edges and comments retained. Move rejected if it would create a cycle
 
 1. Given product `P1` with child `x` and product `P2` with child `y`, when
    POST `/items/{x}/move` `{"new_parent_id":"P2","after_id":"y"}`, then
-   `x.parent_id==P2`, `x` sorts after `y`, implicit edge `x->y` exists, and
-   `P1`'s former chain is regenerated without `x`.
+   `x.parent_id==P2`, `x` sorts after `y`, and no dependency edge `x->y` is
+   created.
 2. Given `x` with explicit edge `x->z`, when `x` is promoted (`new_parent_id`
    null), then `x.parent_id==null` (a product) and edge `x->z` still exists.
 3. Given container `C` with descendant `d`, when POST `/items/{C}/move`
@@ -861,8 +858,8 @@ move + delete primitives.
 
 1. Given `src` with children `[s1,s2]` and `dst` with child `[d1]`, when `s1`
    and `s2` are moved under `dst` (after `d1`) and `src` is deleted, then `dst`
-   has children `[d1,s1,s2]` in order with implicit chain `s1->d1`, `s2->s1`,
-   and `src` no longer exists.
+   has children `[d1,s1,s2]` in order, no dependency chain is created, and
+   `src` no longer exists.
 
 ### G3: Split (new root items, move subtrees under them)
 
@@ -879,12 +876,11 @@ create + move primitives.
 
 **Acceptance tests:**
 
-1. Given container `src` with children `[s1,s2]` (implicit chain `s2->s1`),
+1. Given container `src` with independent children `[s1,s2]`,
    when a new root `R` is created (`parent_id==null`) and `s1` is moved under
    `R`, then `R.parent_id==null` (a product), `R` has children `[s1]`,
-   `s1.parent_id==R`, `s1` has no implicit predecessor (it is `R`'s first
-   child), and `src`'s remaining chain is regenerated so `s2` has no implicit
-   edge to `s1` (`s2` is now `src`'s only child).
+   `s1.parent_id==R`, and neither `s1` nor `s2` gains a dependency edge from
+   the split.
 
 ---
 
@@ -901,8 +897,8 @@ can still read and type into them.
 
 GET `/tree` returns every item plus per-item flags `actionable: bool` and
 `complete: bool`. The work-now projection collapses items that are not
-actionable now (blocked by deps, blocked_external, complete, or chain
-interiors) while keeping the full structure present and expandable.
+actionable now (blocked by deps, blocked_external, or complete) while keeping
+the full structure present and expandable.
 
 **Package:** `backend/` + `frontend/`
 **File:** `api/v1/items.py` (flags); `components/outliner.tsx`
@@ -947,7 +943,7 @@ As the owner, I want leverage sort to reorder the display only, so that stored
 order is preserved.
 
 When leverage sort is on, actionable items are shown in GET `/priority` order;
-stored `sort_order` and implicit edges are unchanged.
+stored `sort_order` and dependency edges are unchanged.
 
 **Package:** `backend/` + `frontend/`
 **File:** `api/v1/priority.py`; `components/outliner.tsx`
@@ -1362,18 +1358,19 @@ sequential.
    slug derivation/re-derivation. Establishes `ItemOut` + Zod `itemSchema`.
    (Depends on 1.)
 
-3. **Tree structure + implicit edges + cycle check.** Implicit-edge generation
-   and regeneration (C1, C2), cycle rejection scaffolding (D2 self/implicit),
-   leaf/container transitions (B1, B2), keyboard ops (F2), identity-preserving
-   edits (F3), move/merge/split (G1, G2, G3). (Depends on 2.)
+3. **Tree structure + dependency inheritance.** Sibling independence (C1),
+   section dependency inheritance (C2), structural preservation of explicit
+   edges (C3), leaf/container transitions (B1, B2), keyboard ops (F2),
+   identity-preserving edits (F3), move/merge/split (G1, G2, G3). (Depends on
+   2.)
 
 4. **Explicit dependencies.** D1 add-by-slug stored-by-id; D2 full cycle
-   rejection across combined graph; C3 single-edge removal for parallelism.
-   (Depends on 3.)
+   rejection across the dependency graph; dependency deletion for restoring
+   parallelism. (Depends on 3.)
 
 5. **Priority engine.** E1-E6 unblock-leverage scoring, ordering, tie-break,
    blocked_external actionability vs downstream (E6), `/priority` endpoint with
-   ranks and no score. (Depends on 3 and 4 for the combined graph and
+   ranks and no score. (Depends on 3 and 4 for the dependency graph and
    actionability.)
 
 6. **Outliner parsing (frontend).** F1 `parseRow` token parser. Can run in
@@ -1389,7 +1386,7 @@ sequential.
    endpoints from 2-8, so land after they exist.)
 
 10. **Markdown mirror.** L1 render, L2 git commit + skip-unchanged. (Depends on
-    3 for tree/edges and ordering.)
+    3 for tree and dependency ordering.)
 
 11. **Unified view (frontend).** GET `/tree` flags (H1), Server Actions,
     `middleware.ts`, outliner + DnD components, view controls (mode colour H2,
@@ -1416,11 +1413,11 @@ UUIDs; all references (edges, comments, runs) are by id. Slugs are display-only
 and re-derived on rename, so renames never break references (A3). This is the
 single most load-bearing decision for the dependency model.
 
-**One graph for implicit + explicit edges.** Both kinds live in `dependencies`
-with a `kind` discriminator; actionability, cycle checks, and leverage all
-operate on the union. Implicit edges are regenerated per affected sibling group
-on structural change and are individually deletable (C3), so the same machinery
-gives both automatic sequencing and manual parallelism.
+**One explicit dependency graph.** Dependency edges live in `dependencies` and
+are stored by item id. Actionability, cycle checks, and leverage all operate on
+that graph plus section inheritance: dependencies attached to a container/root
+section gate every descendant leaf. Sibling order never creates edges; explicit
+edge addition/removal is how the user sequences or restores parallelism.
 
 **Leverage weights are fixed, tunable defaults.**
 `EFFORT_WEIGHT {1,3,8}` and `MODE_WEIGHT 2 for prompt-agent` are chosen so
@@ -1432,8 +1429,8 @@ leak the formula.
 
 **Display vs storage separation.** Leverage sort, collapse, colour, mode
 toggles, and marker filters are display-only projections of one editable tree;
-they never mutate `sort_order` or edges (H3). A new item is exempt from the
-active filter until refresh (H4) to keep capture frictionless.
+they never mutate `sort_order` or dependency edges (H3). A new item is exempt
+from the active filter until refresh (H4) to keep capture frictionless.
 
 **Auth modelled on wtsi-hgi/wa.** LDAP direct-bind with a DN template
 (placeholder validated at startup), owner-by-username (OS-user default,

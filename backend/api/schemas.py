@@ -58,6 +58,21 @@ class ItemUpdate(BaseModel):
     blocked_followup_date: str | None = None
 
 
+class MoveRequest(BaseModel):
+    """Request body for ``POST /items/{id}/move`` (spec: G1).
+
+    Both fields are optional and nullable. ``new_parent_id`` is the destination
+    parent; ``None`` (sent explicitly or simply omitted) promotes the item to a
+    root/product. Cross-product moves are allowed. ``after_id`` positions the
+    moved item immediately after that sibling in the destination group, or
+    appends it at the end of the group when omitted/null (or when the referenced
+    sibling is absent from the destination).
+    """
+
+    new_parent_id: str | None = None
+    after_id: str | None = None
+
+
 class ItemOut(BaseModel):
     """Response model for a single item (spec: A1).
 

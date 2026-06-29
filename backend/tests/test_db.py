@@ -168,7 +168,7 @@ def test_delete_item_cascades_to_comments(tmp_path) -> None:
 
 
 def test_duplicate_edge_rejected_by_unique_constraint(tmp_path) -> None:
-    """UNIQUE (from_id, to_id) prevents a duplicate edge regardless of kind."""
+    """UNIQUE (from_id, to_id) prevents duplicate dependency edges."""
     db_path = tmp_path / "agentfarm.db"
     apply_migrations(db_path)
 
@@ -177,7 +177,7 @@ def test_duplicate_edge_rejected_by_unique_constraint(tmp_path) -> None:
         _insert_item(conn, "item-b")
         conn.execute(
             "INSERT INTO dependencies (id, from_id, to_id, kind) VALUES (?, ?, ?, ?)",
-            ("dep-1", "item-a", "item-b", "implicit"),
+            ("dep-1", "item-a", "item-b", "explicit"),
         )
 
     duplicate_rejected = False

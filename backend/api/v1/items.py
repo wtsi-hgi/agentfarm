@@ -1,13 +1,13 @@
 """Item endpoints (spec: A. Data model and items).
 
-Currently implements ``POST /items`` (A1: create with defaults). Request and
-response wiring lives here; the structural behaviour (slug derivation, sibling
-ordering, implicit-edge generation, the clock and the acting user) lives in
+Currently implements item CRUD and structure endpoints. Request and response
+wiring lives here; the structural behaviour (slug derivation, sibling
+ordering, dependency cleanup, the clock and the acting user) lives in
 ``services`` so it can be reused and extended by later stories.
 
 Each request runs inside one transaction (the ``get_db`` dependency commits on
-success, rolls back on error), so inserting the item and regenerating its
-sibling group's implicit edges are atomic.
+success, rolls back on error), so item mutations and dependency cleanup are
+atomic.
 """
 
 from __future__ import annotations
@@ -24,7 +24,14 @@ from services import graph, tree
 from services.clock import now
 from services.identity import current_actor
 
-from ..schemas import DeletedResponse, ItemCreate, ItemOut, ItemUpdate, TreeItemOut
+from ..schemas import (
+    DeletedResponse,
+    ItemCreate,
+    ItemOut,
+    ItemUpdate,
+    MoveRequest,
+    TreeItemOut,
+)
 
 router = APIRouter()
 
@@ -49,6 +56,49 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
     return ItemOut(**data)
 
 
+def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Return whether an item with ``item_id`` exists."""
+    row = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
+    return row is not None
+
+
+def _parent_id_of(conn: sqlite3.Connection, item_id: str) -> str | None:
+    """Return ``item_id``'s current ``parent_id`` (``None`` if root or missing)."""
+    row = conn.execute(
+        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return row["parent_id"] if row is not None else None
+
+
+def _preceding_sibling_id(conn: sqlite3.Connection, item_id: str) -> str | None:
+    """Return the id of ``item_id``'s immediately preceding sibling, or ``None``.
+
+    Siblings share a ``parent_id`` and are ordered by ``sort_order`` then ``id``.
+    Returns ``None`` when ``item_id`` is the first child of its parent or the
+    item does not exist, i.e. there is no item to indent under.
+    """
+    row = conn.execute(
+        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    parent_id = row["parent_id"]
+    if parent_id is None:
+        siblings = conn.execute(
+            "SELECT id FROM items WHERE parent_id IS NULL ORDER BY sort_order, id"
+        ).fetchall()
+    else:
+        siblings = conn.execute(
+            "SELECT id FROM items WHERE parent_id = ? ORDER BY sort_order, id",
+            (parent_id,),
+        ).fetchall()
+    ordered = [sibling["id"] for sibling in siblings]
+    position = ordered.index(item_id)
+    if position == 0:
+        return None
+    return ordered[position - 1]
+
+
 @router.post("/items", response_model=ItemOut)
 async def create_item(
     payload: ItemCreate,
@@ -60,8 +110,8 @@ async def create_item(
     title, computes ``sort_order`` within the sibling group (appended, or after
     ``after_id``), records the acting user as ``created_by``/``updated_by``, and
     stamps all four creation timestamps with one ``now`` (``completed_at`` stays
-    null). Defaults fill any omitted field. After insertion the sibling group's
-    implicit edges are regenerated so sequencing follows the tree.
+    null). Defaults fill any omitted field. Sibling order is organisational only:
+    creation does not add a dependency on neighbouring items.
     """
     item_id = str(uuid.uuid4())
     slug = tree.derive_unique_slug(conn, payload.title)
@@ -102,8 +152,9 @@ async def create_item(
         },
     )
 
-    # Re-chain the affected sibling group's implicit edges (A1 / Core rules).
-    graph.regenerate_sibling_chain(conn, payload.parent_id)
+    # Clean any legacy generated edges for this sibling group; creation itself
+    # does not derive dependencies from order.
+    graph.regenerate_group(conn, payload.parent_id)
 
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
@@ -116,10 +167,10 @@ async def delete_item(
     item_id: str,
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> DeletedResponse:
-    """Delete an item and its whole subtree, then re-chain the group it left (A4).
+    """Delete an item and its whole subtree, then clean the group it left (A4).
 
     The item's ``parent_id`` is captured BEFORE the delete so the sibling group
-    can be re-chained afterwards. A single ``DELETE FROM items`` then relies on
+    can be cleaned afterwards. A single ``DELETE FROM items`` then relies on
     the schema's ``ON DELETE CASCADE`` (with ``PRAGMA foreign_keys = ON`` set per
     connection in ``db.connection``) to remove, in cascade: all descendants (via
     ``parent_id``), every descendant's and the item's own ``comments`` and
@@ -127,11 +178,9 @@ async def delete_item(
     the item is ``from_id`` and where it is ``to_id``. Nothing the cascade covers
     is hand-deleted.
 
-    Because the deleted item's incident implicit edges were cascade-removed,
-    regenerating the implicit chain for the captured ``parent_id`` (which may be
-    ``None`` for a root/product group) re-derives a single clean chain over the
-    remaining siblings (e.g. ``[a,b,c]`` minus ``b`` becomes ``c->a``). An
-    unknown id is 404.
+    Because the deleted item's incident dependency edges were cascade-removed,
+    the captured sibling group only needs legacy implicit-edge cleanup. Sibling
+    order does not create replacement dependencies. An unknown id is 404.
     """
     existing = conn.execute(
         "SELECT parent_id FROM items WHERE id = ?", (item_id,)
@@ -139,7 +188,7 @@ async def delete_item(
     if existing is None:
         raise HTTPException(status_code=404, detail="item not found")
 
-    # Capture BEFORE deletion: the group this item leaves must be re-chained,
+    # Capture BEFORE deletion: the group this item leaves must be cleaned,
     # and the row (and thus its parent_id) is gone once the delete runs.
     parent_id = existing["parent_id"]
 
@@ -147,13 +196,152 @@ async def delete_item(
     # every incident edge (from_id or to_id). foreign_keys=ON makes it fire.
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
 
-    # Re-chain the sibling group the item left so order stays a single chain.
-    # The deleted item's incident implicit edges are already gone (cascade), so
-    # regeneration over the survivors yields one clean chain (root group when
-    # parent_id is None).
-    graph.regenerate_sibling_chain(conn, parent_id)
+    # Clean the sibling group the item left. The deleted item's incident edges
+    # are already gone via cascade; no order-derived replacement edge is added.
+    graph.regenerate_group(conn, parent_id)
 
     return DeletedResponse(deleted=True, id=item_id)
+
+
+@router.post("/items/{item_id}/indent", response_model=ItemOut)
+async def indent_item(
+    item_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> ItemOut:
+    """Indent an item: make it the first child of its preceding sibling (F2 Tab).
+
+    Spec 8.1 ("becomes the first child of the preceding item"): the item moves
+    under its immediately-preceding sibling (which thereby becomes a container)
+    and is positioned as that container's first child (lowest ``sort_order``).
+    The item's whole subtree moves with it (only its own ``parent_id`` changes).
+
+    Invalid when the item has no preceding sibling (it is the first child of its
+    parent): there is nothing to indent under, so this is 422 ``"cannot indent
+    first item"``. An unknown id is 404.
+
+    Identity is preserved (same ``id``; explicit edges and comments, stored by
+    id, are untouched). The affected groups -- the sibling group the item left
+    AND the new parent's child group -- run legacy implicit-edge cleanup via
+    :func:`services.tree.reparent_item`.
+    """
+    preceding = _preceding_sibling_id(conn, item_id)
+    if preceding is None:
+        # No preceding sibling: either a missing id or the first child. 404 wins
+        # for a truly unknown id; otherwise the indent itself is invalid.
+        if not _item_exists(conn, item_id):
+            raise HTTPException(status_code=404, detail="item not found")
+        raise HTTPException(status_code=422, detail="cannot indent first item")
+
+    tree.reparent_item(conn, item_id, preceding, as_first_child=True)
+
+    row = conn.execute(
+        f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return _row_to_item(row)
+
+
+@router.post("/items/{item_id}/outdent", response_model=ItemOut)
+async def outdent_item(
+    item_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> ItemOut:
+    """Outdent an item: move it up one level, after its former parent (F2 Shift-Tab).
+
+    The item becomes a sibling of its FORMER PARENT, positioned immediately
+    after that parent. The item's whole subtree moves with it. If the former
+    parent then has no children it becomes a leaf again (derived from having no
+    children; nothing extra stored).
+
+    Invalid when the item is already at root (no parent): there is no level to
+    move up to, so this is 422 ``"cannot outdent root item"``. An unknown id is
+    404.
+
+    Identity is preserved (same ``id``; explicit edges and comments untouched).
+    The affected groups -- the former parent's child group AND the destination
+    group the item joined (the grandparent's group) -- run legacy implicit-edge
+    cleanup by :func:`services.tree.reparent_item`.
+    """
+    existing = conn.execute(
+        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if existing is None:
+        raise HTTPException(status_code=404, detail="item not found")
+
+    former_parent_id = existing["parent_id"]
+    if former_parent_id is None:
+        raise HTTPException(status_code=422, detail="cannot outdent root item")
+
+    # The destination is the grandparent's group; the item lands right after its
+    # former parent to preserve the familiar outliner shape.
+    grandparent_id = _parent_id_of(conn, former_parent_id)
+    tree.reparent_item(conn, item_id, grandparent_id, after_id=former_parent_id)
+
+    row = conn.execute(
+        f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return _row_to_item(row)
+
+
+@router.post("/items/{item_id}/move", response_model=ItemOut)
+async def move_item(
+    item_id: str,
+    payload: MoveRequest,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> ItemOut:
+    """Reparent and/or reorder an item (and its whole subtree) (G1).
+
+    Moves ``item_id`` under ``new_parent_id`` (``None`` promotes it to a
+    root/product) and positions it immediately after ``after_id`` in the
+    destination group, appending at the end when ``after_id`` is omitted or not a
+    member of that group. Cross-product moves are allowed. Identity is preserved
+    (same ``id``; explicit edges and comments, stored by id, are untouched).
+    Both the source and destination sibling groups run legacy implicit-edge
+    cleanup via :func:`services.tree.reparent_item`.
+
+    Validation runs BEFORE any mutation, in this order:
+
+    1. **404** ``item not found`` if ``item_id`` is unknown, or if a non-null
+       ``new_parent_id`` / ``after_id`` references an unknown item (consistent
+       with the spec's not-found policy).
+    2. **422** ``cannot move into own descendant`` if ``new_parent_id`` is the
+       item itself or any descendant of it -- such a move would detach a cycle of
+       items from the tree.
+    3. Moving/reordering does not create dependency edges, so dependency-cycle
+       rejection is only needed when adding explicit dependency edges.
+
+    G2 (merge) and G3 (split) are built from this endpoint plus create/delete and
+    need no separate routes (spec: G2, G3).
+    """
+    if not _item_exists(conn, item_id):
+        raise HTTPException(status_code=404, detail="item not found")
+
+    new_parent_id = payload.new_parent_id
+    after_id = payload.after_id
+
+    # A referenced destination parent or anchor sibling must exist (404 policy).
+    if new_parent_id is not None and not _item_exists(conn, new_parent_id):
+        raise HTTPException(status_code=404, detail="item not found")
+    if after_id is not None and not _item_exists(conn, after_id):
+        raise HTTPException(status_code=404, detail="item not found")
+
+    # Reparenting into the item's own subtree (including itself) would corrupt
+    # the tree; reject before mutating.
+    if new_parent_id is not None and tree.is_self_or_descendant(
+        conn, item_id, new_parent_id
+    ):
+        raise HTTPException(status_code=422, detail="cannot move into own descendant")
+
+    # Kept as a compatibility seam; with order-independent siblings this is
+    # always false because moves do not add dependency edges.
+    if graph.move_would_create_cycle(conn, item_id, new_parent_id, after_id=after_id):
+        raise HTTPException(status_code=409, detail="dependency cycle rejected")
+
+    tree.reparent_item(conn, item_id, new_parent_id, after_id=after_id)
+
+    row = conn.execute(
+        f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return _row_to_item(row)
 
 
 @router.get("/tree", response_model=list[TreeItemOut])

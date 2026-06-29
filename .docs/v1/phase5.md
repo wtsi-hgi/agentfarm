@@ -10,8 +10,9 @@ subagents with the `nextjs-fastapi-implementor` and
 
 Unblock-leverage scoring, ordering, tie-break, the actionable-vs-downstream
 distinction for `blocked_external`, and the `/priority` endpoint returning
-ranks with no numeric score. Depends on Phase 3 and Phase 4 (combined graph and
-actionability). Item 5.1 builds the core scoring/ordering engine and endpoint;
+ranks with no numeric score. Depends on Phase 3 and Phase 4 (dependency graph,
+section inheritance, and actionability). Item 5.1 builds the core
+scoring/ordering engine and endpoint;
 the remaining stories refine specific rules and run as a parallel batch.
 
 ## Items
@@ -61,7 +62,7 @@ spec.md section: E4
 In `services/leverage.py`, ensure `Downstream` is transitive but counts only
 open leaves (excluding containers and completed leaves). Covers all 3
 acceptance tests from E4 (container excluded / open child included =>
-`score(J1)=6`; completed leaf excluded => `score(K1)=0`; deeper chain =>
+`score(J1)=6`; completed leaf excluded => `score(K1)=0`; deeper explicit chain =>
 `score(M1)=17`).
 
 - [ ] implemented

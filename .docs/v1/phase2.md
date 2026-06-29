@@ -23,9 +23,9 @@ Implement POST `/items` in `api/v1/items.py` with `services/tree.py` and
 `db/connection.py`. Server sets id (UUIDv4), derives slug, computes
 `sort_order`, sets `created_by`/`updated_by`, sets timestamps, applies
 defaults. Establishes `ItemCreate`/`ItemOut` Pydantic models and Zod
-`itemSchema`. Creating an item regenerates implicit edges for its sibling
-group. Covers all 6 acceptance tests from A1 (defaults, slug collision,
-slugify rules, empty-slug fallback, bad-enum 422, child sort + implicit edge).
+`itemSchema`. Creating an item does not create dependency edges. Covers all 6
+acceptance tests from A1 (defaults, slug collision, slugify rules,
+empty-slug fallback, bad-enum 422, child sort without dependency edge).
 
 - [x] implemented
 - [x] reviewed
@@ -57,15 +57,15 @@ slug yields `-2`; double-rename resolves throughout).
 - [x] implemented
 - [x] reviewed
 
-### Item 2.4: A4 - Delete item with subtree cascade and edge regeneration
+### Item 2.4: A4 - Delete item with subtree cascade and dependency cleanup
 
 spec.md section: A4
 
 Implement DELETE `/items/{id}` in `api/v1/items.py` with `services/graph.py`,
 removing the item and (via cascade) descendants, comments, runs, and incident
-edges; re-chain the left sibling group (regenerate implicit edges). Covers all
-2 acceptance tests from A4 (sibling re-chain to a single edge; container delete
-cascades to children and their comments).
+edges; keep remaining sibling order without creating a replacement dependency
+edge. Covers all 2 acceptance tests from A4 (dependency cleanup/no replacement
+edge; container delete cascades to children and their comments).
 
 - [x] implemented
 - [x] reviewed

@@ -1,38 +1,28 @@
-"""Implicit dependency-edge generation from tree structure.
+"""Dependency graph helpers and the shared cycle-rejection predicate.
 
 A dependency edge ``from_id -> to_id`` means "``from_id`` depends on (needs)
-``to_id``". Edges are either ``implicit`` (derived from tree shape) or
-``explicit`` (hand-authored ``>needs:`` links). The two kinds share the
-``dependencies`` table and are distinguished by ``kind``; explicit edges and
-comments are NEVER touched by implicit regeneration.
+``to_id``". Tree structure is organisational only in the corrected v1 model:
+sibling order does not create dependency edges. Root items and subsections are
+therefore independent until the user records an explicit ``>needs:`` edge.
 
-Scope of this module today (item A1)
--------------------------------------
-Only the **sibling chain** is implemented: among the children of one parent,
-ordered by ``sort_order``, each child after the first depends on the previous
-sibling (``child -> previous_sibling``). Regeneration for a sibling group
-deletes only that group's internal implicit edges and re-derives the chain, so
-it is idempotent and safe to call after any change to the group.
-
-This is deliberately the seam for the fuller implicit engine added later
-(sub-section entry edges, container completion rules, regeneration on every
-structural op, and cycle-aware skipping). New rules slot into
-:func:`regenerate_sibling_chain` (or sibling helpers) without changing its
-callers.
+The ``dependencies.kind`` discriminator is retained for compatibility with the
+phase-1 schema and earlier phase work, but v1 creates user-authored
+``explicit`` edges only. Structural mutations call :func:`regenerate_group` to
+discard any stale ``implicit`` rows left by older code paths; the function
+deliberately does not derive new edges from sibling order.
 """
 
 from __future__ import annotations
 
 import sqlite3
-import uuid
+from collections.abc import Iterable
 
 
 def _child_ids_in_order(conn: sqlite3.Connection, parent_id: str | None) -> list[str]:
     """Return the ids of ``parent_id``'s children ordered as siblings.
 
-    Ordering is ``sort_order`` then ``id`` so the chain is deterministic even
-    if two siblings momentarily share a ``sort_order``. ``parent_id`` of
-    ``None`` selects the root (product) group.
+    Ordering is ``sort_order`` then ``id`` for deterministic cleanup. ``None``
+    selects the root/product group (``parent_id IS NULL``).
     """
     if parent_id is None:
         rows = conn.execute(
@@ -49,14 +39,7 @@ def _child_ids_in_order(conn: sqlite3.Connection, parent_id: str | None) -> list
 def _delete_group_implicit_edges(
     conn: sqlite3.Connection, child_ids: list[str]
 ) -> None:
-    """Delete implicit edges internal to one sibling group.
-
-    Only edges whose ``from_id`` and ``to_id`` are BOTH members of
-    ``child_ids`` are removed: these are the sibling-chain edges this group
-    owns. Implicit edges that merely touch the group from outside (e.g. a
-    later phase's sub-section entry edge into the first child) and all explicit
-    edges are left intact.
-    """
+    """Delete stale implicit edges originating from one sibling group."""
     if not child_ids:
         return
     placeholders = ",".join("?" for _ in child_ids)
@@ -65,42 +48,77 @@ def _delete_group_implicit_edges(
         DELETE FROM dependencies
         WHERE kind = 'implicit'
           AND from_id IN ({placeholders})
-          AND to_id IN ({placeholders})
         """,
-        (*child_ids, *child_ids),
+        tuple(child_ids),
     )
 
 
-def _insert_implicit_edge(conn: sqlite3.Connection, from_id: str, to_id: str) -> None:
-    """Insert one implicit edge ``from_id -> to_id`` (ignoring duplicates).
+def would_create_cycle(conn: sqlite3.Connection, from_id: str, to_id: str) -> bool:
+    """Return whether adding edge ``from_id -> to_id`` would create a cycle.
 
-    ``UNIQUE (from_id, to_id)`` already prevents duplicates regardless of kind;
-    ``INSERT OR IGNORE`` keeps regeneration robust if an equivalent edge
-    somehow exists.
+    True if ``from_id == to_id`` (a self-edge), or if ``to_id`` can already
+    reach ``from_id`` over the dependency graph. In that case, adding
+    ``from_id -> to_id`` would close a directed cycle.
     """
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO dependencies (id, from_id, to_id, kind)
-        VALUES (?, ?, ?, 'implicit')
-        """,
-        (str(uuid.uuid4()), from_id, to_id),
-    )
+    if from_id == to_id:
+        return True
+
+    visited: set[str] = set()
+    frontier: list[str] = [to_id]
+    while frontier:
+        current = frontier.pop()
+        if current == from_id:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        rows = conn.execute(
+            "SELECT to_id FROM dependencies WHERE from_id = ?", (current,)
+        ).fetchall()
+        frontier.extend(row["to_id"] for row in rows)
+    return False
+
+
+def move_would_create_cycle(
+    conn: sqlite3.Connection,
+    item_id: str,
+    new_parent_id: str | None,
+    *,
+    after_id: str | None = None,
+) -> bool:
+    """Return whether moving ``item_id`` would create a dependency cycle.
+
+    Moving or reordering items no longer creates dependency edges. Dependency
+    cycles are introduced only by dependency-edge insertion, guarded by
+    :func:`would_create_cycle`, while tree parent cycles are guarded by
+    :func:`services.tree.is_self_or_descendant`.
+    """
+    return False
+
+
+def regenerate_group(conn: sqlite3.Connection, parent_id: str | None) -> None:
+    """Discard stale generated edges for one parent's sibling group.
+
+    Structural edits preserve explicit dependencies and do not derive new
+    dependencies from sibling order. This function is idempotent and safe to
+    call after create/delete/move operations; it only removes legacy
+    ``kind='implicit'`` rows originating from members of the affected group.
+    """
+    _delete_group_implicit_edges(conn, _child_ids_in_order(conn, parent_id))
+
+
+def regenerate_groups(
+    conn: sqlite3.Connection, parent_ids: Iterable[str | None]
+) -> None:
+    """Run legacy implicit-edge cleanup for several sibling groups."""
+    seen: set[str | None] = set()
+    for parent_id in parent_ids:
+        if parent_id in seen:
+            continue
+        seen.add(parent_id)
+        regenerate_group(conn, parent_id)
 
 
 def regenerate_sibling_chain(conn: sqlite3.Connection, parent_id: str | None) -> None:
-    """Regenerate the implicit sibling chain for one parent's children.
-
-    Deletes the group's internal implicit edges, then re-creates
-    ``child -> previous_sibling`` for each child after the first (children
-    ordered by ``sort_order``). Idempotent; call after any change that affects
-    the group's membership or order. Explicit edges are never altered.
-
-    Args:
-        conn: Open connection (within the caller's transaction).
-        parent_id: Parent whose sibling group is regenerated (``None`` for the
-            root/product group).
-    """
-    child_ids = _child_ids_in_order(conn, parent_id)
-    _delete_group_implicit_edges(conn, child_ids)
-    for previous, current in zip(child_ids, child_ids[1:]):
-        _insert_implicit_edge(conn, current, previous)
+    """Deprecated alias for :func:`regenerate_group` (legacy cleanup only)."""
+    regenerate_group(conn, parent_id)
