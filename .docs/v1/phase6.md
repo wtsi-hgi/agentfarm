@@ -26,5 +26,5 @@ token; unrecognised enum value -> parse error). Returns the `ParsedRow` /
 token row; case-insensitive match; repeated needs; bad enum error; `#` left in
 title; plain title with no tokens).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
