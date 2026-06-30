@@ -18,6 +18,7 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
@@ -26,6 +27,7 @@ const actionMocks = vi.hoisted(() => ({
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
@@ -446,6 +448,7 @@ describe('Outliner live newly added filter exemptions', () => {
       }
     )
     actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
@@ -460,6 +463,7 @@ describe('Outliner live newly added filter exemptions', () => {
         created_at: '2026-06-29T00:00:00.000000Z',
       },
     ])
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
     actionMocks.outdentItem.mockResolvedValue({})

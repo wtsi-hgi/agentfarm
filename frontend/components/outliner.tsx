@@ -23,6 +23,7 @@ import {
   focusAndScrollOutlinerItem,
   resolveJumpState,
 } from '@/components/product-switcher'
+import { PromptResponseTimelineDialog } from '@/components/prompt-response-timeline-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
@@ -608,6 +609,9 @@ export function Outliner({
   const [detailRefreshKey, setDetailRefreshKey] = React.useState(0)
   const [pendingDeleteItem, setPendingDeleteItem] =
     React.useState<TreeItem | null>(null)
+  const [timelineItemId, setTimelineItemId] = React.useState<string | null>(
+    null
+  )
   const [pendingDependencyRemoval, setPendingDependencyRemoval] =
     React.useState<PendingDependencyRemoval | null>(null)
   const [draftResetRequest, setDraftResetRequest] =
@@ -695,6 +699,9 @@ export function Outliner({
   )
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
+    : null
+  const timelineItem = timelineItemId
+    ? (itemsById.get(timelineItemId) ?? null)
     : null
 
   React.useEffect(() => {
@@ -820,6 +827,9 @@ export function Outliner({
     const deletedIds = collectSubtreeItemIds(items, item.id)
     const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
     setLocallyDeletedItemIds(unavailableIds)
+    setTimelineItemId((current) =>
+      current && deletedIds.has(current) ? null : current
+    )
     clearItemFocus()
     setSelectedItemId(firstAvailableItemId(items, unavailableIds))
   }
@@ -924,6 +934,11 @@ export function Outliner({
 
   async function requestItemDelete(item: TreeItem) {
     setPendingDeleteItem(item)
+  }
+
+  function openPromptTimeline(item: TreeItem) {
+    setSelectedItemId(item.id)
+    setTimelineItemId(item.id)
   }
 
   function closePendingDependencyRemoval() {
@@ -1210,6 +1225,7 @@ export function Outliner({
                       onMoveDown={moveDown}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
+                      onOpenPromptTimeline={openPromptTimeline}
                       draftResetRequest={rowDraftResetRequest}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move'
@@ -1280,6 +1296,10 @@ export function Outliner({
             await removeItem(pendingDeleteItem)
           }
         }}
+      />
+      <PromptResponseTimelineDialog
+        item={timelineItem}
+        onClose={() => setTimelineItemId(null)}
       />
     </div>
   )

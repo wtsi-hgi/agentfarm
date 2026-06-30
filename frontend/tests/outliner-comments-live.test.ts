@@ -13,6 +13,7 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
@@ -21,6 +22,7 @@ const actionMocks = vi.hoisted(() => ({
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
@@ -339,6 +341,7 @@ describe('Outliner comment target lifecycle', () => {
     actionMocks.createComment.mockResolvedValue({})
     actionMocks.createItem.mockResolvedValue({})
     actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteDependency.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
@@ -355,6 +358,7 @@ describe('Outliner comment target lifecycle', () => {
     })
     actionMocks.fetchItemActivity.mockResolvedValue([])
     actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
     actionMocks.outdentItem.mockResolvedValue({})

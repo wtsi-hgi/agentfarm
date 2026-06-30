@@ -13,6 +13,7 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
@@ -21,6 +22,7 @@ const actionMocks = vi.hoisted(() => ({
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
@@ -272,6 +274,7 @@ describe('Outliner reorder controls', () => {
       at: '2026-06-29T00:00:00.000000Z',
       created_at: '2026-06-29T00:00:00.000000Z',
     })
+    actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
@@ -279,6 +282,7 @@ describe('Outliner reorder controls', () => {
     actionMocks.fetchComments.mockResolvedValue([])
     actionMocks.fetchItemActivity.mockResolvedValue([])
     actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
     actionMocks.outdentItem.mockResolvedValue({})

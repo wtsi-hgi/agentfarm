@@ -182,6 +182,25 @@ export const commentListSchema = z.array(commentSchema)
 
 export type Comment = z.infer<typeof commentSchema>
 
+export const promptResponseKindSchema = z.enum(['prompt', 'response'])
+
+export type PromptResponseKind = z.infer<typeof promptResponseKindSchema>
+
+export const promptResponseEntrySchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    kind: promptResponseKindSchema,
+    created_by: z.string(),
+    body: z.string(),
+    created_at: z.string(),
+  })
+  .strict()
+
+export const promptResponseEntryListSchema = z.array(promptResponseEntrySchema)
+
+export type PromptResponseEntry = z.infer<typeof promptResponseEntrySchema>
+
 export const itemActivitySchema = z
   .object({
     id: z.string(),

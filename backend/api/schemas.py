@@ -147,6 +147,13 @@ class CommentUpdate(BaseModel):
     body: str
 
 
+class PromptResponseEntryCreate(BaseModel):
+    """Request body for recording an item prompt or response timeline entry."""
+
+    kind: Literal["prompt", "response"]
+    body: str
+
+
 class DependencyCreate(BaseModel):
     """Request body for ``POST /dependencies`` (spec: D1).
 
@@ -187,6 +194,17 @@ class CommentOut(BaseModel):
     body: str
     created_at: str
     updated_at: str
+
+
+class PromptResponseEntryOut(BaseModel):
+    """Response model for an item prompt/response timeline entry."""
+
+    id: str
+    item_id: str
+    kind: Literal["prompt", "response"]
+    created_by: str
+    body: str
+    created_at: str
 
 
 class ItemActivityOut(BaseModel):

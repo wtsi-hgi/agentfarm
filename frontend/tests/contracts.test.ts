@@ -16,6 +16,9 @@ import {
   messageResponseSchema,
   notImplementedResponseSchema,
   priorityResponseSchema,
+  promptResponseEntryListSchema,
+  promptResponseEntrySchema,
+  promptResponseKindSchema,
   markerChangeItemsSchema,
   runListSchema,
   runSchema,
@@ -307,6 +310,38 @@ describe('comment contracts', () => {
     const { author: _author, ...withoutAuthor } = comment
 
     expect(commentSchema.safeParse(withoutAuthor).success).toBe(false)
+  })
+})
+
+describe('prompt/response timeline contracts', () => {
+  const entry = {
+    id: 'entry-1',
+    item_id: 'item-1',
+    kind: 'response',
+    created_by: 'alice',
+    body: '## Result\n- tests passed',
+    created_at: '2026-06-30T09:02:00.000000Z',
+  }
+
+  it('parses PromptResponseEntry payloads and lists', () => {
+    expect(promptResponseKindSchema.options).toEqual(['prompt', 'response'])
+    expect(promptResponseEntrySchema.parse(entry)).toEqual(entry)
+    expect(promptResponseEntryListSchema.parse([entry])).toEqual([entry])
+  })
+
+  it('rejects unsupported prompt/response entry kinds', () => {
+    expect(
+      promptResponseEntrySchema.safeParse({
+        ...entry,
+        kind: 'comment',
+      }).success
+    ).toBe(false)
+  })
+
+  it('rejects entries without recorded user content', () => {
+    const { body: _body, ...withoutBody } = entry
+
+    expect(promptResponseEntrySchema.safeParse(withoutBody).success).toBe(false)
   })
 })
 

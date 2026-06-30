@@ -20,12 +20,15 @@ import {
   messageResponseSchema,
   notImplementedResponseSchema,
   priorityResponseSchema,
+  promptResponseEntryListSchema,
+  promptResponseEntrySchema,
   runListSchema,
   runSchema,
   treeSchema,
   type Effort,
   type MarkerChangeField,
   type Mode,
+  type PromptResponseKind,
   type State,
   whoamiSchema,
 } from '@/lib/contracts'
@@ -87,6 +90,11 @@ export type DependencyInput =
     }
 
 export type CommentInput = {
+  body: string
+}
+
+export type PromptResponseEntryInput = {
+  kind: PromptResponseKind
   body: string
 }
 
@@ -346,6 +354,24 @@ export async function deleteComment(commentId: string) {
     `/api/v1/comments/${encodeURIComponent(commentId)}`,
     deletedResponseSchema,
     jsonInit('DELETE')
+  )
+}
+
+export async function fetchPromptResponseEntries(itemId: string) {
+  return authenticatedRead(
+    `/api/v1/items/${encodeURIComponent(itemId)}/prompt-responses`,
+    promptResponseEntryListSchema
+  )
+}
+
+export async function createPromptResponseEntry(
+  itemId: string,
+  input: PromptResponseEntryInput
+) {
+  return mutation(
+    `/api/v1/items/${encodeURIComponent(itemId)}/prompt-responses`,
+    promptResponseEntrySchema,
+    jsonInit('POST', input)
   )
 }
 

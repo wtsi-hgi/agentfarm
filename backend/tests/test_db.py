@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "items",
     "dependencies",
     "comments",
+    "prompt_response_entries",
     "item_state_changes",
     "markers",
     "runs",
@@ -63,7 +64,7 @@ def _insert_item(conn: sqlite3.Connection, item_id: str) -> None:
 
 
 def test_migration_creates_all_tables(tmp_path) -> None:
-    """Applying the migration to a fresh DB creates all five tables."""
+    """Applying the migration to a fresh DB creates all expected tables."""
     db_path = tmp_path / "agentfarm.db"
 
     apply_migrations(db_path)
@@ -235,6 +236,41 @@ def test_delete_item_cascades_to_comments(tmp_path) -> None:
 
     with get_connection(db_path) as conn:
         remaining = conn.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
+
+    assert remaining == 0
+
+
+def test_delete_item_cascades_to_prompt_response_entries(tmp_path) -> None:
+    """Deleting an item removes its prompt/response timeline entries."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        _insert_item(conn, "item-a")
+        conn.execute(
+            """
+            INSERT INTO prompt_response_entries (
+                id, item_id, kind, created_by, body, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "entry-1",
+                "item-a",
+                "response",
+                "alice",
+                "$ make test\nPASS",
+                "2026-01-01T00:00:00.000000Z",
+            ),
+        )
+
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM items WHERE id = ?", ("item-a",))
+
+    with get_connection(db_path) as conn:
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM prompt_response_entries"
+        ).fetchone()[0]
 
     assert remaining == 0
 

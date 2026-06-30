@@ -5,6 +5,7 @@ import {
   createComment,
   createItem,
   createMarker,
+  createPromptResponseEntry,
   createRun,
   deleteComment,
   deleteDependency,
@@ -14,6 +15,7 @@ import {
   fetchChanges,
   fetchComments,
   fetchMarkers,
+  fetchPromptResponseEntries,
   fetchPriority,
   fetchTree,
   listRuns,
@@ -449,6 +451,71 @@ describe('outliner mutation Server Actions', () => {
     ).toEqual(expectedAuthHeaders(4))
   })
 
+  it('exposes prompt/response timeline workflows through validated Server Actions', async () => {
+    const entry = {
+      id: 'entry-1',
+      item_id: 'current',
+      kind: 'response',
+      created_by: 'alice',
+      body: '$ make test\nPASS',
+      created_at: '2026-06-30T09:02:00.000000Z',
+    }
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/current/prompt-responses'
+      ) {
+        return jsonResponse([entry])
+      }
+      if (
+        method === 'POST' &&
+        pathname === '/api/v1/items/current/prompt-responses'
+      ) {
+        return jsonResponse({ ...entry, kind: 'prompt', body: 'Run tests' })
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(fetchPromptResponseEntries('current')).resolves.toEqual([
+      entry,
+    ])
+    await expect(
+      createPromptResponseEntry('current', {
+        kind: 'prompt',
+        body: 'Run tests',
+      })
+    ).resolves.toEqual({ ...entry, kind: 'prompt', body: 'Run tests' })
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      {
+        method: 'GET',
+        path: '/api/v1/items/current/prompt-responses',
+        body: null,
+      },
+      {
+        method: 'POST',
+        path: '/api/v1/items/current/prompt-responses',
+        body: { kind: 'prompt', body: 'Run tests' },
+      },
+    ])
+    expect(
+      fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(2))
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(1)
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+  })
+
   it('forwards the signed session token for protected read Server Actions', async () => {
     const treeItem = {
       ...baseItem,
@@ -484,6 +551,14 @@ describe('outliner mutation Server Actions', () => {
       at: '2026-06-29T00:00:00.000000Z',
       created_at: '2026-06-29T00:00:00.000000Z',
     }
+    const promptResponseEntry = {
+      id: 'entry-1',
+      item_id: 'current',
+      kind: 'prompt',
+      created_by: 'alice',
+      body: 'Run tests',
+      created_at: '2026-06-30T09:00:00.000000Z',
+    }
     const run = {
       id: 'run-1',
       item_id: 'current',
@@ -506,6 +581,9 @@ describe('outliner mutation Server Actions', () => {
       if (pathname === '/api/v1/items/current/activity') {
         return jsonResponse([activity])
       }
+      if (pathname === '/api/v1/items/current/prompt-responses') {
+        return jsonResponse([promptResponseEntry])
+      }
       if (pathname === '/api/v1/markers') {
         return jsonResponse([marker])
       }
@@ -526,6 +604,9 @@ describe('outliner mutation Server Actions', () => {
     await expect(fetchPriority()).resolves.toEqual([priorityItem])
     await expect(fetchComments('current')).resolves.toEqual([comment])
     await expect(fetchItemActivity('current')).resolves.toEqual([activity])
+    await expect(fetchPromptResponseEntries('current')).resolves.toEqual([
+      promptResponseEntry,
+    ])
     await expect(fetchMarkers()).resolves.toEqual([marker])
     await expect(fetchChanges({ since: 'marker-1' })).resolves.toEqual([
       baseItem,
@@ -546,6 +627,10 @@ describe('outliner mutation Server Actions', () => {
       },
       {
         path: '/api/v1/items/current/activity',
+        auth: expectedAuthHeaders(1)[0],
+      },
+      {
+        path: '/api/v1/items/current/prompt-responses',
         auth: expectedAuthHeaders(1)[0],
       },
       { path: '/api/v1/markers', auth: expectedAuthHeaders(1)[0] },

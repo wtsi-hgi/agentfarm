@@ -9,6 +9,7 @@ import {
   GripVertical,
   IndentDecrease,
   IndentIncrease,
+  MessagesSquare,
   Save,
   Trash2,
 } from 'lucide-react'
@@ -63,6 +64,7 @@ type OutlinerRowProps = {
   onMoveDown: (item: TreeItem) => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
+  onOpenPromptTimeline: (item: TreeItem) => void
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
   onDragEnd?: React.DragEventHandler<HTMLButtonElement>
   draftResetRequest?: { requestId: number; text: string } | null
@@ -85,6 +87,7 @@ export function OutlinerRow({
   onMoveDown,
   onChangeState,
   onChangeDone,
+  onOpenPromptTimeline,
   onDragStart,
   onDragEnd,
   draftResetRequest,
@@ -294,6 +297,25 @@ export function OutlinerRow({
               </option>
             ))}
           </select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                aria-label="Open prompt/response timeline"
+                disabled={pending}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenPromptTimeline(item)
+                }}
+              >
+                <MessagesSquare className="size-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Prompt/response timeline</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

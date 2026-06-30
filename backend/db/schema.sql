@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS comments (
   updated_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS prompt_response_entries (
+  id          TEXT PRIMARY KEY,
+  item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('prompt', 'response')),
+  created_by  TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS item_state_changes (
   id          TEXT PRIMARY KEY,
   item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
