@@ -223,8 +223,8 @@ logs/
 
 .tmp/
 
-# AgentFarm data dirs (default AGENTFARM_DATA_DIR=data): hold the SQLite DB and
-# the markdown mirror's own nested git repo. Must never enter the app repo.
+# AgentFarm data dirs (default AGENTFARM_DATA_DIR=data): hold local runtime
+# state such as the SQLite DB and generated TLS files. Must never enter the app repo.
 # Anchored, no trailing slash so they match before the directories are created.
 /data
 /backend/data
