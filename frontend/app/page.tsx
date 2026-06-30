@@ -1,5 +1,6 @@
 import { AppShell } from '@/components/app-shell'
 import { Outliner } from '@/components/outliner'
+import type { PriorityItem, TreeItem } from '@/lib/contracts'
 
 import {
   fetchFarmContext,
@@ -8,18 +9,49 @@ import {
   fetchTree,
 } from './actions'
 
+type HomeProtectedData = {
+  items: TreeItem[]
+  priorityItems: PriorityItem[]
+  authorized: boolean
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return false
+  }
+
+  return (error as { status: unknown }).status === 401
+}
+
+async function fetchProtectedHomeData(): Promise<HomeProtectedData> {
+  try {
+    const [items, priorityItems] = await Promise.all([
+      fetchTree(),
+      fetchPriority(),
+    ])
+    return { authorized: true, items, priorityItems }
+  } catch (error) {
+    if (!isUnauthorizedError(error)) {
+      throw error
+    }
+
+    return { authorized: false, items: [], priorityItems: [] }
+  }
+}
+
 export default async function Home() {
-  const [items, priorityItems, farmContext, session] = await Promise.all([
-    fetchTree(),
-    fetchPriority(),
+  const [farmContext, session] = await Promise.all([
     fetchFarmContext(),
     fetchSessionIdentity(),
   ])
+  const { authorized, items, priorityItems } = session
+    ? await fetchProtectedHomeData()
+    : { authorized: false, items: [], priorityItems: [] }
 
   return (
     <AppShell
       ownerUsername={farmContext.owner_username}
-      session={session}
+      session={authorized ? session : null}
       metrics={
         <dl className="text-muted-foreground grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:text-right">
           <div>

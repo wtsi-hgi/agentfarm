@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { JSDOM } from 'jsdom'
+import { revalidatePath } from 'next/cache'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,14 +10,21 @@ import {
   fetchPriority,
   fetchSessionIdentity,
   fetchTree,
+  logout,
 } from '@/app/actions'
 import type { Item, PriorityItem, TreeItem } from '@/lib/contracts'
 
 const sessionMocks = vi.hoisted(() => ({
+  clearSessionCookie: vi.fn(),
   readSessionIdentity: vi.fn(),
 }))
 
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+}))
+
 vi.mock('@/lib/session', () => ({
+  clearSessionCookie: sessionMocks.clearSessionCookie,
   readSessionIdentity: sessionMocks.readSessionIdentity,
   setSessionCookie: vi.fn(),
 }))
@@ -65,25 +73,44 @@ function jsonResponse(payload: unknown) {
   })
 }
 
+function errorResponse(status: number, message: string) {
+  return new Response(JSON.stringify({ message }), {
+    headers: { 'content-type': 'application/json' },
+    status,
+  })
+}
+
+function authToken(init?: RequestInit): string | null {
+  return new Headers(init?.headers).get('x-agentfarm-session')
+}
+
 function stubBackend() {
   const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
     const pathname = new URL(url.toString()).pathname
     if (pathname === '/api/v1/tree') {
+      if (!authToken(init)) {
+        return errorResponse(401, 'Authentication required')
+      }
       return jsonResponse(treeItems)
     }
     if (pathname === '/api/v1/priority') {
+      if (!authToken(init)) {
+        return errorResponse(401, 'Authentication required')
+      }
       return jsonResponse(priorityItems)
     }
     if (pathname === '/api/v1/auth/context') {
       return jsonResponse({ owner_username: 'alice' })
     }
     if (pathname === '/api/v1/auth/whoami') {
-      const token = new Headers(init?.headers).get('x-agentfarm-session')
-      return jsonResponse(
-        token === 'signed-owner-token'
-          ? { username: 'alice', role: 'owner' }
-          : { username: 'vue', role: 'viewer' }
-      )
+      const token = authToken(init)
+      if (token === 'signed-owner-token') {
+        return jsonResponse({ username: 'alice', role: 'owner' })
+      }
+      if (token === 'signed-viewer-token') {
+        return jsonResponse({ username: 'vue', role: 'viewer' })
+      }
+      return errorResponse(401, 'Authentication required')
     }
 
     return jsonResponse({ message: `Unexpected path: ${pathname}` })
@@ -94,6 +121,7 @@ function stubBackend() {
 
 describe('app page BFF wiring', () => {
   beforeEach(() => {
+    sessionMocks.clearSessionCookie.mockReset()
     sessionMocks.readSessionIdentity.mockResolvedValue({
       username: 'vue',
       role: 'viewer',
@@ -211,5 +239,57 @@ describe('app page BFF wiring', () => {
     expect(account?.textContent).toContain('Manager')
     expect(account?.textContent).not.toContain('forged-owner')
     expect(account?.textContent).not.toContain('Primary user')
+  })
+
+  it('renders the signed-out home shell without protected data reads', async () => {
+    sessionMocks.readSessionIdentity.mockResolvedValue(null)
+    const fetch = stubBackend()
+
+    const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+    const header = document.querySelector('header')
+    const account = header?.querySelector('[aria-label="Account"]')
+
+    expect(
+      fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
+    ).toEqual(['/api/v1/auth/context'])
+    expect(header?.querySelector('h1')?.textContent).toBe("alice's Agent Farm")
+    expect(account?.textContent).toContain('Not signed in')
+    expect(account?.textContent).toContain('Login required')
+    expect(account?.textContent).toContain('Sign in')
+    expect(account?.querySelector('a[href="/login"]')).not.toBeNull()
+    expect(header?.textContent).toContain('Items')
+    expect(header?.textContent).toContain('Priority')
+    expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('0')
+    expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('0')
+    expect(
+      document.querySelector('input[aria-label="First root title"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Alpha')
+  })
+
+  it('renders a signed-out home shell after logout without surfacing protected 401s', async () => {
+    const mockedRevalidatePath = vi.mocked(revalidatePath)
+    sessionMocks.clearSessionCookie.mockImplementation(async () => {
+      sessionMocks.readSessionIdentity.mockResolvedValue(null)
+    })
+    const fetch = stubBackend()
+
+    await logout()
+    const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+    const account = document.querySelector('[aria-label="Account"]')
+
+    expect(sessionMocks.clearSessionCookie).toHaveBeenCalledOnce()
+    expect(mockedRevalidatePath).toHaveBeenCalledWith('/')
+    expect(
+      fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
+    ).toEqual(['/api/v1/auth/context'])
+    expect(account?.textContent).toContain('Not signed in')
+    expect(account?.textContent).toContain('Sign in')
+    expect(document.body.textContent).not.toContain('Something went wrong')
+    expect(document.body.textContent).not.toContain(
+      'Backend request failed with 401'
+    )
   })
 })

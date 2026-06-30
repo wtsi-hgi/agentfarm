@@ -20,11 +20,32 @@ function jsonResponse(payload: unknown) {
   })
 }
 
+function errorResponse(status: number, message: string) {
+  return new Response(JSON.stringify({ message }), {
+    headers: { 'content-type': 'application/json' },
+    status,
+  })
+}
+
 function stubBackend() {
-  const fetch = vi.fn(async (url: URL | string) => {
+  const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
     const pathname = new URL(url.toString()).pathname
     if (pathname === '/api/v1/auth/context') {
       return jsonResponse({ owner_username: 'alice' })
+    }
+    if (pathname === '/api/v1/auth/whoami') {
+      const token = new Headers(init?.headers).get('x-agentfarm-session')
+      if (token === 'signed-viewer-token') {
+        return jsonResponse({ username: 'vue', role: 'viewer' })
+      }
+      return errorResponse(401, 'Authentication required')
+    }
+    if (
+      pathname === '/api/v1/tree' ||
+      pathname === '/api/v1/priority' ||
+      pathname === '/api/v1/markers'
+    ) {
+      return errorResponse(401, 'Authentication required')
     }
 
     return jsonResponse({ message: `Unexpected path: ${pathname}` })
@@ -59,6 +80,30 @@ describe('login page', () => {
     expect(account?.textContent).toContain('Not signed in')
     expect(account?.textContent).toContain('Sign in')
     expect(account?.querySelector('a[href^="/login"]')).not.toBeNull()
+    expect(markup).toContain('name="username"')
+    expect(markup).toContain('name="password"')
+  })
+
+  it('keeps the login page reachable when a stale session is rejected', async () => {
+    sessionMocks.readSessionIdentity.mockResolvedValue({
+      username: 'stale-user',
+      role: 'viewer',
+      session_token: 'expired-token',
+    })
+    const fetch = stubBackend()
+
+    const markup = renderToStaticMarkup(
+      await LoginPage({
+        searchParams: Promise.resolve({ next: '/' }),
+      })
+    )
+    const document = new JSDOM(markup).window.document
+    const account = document.querySelector('[aria-label="Account"]')
+
+    expect(
+      fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
+    ).toEqual(['/api/v1/auth/context', '/api/v1/auth/whoami'])
+    expect(account?.textContent).toContain('Not signed in')
     expect(markup).toContain('name="username"')
     expect(markup).toContain('name="password"')
   })
