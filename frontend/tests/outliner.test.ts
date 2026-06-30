@@ -17,6 +17,8 @@ const baseItem = {
   blocked_external: false,
   blocked_note: null,
   blocked_followup_date: null,
+  description: '',
+  repo_url: null,
   created_by: 'alice',
   updated_by: 'alice',
   created_at: '2026-06-29T00:00:00.000000Z',

@@ -19,6 +19,7 @@ const actionMocks = vi.hoisted(() => ({
   editComment: vi.fn(),
   fetchChanges: vi.fn(),
   fetchComments: vi.fn(),
+  fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
@@ -40,6 +41,8 @@ const baseItem = {
   blocked_external: false,
   blocked_note: null,
   blocked_followup_date: null,
+  description: '',
+  repo_url: null,
   created_by: 'alice',
   updated_by: 'alice',
   created_at: '2026-06-29T00:00:00.000000Z',
@@ -340,6 +343,7 @@ describe('Outliner live newly added filter exemptions', () => {
     actionMocks.editComment.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
     actionMocks.fetchComments.mockResolvedValue([])
+    actionMocks.fetchItemActivity.mockResolvedValue([])
     actionMocks.fetchMarkers.mockResolvedValue([
       {
         id: 'marker-before',

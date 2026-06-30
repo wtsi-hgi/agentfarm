@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS items (
   blocked_external      INTEGER NOT NULL DEFAULT 0,
   blocked_note          TEXT,
   blocked_followup_date TEXT,             -- ISO date or NULL
+  description     TEXT NOT NULL DEFAULT '',
+  repo_url        TEXT,
   created_by      TEXT NOT NULL,
   updated_by      TEXT NOT NULL,
   created_at      TEXT NOT NULL,
@@ -44,6 +46,15 @@ CREATE TABLE IF NOT EXISTS comments (
   body        TEXT NOT NULL,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS item_state_changes (
+  id          TEXT PRIMARY KEY,
+  item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  actor       TEXT NOT NULL,
+  from_state  TEXT NOT NULL,
+  to_state    TEXT NOT NULL,
+  created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS markers (

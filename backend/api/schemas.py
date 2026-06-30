@@ -91,6 +91,8 @@ class ItemUpdate(BaseModel):
     blocked_external: bool | None = None
     blocked_note: str | None = None
     blocked_followup_date: str | None = None
+    description: str | None = None
+    repo_url: str | None = None
 
 
 class MoveRequest(BaseModel):
@@ -187,6 +189,18 @@ class CommentOut(BaseModel):
     updated_at: str
 
 
+class ItemActivityOut(BaseModel):
+    """Response model for timestamped item activity in the detail panel."""
+
+    id: str
+    item_id: str
+    kind: Literal["state-change"]
+    actor: str
+    from_state: State
+    to_state: State
+    created_at: str
+
+
 class RunOut(BaseModel):
     """Response model for a stub item run (spec: M1)."""
 
@@ -215,6 +229,8 @@ class ItemOut(BaseModel):
     blocked_external: bool
     blocked_note: str | None
     blocked_followup_date: str | None
+    description: str
+    repo_url: str | None
     created_by: str
     updated_by: str
     created_at: str

@@ -7,6 +7,8 @@ import {
   dependencySchema,
   farmContextSchema,
   healthResponseSchema,
+  itemActivityListSchema,
+  itemActivitySchema,
   itemSchema,
   loginResponseSchema,
   markerListSchema,
@@ -83,6 +85,8 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    description: '',
+    repo_url: null,
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -102,6 +106,8 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
       blocked_external: true,
       blocked_note: 'awaiting infra',
       blocked_followup_date: '2026-07-10',
+      description: 'Blocked on staging capacity',
+      repo_url: 'https://github.com/example/agentfarm',
       state: 'done',
       completed_at: '2026-06-29T01:00:00.000000Z',
     }
@@ -133,6 +139,8 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    description: '',
+    repo_url: null,
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -169,6 +177,8 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    description: '',
+    repo_url: 'https://github.com/example/a',
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -270,6 +280,32 @@ describe('comment contracts', () => {
   })
 })
 
+describe('item activity contracts', () => {
+  const stateChange = {
+    id: 'activity-1',
+    item_id: 'item-1',
+    kind: 'state-change',
+    actor: 'alice',
+    from_state: 'not-started',
+    to_state: 'review',
+    created_at: '2026-06-29T00:05:00.000000Z',
+  }
+
+  it('parses state-change activity payloads and lists', () => {
+    expect(itemActivitySchema.parse(stateChange)).toEqual(stateChange)
+    expect(itemActivityListSchema.parse([stateChange])).toEqual([stateChange])
+  })
+
+  it('rejects activity with an out-of-set destination state', () => {
+    expect(
+      itemActivitySchema.safeParse({
+        ...stateChange,
+        to_state: 'bogus',
+      }).success
+    ).toBe(false)
+  })
+})
+
 describe('marker contracts', () => {
   const marker = {
     id: 'marker-1',
@@ -296,6 +332,8 @@ describe('marker contracts', () => {
       blocked_external: false,
       blocked_note: null,
       blocked_followup_date: null,
+      description: '',
+      repo_url: null,
       created_by: 'alice',
       updated_by: 'alice',
       created_at: '2026-06-29T00:00:00.000000Z',

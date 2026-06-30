@@ -80,6 +80,8 @@ export const itemSchema = z.object({
   blocked_external: z.boolean(),
   blocked_note: z.string().nullable(),
   blocked_followup_date: z.string().nullable(),
+  description: z.string(),
+  repo_url: z.string().nullable(),
   created_by: z.string(),
   updated_by: z.string(),
   created_at: z.string(),
@@ -177,6 +179,22 @@ export const commentSchema = z
 export const commentListSchema = z.array(commentSchema)
 
 export type Comment = z.infer<typeof commentSchema>
+
+export const itemActivitySchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    kind: z.literal('state-change'),
+    actor: z.string(),
+    from_state: stateSchema,
+    to_state: stateSchema,
+    created_at: z.string(),
+  })
+  .strict()
+
+export const itemActivityListSchema = z.array(itemActivitySchema)
+
+export type ItemActivity = z.infer<typeof itemActivitySchema>
 
 export const markerSchema = z
   .object({

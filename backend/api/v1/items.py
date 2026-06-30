@@ -27,6 +27,7 @@ from services.identity import current_actor
 
 from ..schemas import (
     DeletedResponse,
+    ItemActivityOut,
     ItemCreate,
     ItemOut,
     ItemUpdate,
@@ -41,9 +42,11 @@ router = APIRouter()
 _ITEM_COLUMNS = (
     "id, title, slug, parent_id, sort_order, state, mode, effort, "
     "blocked_external, blocked_note, blocked_followup_date, "
+    "description, repo_url, "
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
 )
+_ACTIVITY_COLUMNS = "id, item_id, actor, from_state, to_state, created_at"
 
 
 def _row_to_item(row: sqlite3.Row) -> ItemOut:
@@ -54,7 +57,14 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
     """
     data = dict(row)
     data["blocked_external"] = bool(data["blocked_external"])
+    if data["parent_id"] is not None:
+        data["repo_url"] = None
     return ItemOut(**data)
+
+
+def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
+    """Build an :class:`ItemActivityOut` from a persisted state-change row."""
+    return ItemActivityOut(kind="state-change", **dict(row))
 
 
 def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
@@ -143,6 +153,7 @@ async def create_item(
         VALUES (
             :id, :title, :slug, :parent_id, :sort_order, :state, :mode, :effort,
             :blocked_external, :blocked_note, :blocked_followup_date,
+            :description, :repo_url,
             :created_by, :updated_by, :created_at, :updated_at,
             :state_changed_at, :completed_at
         )
@@ -160,6 +171,8 @@ async def create_item(
             "blocked_external": 0,
             "blocked_note": None,
             "blocked_followup_date": None,
+            "description": "",
+            "repo_url": None,
             "created_by": actor,
             "updated_by": actor,
             # One instant for all creation timestamps; completed_at stays null.
@@ -435,6 +448,28 @@ async def get_tree(
     return result
 
 
+@router.get("/items/{item_id}/activity", response_model=list[ItemActivityOut])
+async def list_item_activity(
+    item_id: str,
+    _identity: Annotated[object, Depends(require_identity)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> list[ItemActivityOut]:
+    """List timestamped state-change activity for the item detail panel."""
+    if not _item_exists(conn, item_id):
+        raise HTTPException(status_code=404, detail="item not found")
+
+    rows = conn.execute(
+        f"""
+        SELECT {_ACTIVITY_COLUMNS}
+        FROM item_state_changes
+        WHERE item_id = ?
+        ORDER BY created_at ASC, id ASC
+        """,
+        (item_id,),
+    ).fetchall()
+    return [_row_to_activity(row) for row in rows]
+
+
 @router.patch("/items/{item_id}", response_model=ItemOut)
 async def update_item(
     item_id: str,
@@ -462,7 +497,9 @@ async def update_item(
     Identity, parent, ``sort_order``, edges, and comments are never touched
     here, so a rename or re-categorisation is lossless.
     """
-    existing = conn.execute("SELECT id FROM items WHERE id = ?", (item_id,)).fetchone()
+    existing = conn.execute(
+        "SELECT id, state, parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
     if existing is None:
         raise HTTPException(status_code=404, detail="item not found")
 
@@ -472,6 +509,15 @@ async def update_item(
 
     # Columns to write, built from the provided fields plus derived side effects.
     updates: dict[str, object] = {}
+    activity: tuple[State, State, str] | None = None
+    timestamp: str | None = None
+
+    def mutation_timestamp() -> str:
+        """Return one timestamp shared by every side effect in this PATCH."""
+        nonlocal timestamp
+        if timestamp is None:
+            timestamp = now()
+        return timestamp
 
     if "title" in provided:
         updates["title"] = provided["title"]
@@ -488,10 +534,16 @@ async def update_item(
 
     if "state" in provided:
         new_state: State = provided["state"]
-        updates["state"] = new_state.value
-        updates["state_changed_at"] = now()
-        # done/abandoned record completion; any other state clears it.
-        updates["completed_at"] = now() if is_complete(new_state) else None
+        old_state = State(existing["state"])
+        if new_state != old_state:
+            change_timestamp = mutation_timestamp()
+            updates["state"] = new_state.value
+            updates["state_changed_at"] = change_timestamp
+            # done/abandoned record completion; any other state clears it.
+            updates["completed_at"] = (
+                change_timestamp if is_complete(new_state) else None
+            )
+            activity = (old_state, new_state, change_timestamp)
 
     if "blocked_external" in provided:
         # Stored as integer 0/1 (schema), exposed as a JSON bool on read-back.
@@ -500,10 +552,18 @@ async def update_item(
         updates["blocked_note"] = provided["blocked_note"]
     if "blocked_followup_date" in provided:
         updates["blocked_followup_date"] = provided["blocked_followup_date"]
+    if "description" in provided:
+        updates["description"] = provided["description"] or ""
+    if "repo_url" in provided:
+        if existing["parent_id"] is not None:
+            raise HTTPException(
+                status_code=422, detail="repo_url only applies to root items"
+            )
+        updates["repo_url"] = provided["repo_url"] or None
 
     if updates:
         # Any change updates the audit columns with one shared instant.
-        updates["updated_at"] = now()
+        updates["updated_at"] = mutation_timestamp()
         updates["updated_by"] = current_actor()
 
         assignments = ", ".join(f"{column} = :{column}" for column in updates)
@@ -511,6 +571,22 @@ async def update_item(
             f"UPDATE items SET {assignments} WHERE id = :id",
             {**updates, "id": item_id},
         )
+        if activity is not None:
+            old_state, new_state, change_timestamp = activity
+            conn.execute(
+                f"""
+                INSERT INTO item_state_changes ({_ACTIVITY_COLUMNS})
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    item_id,
+                    current_actor(),
+                    old_state.value,
+                    new_state.value,
+                    change_timestamp,
+                ),
+            )
 
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)

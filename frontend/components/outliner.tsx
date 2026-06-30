@@ -416,6 +416,7 @@ export function Outliner({
   const [commentFocusRequestId, setCommentFocusRequestId] = React.useState<
     number | null
   >(null)
+  const [detailRefreshKey, setDetailRefreshKey] = React.useState(0)
   const [selectedModes, setSelectedModes] = React.useState<Set<Mode>>(
     () => new Set(initialSelectedModes)
   )
@@ -599,6 +600,7 @@ export function Outliner({
 
   async function submitText(item: TreeItem, text: string) {
     await submitRowText(item, text, mutationActions)
+    setDetailRefreshKey((current) => current + 1)
     requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
@@ -674,6 +676,7 @@ export function Outliner({
     }
 
     await mutationActions.patchItem(item.id, { state })
+    setDetailRefreshKey((current) => current + 1)
     requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
@@ -817,6 +820,7 @@ export function Outliner({
         <CommentsPanel
           item={selectedItem}
           focusRequest={commentFocusRequestId}
+          activityRefreshKey={detailRefreshKey}
         />
       </div>
     </div>

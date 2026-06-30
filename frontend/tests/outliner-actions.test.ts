@@ -10,6 +10,7 @@ import {
   deleteDependency,
   deleteItem,
   editComment,
+  fetchItemActivity,
   fetchChanges,
   fetchComments,
   fetchMarkers,
@@ -53,6 +54,8 @@ const baseItem = {
   blocked_external: false,
   blocked_note: null,
   blocked_followup_date: null,
+  description: '',
+  repo_url: null,
   created_by: 'alice',
   updated_by: 'alice',
   created_at: '2026-06-29T00:00:00.000000Z',
@@ -143,7 +146,12 @@ describe('outliner mutation Server Actions', () => {
       parent_id: 'parent',
       after_id: 'current',
     })
-    await patchItem('current', { title: 'Edited', mode: 'review' })
+    await patchItem('current', {
+      title: 'Edited',
+      mode: 'review',
+      description: 'Detailed notes',
+      repo_url: 'https://github.com/example/current',
+    })
     await indentItem('current')
     await outdentItem('current')
     await moveItem('current', { new_parent_id: 'parent', after_id: 'target' })
@@ -168,7 +176,12 @@ describe('outliner mutation Server Actions', () => {
       {
         method: 'PATCH',
         path: '/api/v1/items/current',
-        body: { title: 'Edited', mode: 'review' },
+        body: {
+          title: 'Edited',
+          mode: 'review',
+          description: 'Detailed notes',
+          repo_url: 'https://github.com/example/current',
+        },
       },
       { method: 'POST', path: '/api/v1/items/current/indent', body: null },
       { method: 'POST', path: '/api/v1/items/current/outdent', body: null },
@@ -335,6 +348,15 @@ describe('outliner mutation Server Actions', () => {
       at: '2026-06-29T00:00:00.000000Z',
       created_at: '2026-06-29T00:00:00.000000Z',
     }
+    const activity = {
+      id: 'activity-1',
+      item_id: 'current',
+      kind: 'state-change',
+      actor: 'alice',
+      from_state: 'not-started',
+      to_state: 'review',
+      created_at: '2026-06-29T00:05:00.000000Z',
+    }
     const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const parsedUrl = new URL(url.toString())
       const pathname = parsedUrl.pathname
@@ -342,6 +364,9 @@ describe('outliner mutation Server Actions', () => {
 
       if (method === 'GET' && pathname === '/api/v1/items/current/comments') {
         return jsonResponse([comment])
+      }
+      if (method === 'GET' && pathname === '/api/v1/items/current/activity') {
+        return jsonResponse([activity])
       }
       if (method === 'POST' && pathname === '/api/v1/items/current/comments') {
         return jsonResponse({ ...comment, body: 'New note' })
@@ -369,6 +394,7 @@ describe('outliner mutation Server Actions', () => {
     vi.stubGlobal('fetch', fetch)
 
     await fetchComments('current')
+    await fetchItemActivity('current')
     await createComment('current', { body: 'New note' })
     await editComment('comment-1', { body: 'Edited note' })
     await deleteComment('comment-1')
@@ -386,6 +412,11 @@ describe('outliner mutation Server Actions', () => {
       {
         method: 'GET',
         path: '/api/v1/items/current/comments',
+        body: null,
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/items/current/activity',
         body: null,
       },
       {
@@ -438,6 +469,15 @@ describe('outliner mutation Server Actions', () => {
       created_at: '2026-06-29T00:00:00.000000Z',
       updated_at: '2026-06-29T00:00:00.000000Z',
     }
+    const activity = {
+      id: 'activity-1',
+      item_id: 'current',
+      kind: 'state-change',
+      actor: 'alice',
+      from_state: 'not-started',
+      to_state: 'review',
+      created_at: '2026-06-29T00:05:00.000000Z',
+    }
     const marker = {
       id: 'marker-1',
       name: 'Before launch',
@@ -463,6 +503,9 @@ describe('outliner mutation Server Actions', () => {
       if (pathname === '/api/v1/items/current/comments') {
         return jsonResponse([comment])
       }
+      if (pathname === '/api/v1/items/current/activity') {
+        return jsonResponse([activity])
+      }
       if (pathname === '/api/v1/markers') {
         return jsonResponse([marker])
       }
@@ -482,6 +525,7 @@ describe('outliner mutation Server Actions', () => {
     await expect(fetchTree()).resolves.toEqual([treeItem])
     await expect(fetchPriority()).resolves.toEqual([priorityItem])
     await expect(fetchComments('current')).resolves.toEqual([comment])
+    await expect(fetchItemActivity('current')).resolves.toEqual([activity])
     await expect(fetchMarkers()).resolves.toEqual([marker])
     await expect(fetchChanges({ since: 'marker-1' })).resolves.toEqual([
       baseItem,
@@ -498,6 +542,10 @@ describe('outliner mutation Server Actions', () => {
       { path: '/api/v1/priority', auth: expectedAuthHeaders(1)[0] },
       {
         path: '/api/v1/items/current/comments',
+        auth: expectedAuthHeaders(1)[0],
+      },
+      {
+        path: '/api/v1/items/current/activity',
         auth: expectedAuthHeaders(1)[0],
       },
       { path: '/api/v1/markers', auth: expectedAuthHeaders(1)[0] },

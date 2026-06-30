@@ -2,7 +2,7 @@
 
 These assert observable behaviour of the public DB surface:
 
-* ``apply_migrations`` creates the five tables and is idempotent.
+* ``apply_migrations`` creates the schema tables and is idempotent.
 * ``get_connection`` enforces ``PRAGMA foreign_keys = ON`` and sets a
   ``sqlite3.Row`` row factory, so the schema's ``ON DELETE CASCADE`` actually
   cascades (relied on by later delete-cascade stories).
@@ -19,7 +19,14 @@ from pathlib import Path
 from db.connection import get_connection
 from db.migrate import apply_migrations
 
-EXPECTED_TABLES = {"items", "dependencies", "comments", "markers", "runs"}
+EXPECTED_TABLES = {
+    "items",
+    "dependencies",
+    "comments",
+    "item_state_changes",
+    "markers",
+    "runs",
+}
 
 
 def _table_names(db_path: Path) -> set[str]:
@@ -85,6 +92,71 @@ def test_migration_creates_parent_directory(tmp_path) -> None:
 
     assert db_path.exists()
     assert _table_names(db_path) == EXPECTED_TABLES
+
+
+def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None:
+    """Applying migrations to an old DB adds item detail fields safely."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE items (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              slug TEXT NOT NULL UNIQUE,
+              parent_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+              sort_order REAL NOT NULL,
+              state TEXT NOT NULL DEFAULT 'not-started',
+              mode TEXT NOT NULL DEFAULT 'prompt-agent',
+              effort TEXT NOT NULL DEFAULT 'medium',
+              blocked_external INTEGER NOT NULL DEFAULT 0,
+              blocked_note TEXT,
+              blocked_followup_date TEXT,
+              created_by TEXT NOT NULL,
+              updated_by TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              state_changed_at TEXT NOT NULL,
+              completed_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO items (
+                id, title, slug, sort_order, created_by, updated_by,
+                created_at, updated_at, state_changed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "old-root",
+                "Old root",
+                "old-root",
+                1.0,
+                "alice",
+                "alice",
+                "2026-01-01T00:00:00.000000Z",
+                "2026-01-01T00:00:00.000000Z",
+                "2026-01-01T00:00:00.000000Z",
+            ),
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        row = conn.execute(
+            "SELECT description, repo_url FROM items WHERE id = ?",
+            ("old-root",),
+        ).fetchone()
+
+    assert "description" in columns
+    assert "repo_url" in columns
+    assert row["description"] == ""
+    assert row["repo_url"] is None
 
 
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:

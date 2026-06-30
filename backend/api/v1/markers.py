@@ -20,6 +20,7 @@ router = APIRouter()
 _ITEM_COLUMNS = (
     "id, title, slug, parent_id, sort_order, state, mode, effort, "
     "blocked_external, blocked_note, blocked_followup_date, "
+    "description, repo_url, "
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
 )
@@ -40,6 +41,8 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
     """Build an :class:`ItemOut` from a persisted item row."""
     data = dict(row)
     data["blocked_external"] = bool(data["blocked_external"])
+    if data["parent_id"] is not None:
+        data["repo_url"] = None
     return ItemOut(**data)
 
 

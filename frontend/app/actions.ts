@@ -11,6 +11,7 @@ import {
   dependencySchema,
   farmContextSchema,
   healthResponseSchema,
+  itemActivityListSchema,
   itemSchema,
   loginResponseSchema,
   markerChangeItemsSchema,
@@ -57,6 +58,8 @@ export type PatchItemInput = {
   blocked_external?: boolean
   blocked_note?: string | null
   blocked_followup_date?: string | null
+  description?: string | null
+  repo_url?: string | null
 }
 
 export type MoveItemInput =
@@ -312,6 +315,13 @@ export async function fetchComments(itemId: string) {
   return authenticatedRead(
     `/api/v1/items/${encodeURIComponent(itemId)}/comments`,
     commentListSchema
+  )
+}
+
+export async function fetchItemActivity(itemId: string) {
+  return authenticatedRead(
+    `/api/v1/items/${encodeURIComponent(itemId)}/activity`,
+    itemActivityListSchema
   )
 }
 

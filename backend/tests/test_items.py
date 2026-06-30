@@ -99,6 +99,10 @@ async def _move(client: AsyncClient, item_id: str, body: dict):
     return await client.post(f"/api/v1/items/{item_id}/move", json=body)
 
 
+async def _activity(client: AsyncClient, item_id: str):
+    return await client.get(f"/api/v1/items/{item_id}/activity")
+
+
 def _item_row(db_path, item_id: str) -> dict:
     """Return one item's persisted row as a plain dict (a supported boundary)."""
     with get_connection(db_path) as conn:
@@ -457,6 +461,99 @@ async def test_patch_blocked_fields_persist_together(fresh_db) -> None:
     assert row["blocked_external"] == 1
     assert row["blocked_note"] == "awaiting infra"
     assert row["blocked_followup_date"] == "2026-07-10"
+
+
+@pytest.mark.anyio
+async def test_patch_description_for_root_and_child_and_repo_url_for_root(
+    fresh_db,
+) -> None:
+    """A2 details: descriptions persist for all items; repo URL is root-only."""
+    del fresh_db
+    async with _client() as client:
+        root = await _create(client, {"title": "Product"})
+        root_id = root.json()["id"]
+        child = await _create(client, {"title": "Task", "parent_id": root_id})
+        child_id = child.json()["id"]
+
+        updated_root = await _patch(
+            client,
+            root_id,
+            {
+                "description": "High-level product notes",
+                "repo_url": "https://github.com/example/product",
+            },
+        )
+        updated_child = await _patch(
+            client,
+            child_id,
+            {"description": "Implementation details"},
+        )
+        rejected_child_repo = await _patch(
+            client,
+            child_id,
+            {"repo_url": "https://github.com/example/task"},
+        )
+        tree = await _tree(client)
+
+    assert updated_root.status_code == 200
+    assert updated_root.json()["description"] == "High-level product notes"
+    assert updated_root.json()["repo_url"] == "https://github.com/example/product"
+
+    assert updated_child.status_code == 200
+    assert updated_child.json()["description"] == "Implementation details"
+    assert updated_child.json()["repo_url"] is None
+
+    assert rejected_child_repo.status_code == 422
+    assert rejected_child_repo.json() == {
+        "detail": "repo_url only applies to root items"
+    }
+
+    assert tree.status_code == 200
+    root_from_tree = _tree_item(tree.json(), root_id)
+    child_from_tree = _tree_item(tree.json(), child_id)
+    assert root_from_tree["description"] == "High-level product notes"
+    assert root_from_tree["repo_url"] == "https://github.com/example/product"
+    assert child_from_tree["description"] == "Implementation details"
+    assert child_from_tree["repo_url"] is None
+
+
+@pytest.mark.anyio
+async def test_state_changes_are_listed_as_timestamped_activity(fresh_db) -> None:
+    """A2 activity: PATCH state records a timestamped state-change event."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Ship activity"})
+        item_id = created.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        changed = await _patch(client, item_id, {"state": "review"})
+
+        clock.set_clock(lambda: t3)
+        unchanged = await _patch(client, item_id, {"state": "review"})
+        activity = await _activity(client, item_id)
+
+    assert changed.status_code == 200
+    assert changed.json()["state_changed_at"] == t2
+    assert unchanged.status_code == 200
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert activity_body[0]["actor"]
+    assert activity_body == [
+        {
+            "id": activity_body[0]["id"],
+            "item_id": item_id,
+            "kind": "state-change",
+            "actor": activity_body[0]["actor"],
+            "from_state": "not-started",
+            "to_state": "review",
+            "created_at": t2,
+        }
+    ]
 
 
 @pytest.mark.anyio
