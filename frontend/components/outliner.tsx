@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
   ItemActivity,
+  Marker,
   PriorityItem,
   State,
   TreeItem,
@@ -66,6 +67,7 @@ type OutlinerProps = {
   items: TreeItem[]
   className?: string
   leverageSort?: boolean
+  markers?: readonly Marker[]
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hiddenItemIds?: IdCollection
   newlyAddedIds?: IdCollection
@@ -172,6 +174,66 @@ function makePriorityRanks(
 
 function isDoneForProjection(item: TreeItem): boolean {
   return item.complete || item.state === 'done' || item.state === 'abandoned'
+}
+
+function compareTimestamp(left: string, right: string): number {
+  if (left === right) {
+    return 0
+  }
+  return left < right ? -1 : 1
+}
+
+function compareMarkers(
+  left: Pick<Marker, 'at' | 'created_at' | 'id'>,
+  right: Pick<Marker, 'at' | 'created_at' | 'id'>
+): number {
+  const byMarkerTime = compareTimestamp(left.at, right.at)
+  if (byMarkerTime !== 0) {
+    return byMarkerTime
+  }
+
+  const byCreatedTime = compareTimestamp(left.created_at, right.created_at)
+  return byCreatedTime !== 0 ? byCreatedTime : left.id.localeCompare(right.id)
+}
+
+function latestMarkerAt(markers: readonly Marker[]): string | null {
+  let latest: Marker | null = null
+
+  for (const marker of markers) {
+    if (!latest || compareMarkers(marker, latest) > 0) {
+      latest = marker
+    }
+  }
+
+  return latest?.at ?? null
+}
+
+function doneOnOrBeforeMarker(item: TreeItem, markerAt: string): boolean {
+  return (
+    isDoneForProjection(item) &&
+    item.completed_at !== null &&
+    compareTimestamp(item.completed_at, markerAt) <= 0
+  )
+}
+
+function defaultTreeMarkerHiddenItemIds(
+  items: readonly TreeItem[],
+  markers: readonly Marker[]
+): Set<string> {
+  const markerAt = latestMarkerAt(markers)
+  if (!markerAt) {
+    return new Set()
+  }
+
+  return new Set(
+    items
+      .filter((item) => doneOnOrBeforeMarker(item, markerAt))
+      .map((item) => item.id)
+  )
+}
+
+function defaultExpandedItemIds(items: readonly TreeItem[]): Set<string> {
+  return new Set(items.map((item) => item.id))
 }
 
 function isUpNextItem(
@@ -350,15 +412,6 @@ function makeChildMap(
   return children
 }
 
-function collapsedByDefault(item: TreeItem): boolean {
-  return (
-    !item.actionable ||
-    item.complete ||
-    item.blocked_external ||
-    isExternalWaitingState(item.state)
-  )
-}
-
 function isIdSet(collection: IdCollection): collection is ReadonlySet<string> {
   return typeof (collection as { has?: unknown }).has === 'function'
 }
@@ -474,8 +527,7 @@ export function visibleOutlinerRows(
   function visit(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
       const hasChildren = (children.get(item.id) ?? []).length > 0
-      const collapsed =
-        hasChildren && collapsedByDefault(item) && !expandedIds.has(item.id)
+      const collapsed = hasChildren && !expandedIds.has(item.id)
       const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
       const hiddenByView =
         view === 'up-next' && !isUpNextItem(item, priorityRanks)
@@ -508,15 +560,13 @@ export function Outliner({
   items,
   className,
   leverageSort = false,
+  markers = [],
   priorityItems = [],
   hiddenItemIds,
   newlyAddedIds,
 }: OutlinerProps) {
   const defaultExpandedIds = React.useMemo(
-    () =>
-      new Set(
-        items.filter((item) => !collapsedByDefault(item)).map((item) => item.id)
-      ),
+    () => defaultExpandedItemIds(items),
     [items]
   )
   const [expandedIds, setExpandedIds] = React.useState(defaultExpandedIds)
@@ -554,6 +604,14 @@ export function Outliner({
   )
   const mergedHiddenItemIds = React.useMemo(() => {
     const hiddenIds = collectionToSet(hiddenItemIds)
+    if (selectedView === 'tree') {
+      for (const itemId of defaultTreeMarkerHiddenItemIds(
+        activeItems,
+        markers
+      )) {
+        hiddenIds.add(itemId)
+      }
+    }
     if (markerFilterItemIds) {
       for (const item of activeItems) {
         if (!markerFilterItemIds.has(item.id)) {
@@ -562,7 +620,7 @@ export function Outliner({
       }
     }
     return hiddenIds
-  }, [hiddenItemIds, activeItems, markerFilterItemIds])
+  }, [hiddenItemIds, selectedView, activeItems, markers, markerFilterItemIds])
   const mergedNewlyAddedIds = React.useMemo(() => {
     const addedIds = collectionToSet(newlyAddedIds)
     for (const itemId of sessionNewlyAddedIds) {
@@ -926,7 +984,10 @@ export function Outliner({
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <ViewControls view={selectedView} onViewChange={changeSelectedView} />
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <MarkerControls onFilterChange={changeMarkerFilter} />
+          <MarkerControls
+            initialMarkers={markers}
+            onFilterChange={changeMarkerFilter}
+          />
           <ProductSwitcher
             items={activeItems}
             onJump={jumpToItem}

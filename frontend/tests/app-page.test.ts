@@ -7,12 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Home from '@/app/page'
 import {
   fetchFarmContext,
+  fetchMarkers,
   fetchPriority,
   fetchSessionIdentity,
   fetchTree,
   logout,
 } from '@/app/actions'
-import type { Item, PriorityItem, TreeItem } from '@/lib/contracts'
+import type { Item, Marker, PriorityItem, TreeItem } from '@/lib/contracts'
 
 const sessionMocks = vi.hoisted(() => ({
   clearSessionCookie: vi.fn(),
@@ -66,6 +67,14 @@ const priorityItems = [
     rank: 1,
   },
 ] satisfies PriorityItem[]
+const markers = [
+  {
+    id: 'marker-1',
+    name: 'Checkpoint',
+    at: '2026-06-30T00:00:00.000000Z',
+    created_at: '2026-06-30T00:00:00.000000Z',
+  },
+] satisfies Marker[]
 
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -98,6 +107,12 @@ function stubBackend() {
         return errorResponse(401, 'Authentication required')
       }
       return jsonResponse(priorityItems)
+    }
+    if (pathname === '/api/v1/markers') {
+      if (!authToken(init)) {
+        return errorResponse(401, 'Authentication required')
+      }
+      return jsonResponse(markers)
     }
     if (pathname === '/api/v1/auth/context') {
       return jsonResponse({ owner_username: 'alice' })
@@ -139,6 +154,7 @@ describe('app page BFF wiring', () => {
 
     await expect(fetchTree()).resolves.toEqual(treeItems)
     await expect(fetchPriority()).resolves.toEqual(priorityItems)
+    await expect(fetchMarkers()).resolves.toEqual(markers)
     await expect(fetchFarmContext()).resolves.toEqual({
       owner_username: 'alice',
     })
@@ -153,6 +169,7 @@ describe('app page BFF wiring', () => {
     ).toEqual([
       '/api/v1/tree',
       '/api/v1/priority',
+      '/api/v1/markers',
       '/api/v1/auth/context',
       '/api/v1/auth/whoami',
     ])
@@ -161,6 +178,7 @@ describe('app page BFF wiring', () => {
         new Headers(init?.headers).get('x-agentfarm-session')
       )
     ).toEqual([
+      'signed-viewer-token',
       'signed-viewer-token',
       'signed-viewer-token',
       null,
@@ -179,11 +197,12 @@ describe('app page BFF wiring', () => {
     const fetchedPaths = fetch.mock.calls.map(
       ([url]) => new URL(url.toString()).pathname
     )
-    expect(fetchedPaths).toHaveLength(4)
+    expect(fetchedPaths).toHaveLength(5)
     expect(fetchedPaths).toEqual(
       expect.arrayContaining([
         '/api/v1/tree',
         '/api/v1/priority',
+        '/api/v1/markers',
         '/api/v1/auth/context',
         '/api/v1/auth/whoami',
       ])
@@ -204,6 +223,72 @@ describe('app page BFF wiring', () => {
     ).not.toBeNull()
     expect(document.body.textContent).not.toContain('Unified Tree')
     expect(document.body.textContent).not.toContain('Full-stack starter')
+  })
+
+  it('passes markers into the refreshed default tree projection', async () => {
+    const oldDone = {
+      ...baseTreeItem,
+      id: 'old-done',
+      title: 'Old done',
+      sort_order: 2,
+      state: 'done',
+      complete: true,
+      actionable: false,
+      completed_at: '2026-06-29T23:00:00.000000Z',
+    } satisfies TreeItem
+    const recentDone = {
+      ...baseTreeItem,
+      id: 'recent-done',
+      title: 'Recent done',
+      sort_order: 3,
+      state: 'done',
+      complete: true,
+      actionable: false,
+      completed_at: '2026-06-30T01:00:00.000000Z',
+    } satisfies TreeItem
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      if (pathname === '/api/v1/tree') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse([baseTreeItem, oldDone, recentDone])
+      }
+      if (pathname === '/api/v1/priority') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse([])
+      }
+      if (pathname === '/api/v1/markers') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse(markers)
+      }
+      if (pathname === '/api/v1/auth/context') {
+        return jsonResponse({ owner_username: 'alice' })
+      }
+      if (pathname === '/api/v1/auth/whoami') {
+        return jsonResponse({ username: 'vue', role: 'viewer' })
+      }
+      return jsonResponse({ message: `Unexpected path: ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+    const renderedIds = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+    ).map((row) => row.dataset.outlinerItemId)
+
+    expect(renderedIds).toEqual(['alpha', 'recent-done'])
+    expect(
+      document.querySelector('[data-outliner-item-id="old-done"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('[data-outliner-item-id="recent-done"]')
+    ).not.toBeNull()
   })
 
   it('renders the signed-in owner as the primary user', async () => {

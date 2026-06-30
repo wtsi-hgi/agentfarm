@@ -1,11 +1,12 @@
 import * as React from 'react'
+import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
 import { MODE_COLOUR_MAP } from '@/components/outliner-row'
 import { Outliner, visibleOutlinerRows } from '@/components/outliner'
 import { MODES } from '@/components/view-controls'
-import type { TreeItem } from '@/lib/contracts'
+import type { Marker, TreeItem } from '@/lib/contracts'
 
 const baseItem = {
   slug: 'item',
@@ -36,6 +37,22 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
     ...baseItem,
     ...overrides,
   }
+}
+
+function marker(overrides: Partial<Marker> & Pick<Marker, 'id' | 'at'>) {
+  return {
+    name: overrides.id,
+    created_at: overrides.at,
+    ...overrides,
+  }
+}
+
+function renderedItemIds(element: React.ReactElement) {
+  const markup = renderToStaticMarkup(element)
+  const document = new JSDOM(markup).window.document
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  ).map((row) => row.dataset.outlinerItemId)
 }
 
 describe('Outliner', () => {
@@ -333,5 +350,122 @@ describe('Outliner', () => {
       visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
     ).toEqual(['done-parent', 'ready'])
     expect(items).toEqual(before)
+  })
+
+  it('renders the default tree view fully expanded after a page refresh', () => {
+    const items = [
+      item({
+        id: 'blocked-parent',
+        title: 'Blocked parent',
+        actionable: false,
+        blocked_external: true,
+      }),
+      item({
+        id: 'blocked-child',
+        title: 'Blocked child',
+        parent_id: 'blocked-parent',
+      }),
+      item({
+        id: 'done-parent',
+        title: 'Done parent',
+        actionable: false,
+        complete: true,
+        state: 'done',
+        sort_order: 2,
+        completed_at: '2026-06-30T00:30:00.000000Z',
+      }),
+      item({
+        id: 'done-child',
+        title: 'Done child',
+        parent_id: 'done-parent',
+        sort_order: 1,
+      }),
+    ]
+
+    expect(
+      renderedItemIds(React.createElement(Outliner, { items, markers: [] }))
+    ).toEqual(['blocked-parent', 'blocked-child', 'done-parent', 'done-child'])
+  })
+
+  it('hides only rows completed on or before the latest marker in the default tree', () => {
+    const items = [
+      item({ id: 'active', title: 'Active row' }),
+      item({
+        id: 'old-done',
+        title: 'Old done',
+        sort_order: 2,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-29T23:59:59.000000Z',
+      }),
+      item({
+        id: 'same-instant-done',
+        title: 'Same instant done',
+        sort_order: 3,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-30T00:00:00.000000Z',
+      }),
+      item({
+        id: 'new-done',
+        title: 'New done',
+        sort_order: 4,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-30T00:00:01.000000Z',
+      }),
+      item({
+        id: 'legacy-done',
+        title: 'Legacy done without completion timestamp',
+        sort_order: 5,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: null,
+      }),
+    ]
+
+    expect(
+      renderedItemIds(
+        React.createElement(Outliner, {
+          items,
+          markers: [
+            marker({
+              id: 'earlier-marker',
+              at: '2026-06-29T00:00:00.000000Z',
+            }),
+            marker({
+              id: 'latest-marker',
+              at: '2026-06-30T00:00:00.000000Z',
+            }),
+          ],
+        })
+      )
+    ).toEqual(['active', 'new-done', 'legacy-done'])
+  })
+
+  it('shows all rows when there is no marker cutoff', () => {
+    const items = [
+      item({
+        id: 'done-before-any-marker',
+        title: 'Done before any marker',
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-29T00:00:00.000000Z',
+      }),
+      item({
+        id: 'child',
+        title: 'Child remains expanded',
+        parent_id: 'done-before-any-marker',
+      }),
+    ]
+
+    expect(
+      renderedItemIds(React.createElement(Outliner, { items, markers: [] }))
+    ).toEqual(['done-before-any-marker', 'child'])
   })
 })

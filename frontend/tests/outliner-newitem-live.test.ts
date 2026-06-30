@@ -6,7 +6,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
-import type { ItemActivity, PriorityItem, TreeItem } from '@/lib/contracts'
+import type {
+  ItemActivity,
+  Marker,
+  PriorityItem,
+  TreeItem,
+} from '@/lib/contracts'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -64,6 +69,7 @@ type CreateItemInput = {
 type LiveOutlinerHarnessProps = {
   initialItems?: TreeItem[]
   leverageSort?: boolean
+  markers?: readonly Marker[]
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hideCreatedWithCallerFilter?: boolean
 }
@@ -85,6 +91,7 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
 function LiveOutlinerHarness({
   initialItems = [],
   leverageSort = false,
+  markers = [],
   priorityItems = [],
   hideCreatedWithCallerFilter = false,
 }: LiveOutlinerHarnessProps) {
@@ -118,6 +125,7 @@ function LiveOutlinerHarness({
     hiddenItemIds,
     items,
     leverageSort,
+    markers,
     priorityItems,
   })
 }
@@ -558,6 +566,95 @@ describe('Outliner live newly added filter exemptions', () => {
     ])
   })
 
+  it('keeps up-next separate from the default marker-completed tree cutoff', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'old-done-row',
+            title: 'Old done row',
+            sort_order: 1,
+            state: 'done',
+            complete: true,
+            actionable: false,
+            completed_at: '2026-06-29T23:00:00.000000Z',
+          }),
+          item({
+            id: 'waiting-row',
+            title: 'Waiting row',
+            sort_order: 2,
+            state: 'feedback',
+            actionable: false,
+          }),
+          item({
+            id: 'respond-row',
+            title: 'Respond row',
+            sort_order: 3,
+            state: 'respond',
+          }),
+          item({
+            id: 'ready-row',
+            title: 'Ready row',
+            sort_order: 4,
+          }),
+        ],
+        markers: [
+          {
+            id: 'latest-marker',
+            name: 'Latest',
+            at: '2026-06-30T00:00:00.000000Z',
+            created_at: '2026-06-30T00:00:00.000000Z',
+          },
+        ],
+        priorityItems: [
+          { id: 'old-done-row', rank: 1 },
+          { id: 'waiting-row', rank: 2 },
+          { id: 'respond-row', rank: 3 },
+          { id: 'ready-row', rank: 4 },
+        ],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'waiting-row',
+      'respond-row',
+      'ready-row',
+    ])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['respond-row', 'ready-row'])
+  })
+
+  it('collapses and re-expands a branch after the default tree expansion', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'root',
+            title: 'Root',
+            actionable: false,
+          }),
+          item({
+            id: 'child',
+            title: 'Child',
+            parent_id: 'root',
+          }),
+        ],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual(['root', 'child'])
+
+    await click(getItemButton(container, 'root', 'Collapse item'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['root'])
+
+    await click(getItemButton(container, 'root', 'Expand item'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['root', 'child'])
+  })
+
   it('hides a session-created item after the user switches to up-next work', async () => {
     const container = await render(React.createElement(LiveOutlinerHarness))
 
@@ -711,9 +808,6 @@ describe('Outliner live newly added filter exemptions', () => {
 
   it('renders a done checkbox for root, section, and item rows', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
-
-    await click(getItemButton(container, 'root', 'Expand item'))
-    await click(getItemButton(container, 'section', 'Expand item'))
 
     expect(getItemCheckbox(container, 'root')).toBeInstanceOf(HTMLInputElement)
     expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
@@ -1057,7 +1151,6 @@ describe('Outliner live newly added filter exemptions', () => {
       React.createElement(ChildSiblingCreationHarness)
     )
 
-    await click(getButton(container, 'Expand item'))
     const currentInput = getItemInput(container, 'current-child')
     currentInput.setSelectionRange(
       currentInput.value.length,

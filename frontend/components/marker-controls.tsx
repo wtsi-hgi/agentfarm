@@ -10,6 +10,7 @@ import type { Marker, MarkerChangeField } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
 type MarkerControlsProps = {
+  initialMarkers?: readonly Marker[]
   onFilterChange: (itemIds: readonly string[] | null) => void
   className?: string
 }
@@ -21,10 +22,13 @@ const CHANGE_FIELDS = [
 ] satisfies readonly { value: MarkerChangeField; label: string }[]
 
 export function MarkerControls({
+  initialMarkers = [],
   onFilterChange,
   className,
 }: MarkerControlsProps) {
-  const [markers, setMarkers] = React.useState<Marker[]>([])
+  const [markers, setMarkers] = React.useState<Marker[]>(() => [
+    ...initialMarkers,
+  ])
   const [name, setName] = React.useState('')
   const [sinceId, setSinceId] = React.useState('')
   const [untilId, setUntilId] = React.useState('')

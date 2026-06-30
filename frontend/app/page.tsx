@@ -1,9 +1,10 @@
 import { AppShell } from '@/components/app-shell'
 import { Outliner } from '@/components/outliner'
-import type { PriorityItem, TreeItem } from '@/lib/contracts'
+import type { Marker, PriorityItem, TreeItem } from '@/lib/contracts'
 
 import {
   fetchFarmContext,
+  fetchMarkers,
   fetchPriority,
   fetchSessionIdentity,
   fetchTree,
@@ -11,6 +12,7 @@ import {
 
 type HomeProtectedData = {
   items: TreeItem[]
+  markers: Marker[]
   priorityItems: PriorityItem[]
   authorized: boolean
 }
@@ -25,17 +27,18 @@ function isUnauthorizedError(error: unknown): boolean {
 
 async function fetchProtectedHomeData(): Promise<HomeProtectedData> {
   try {
-    const [items, priorityItems] = await Promise.all([
+    const [items, priorityItems, markers] = await Promise.all([
       fetchTree(),
       fetchPriority(),
+      fetchMarkers(),
     ])
-    return { authorized: true, items, priorityItems }
+    return { authorized: true, items, markers, priorityItems }
   } catch (error) {
     if (!isUnauthorizedError(error)) {
       throw error
     }
 
-    return { authorized: false, items: [], priorityItems: [] }
+    return { authorized: false, items: [], markers: [], priorityItems: [] }
   }
 }
 
@@ -44,9 +47,9 @@ export default async function Home() {
     fetchFarmContext(),
     fetchSessionIdentity(),
   ])
-  const { authorized, items, priorityItems } = session
+  const { authorized, items, markers, priorityItems } = session
     ? await fetchProtectedHomeData()
-    : { authorized: false, items: [], priorityItems: [] }
+    : { authorized: false, items: [], markers: [], priorityItems: [] }
 
   return (
     <AppShell
@@ -70,6 +73,7 @@ export default async function Home() {
       <Outliner
         items={items}
         leverageSort={priorityItems.length > 0}
+        markers={markers}
         priorityItems={priorityItems}
       />
     </AppShell>
