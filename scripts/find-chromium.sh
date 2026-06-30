@@ -5,6 +5,27 @@ is_executable_file() {
   [[ -n "${1:-}" && -f "$1" && -x "$1" ]]
 }
 
+sort_playwright_cache_candidates() {
+  if sort -V </dev/null >/dev/null 2>&1; then
+    sort -V -r
+    return
+  fi
+
+  awk '
+    {
+      revision = 0
+      rest = $0
+      while (match(rest, /(chromium|chromium_headless_shell)-[0-9]+/)) {
+        segment = substr(rest, RSTART, RLENGTH)
+        sub(/^.*-/, "", segment)
+        revision = segment + 0
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      printf "%012d\t%s\n", revision, $0
+    }
+  ' | sort -r | cut -f2-
+}
+
 for env_var in \
   AGENTFARM_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
@@ -37,7 +58,7 @@ if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" && -d "${PLAYWRIGHT_BROWSERS_PATH}" ]];
          -path '*/chrome-headless-shell*/chrome-headless-shell.exe' -o \
          -path '*/chrome-headless-shell-mac*/Chromium.app/Contents/MacOS/Chromium' -o \
          -path '*/chrome-headless-shell*/headless_shell' \) \
-      2>/dev/null | sort -r
+      2>/dev/null | sort_playwright_cache_candidates
   )
 fi
 

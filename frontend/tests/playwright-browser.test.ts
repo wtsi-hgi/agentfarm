@@ -1,4 +1,12 @@
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -98,6 +106,82 @@ describe('Playwright browser resolution', () => {
         process.env.AGENTFARM_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH =
           previousExecutablePath
       }
+    }
+  })
+
+  it('loads the Playwright config without project path aliases', () => {
+    const scratchParent = path.join(frontendRoot, '.tmp', 'agent')
+    mkdirSync(scratchParent, { recursive: true })
+    const scratchRoot = mkdtempSync(
+      path.join(scratchParent, 'playwright-config-')
+    )
+    const runId = `config-load-${Date.now()}`
+    const generatedRoot = path.join(
+      scratchParent,
+      '.tmp',
+      'agent',
+      'playwright',
+      runId
+    )
+
+    try {
+      mkdirSync(path.join(scratchRoot, 'lib'), { recursive: true })
+      mkdirSync(path.join(scratchRoot, 'e2e'), { recursive: true })
+      copyFileSync(
+        path.join(frontendRoot, 'playwright.config.ts'),
+        path.join(scratchRoot, 'playwright.config.ts')
+      )
+      copyFileSync(
+        path.join(frontendRoot, 'lib', 'playwright-browser.ts'),
+        path.join(scratchRoot, 'lib', 'playwright-browser.ts')
+      )
+      writeFileSync(
+        path.join(scratchRoot, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            target: 'ES2022',
+          },
+        })
+      )
+      writeFileSync(
+        path.join(scratchRoot, 'e2e', 'global-setup.ts'),
+        'export default async function globalSetup() {}\n'
+      )
+      writeFileSync(
+        path.join(scratchRoot, 'e2e', 'config.spec.ts'),
+        "import { test } from '@playwright/test'\n\ntest('config loads', async () => {})\n"
+      )
+
+      const result = spawnSync(
+        'pnpm',
+        [
+          'exec',
+          'playwright',
+          'test',
+          '--config',
+          path.join(scratchRoot, 'playwright.config.ts'),
+          '--list',
+          '--reporter=list',
+        ],
+        {
+          cwd: frontendRoot,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            AGENTFARM_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/bin/true',
+            PLAYWRIGHT_RUN_ID: runId,
+          },
+          timeout: 20_000,
+        }
+      )
+
+      expect(result.status, result.stderr || result.stdout).toBe(0)
+      expect(result.stdout).toContain('Listing tests:')
+    } finally {
+      rmSync(scratchRoot, { recursive: true, force: true })
+      rmSync(generatedRoot, { recursive: true, force: true })
     }
   })
 })

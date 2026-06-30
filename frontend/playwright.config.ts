@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import { defineConfig } from '@playwright/test'
 
-import { resolveChromiumExecutablePath } from '@/lib/playwright-browser'
+import { resolveChromiumExecutablePath } from './lib/playwright-browser'
 
 const repoRoot = path.resolve(__dirname, '..')
 const runId = process.env.PLAYWRIGHT_RUN_ID?.trim() || 'local'
