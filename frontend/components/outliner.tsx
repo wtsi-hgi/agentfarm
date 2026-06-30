@@ -265,6 +265,40 @@ function precedingSiblingId(items: TreeItem[], item: TreeItem): string | null {
   return index > 0 ? (siblings[index - 1]?.id ?? null) : null
 }
 
+function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
+  const childrenByParent = new Map<string | null, TreeItem[]>()
+  for (const item of items) {
+    const children = childrenByParent.get(item.parent_id) ?? []
+    children.push(item)
+    childrenByParent.set(item.parent_id, children)
+  }
+
+  const subtreeIds = new Set<string>()
+  const pendingIds = [rootItemId]
+  while (pendingIds.length > 0) {
+    const currentId = pendingIds.pop()
+    if (!currentId || subtreeIds.has(currentId)) {
+      continue
+    }
+
+    subtreeIds.add(currentId)
+    for (const child of childrenByParent.get(currentId) ?? []) {
+      pendingIds.push(child.id)
+    }
+  }
+
+  return subtreeIds
+}
+
+function firstAvailableItemId(
+  items: TreeItem[],
+  unavailableItemIds: ReadonlySet<string>
+) {
+  return (
+    items.find((candidate) => !unavailableItemIds.has(candidate.id))?.id ?? null
+  )
+}
+
 export function visibleOutlinerRows(
   items: TreeItem[],
   expandedIds: ReadonlySet<string>,
@@ -338,26 +372,33 @@ export function Outliner({
   const [sessionNewlyAddedIds, setSessionNewlyAddedIds] = React.useState(
     () => new Set<string>()
   )
+  const [locallyDeletedItemIds, setLocallyDeletedItemIds] = React.useState(
+    () => new Set<string>()
+  )
   const [markerFilterItemIds, setMarkerFilterItemIds] =
     React.useState<ReadonlySet<string> | null>(null)
   const [draggingItemId, setDraggingItemId] = React.useState<string | null>(
     null
   )
+  const activeItems = React.useMemo(
+    () => items.filter((item) => !locallyDeletedItemIds.has(item.id)),
+    [items, locallyDeletedItemIds]
+  )
   const itemsById = React.useMemo(
-    () => new Map(items.map((item) => [item.id, item])),
-    [items]
+    () => new Map(activeItems.map((item) => [item.id, item])),
+    [activeItems]
   )
   const mergedHiddenItemIds = React.useMemo(() => {
     const hiddenIds = collectionToSet(hiddenItemIds)
     if (markerFilterItemIds) {
-      for (const item of items) {
+      for (const item of activeItems) {
         if (!markerFilterItemIds.has(item.id)) {
           hiddenIds.add(item.id)
         }
       }
     }
     return hiddenIds
-  }, [hiddenItemIds, items, markerFilterItemIds])
+  }, [hiddenItemIds, activeItems, markerFilterItemIds])
   const mergedNewlyAddedIds = React.useMemo(() => {
     const addedIds = collectionToSet(newlyAddedIds)
     for (const itemId of sessionNewlyAddedIds) {
@@ -380,7 +421,7 @@ export function Outliner({
   )
   const rows = React.useMemo(
     () =>
-      visibleOutlinerRows(items, expandedIds, {
+      visibleOutlinerRows(activeItems, expandedIds, {
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
@@ -388,7 +429,7 @@ export function Outliner({
         selectedModes,
       }),
     [
-      items,
+      activeItems,
       expandedIds,
       mergedHiddenItemIds,
       leverageSort,
@@ -405,8 +446,20 @@ export function Outliner({
     if (selectedItemId && itemsById.has(selectedItemId)) {
       return
     }
-    setSelectedItemId(items[0]?.id ?? null)
-  }, [items, itemsById, selectedItemId])
+    setSelectedItemId(activeItems[0]?.id ?? null)
+  }, [activeItems, itemsById, selectedItemId])
+
+  React.useEffect(() => {
+    setLocallyDeletedItemIds((current) => {
+      if (current.size === 0) {
+        return current
+      }
+
+      const itemIds = new Set(items.map((item) => item.id))
+      const next = new Set([...current].filter((itemId) => itemIds.has(itemId)))
+      return next.size === current.size ? current : next
+    })
+  }, [items])
 
   React.useEffect(() => {
     if (!focusRequest) {
@@ -427,7 +480,7 @@ export function Outliner({
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [focusRequest, expandedIds, items])
+  }, [focusRequest, expandedIds, activeItems])
 
   function requestItemFocus(
     itemId: string,
@@ -470,7 +523,7 @@ export function Outliner({
   }
 
   function jumpToItem(itemId: string) {
-    const jumpState = resolveJumpState(items, itemId, expandedIds)
+    const jumpState = resolveJumpState(activeItems, itemId, expandedIds)
     if (!jumpState.focusedItemId) {
       return
     }
@@ -478,6 +531,14 @@ export function Outliner({
     setExpandedIds(jumpState.expandedIds)
     requestItemFocus(jumpState.focusedItemId)
     setSelectedItemId(jumpState.focusedItemId)
+  }
+
+  function markItemSubtreeDeleted(item: TreeItem) {
+    const deletedIds = collectSubtreeItemIds(items, item.id)
+    const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
+    setLocallyDeletedItemIds(unavailableIds)
+    clearItemFocus()
+    setSelectedItemId(firstAvailableItemId(items, unavailableIds))
   }
 
   async function submitText(item: TreeItem, text: string) {
@@ -499,7 +560,7 @@ export function Outliner({
     )
 
     if (command.key === 'Tab' && !command.shiftKey) {
-      const previousId = precedingSiblingId(items, item)
+      const previousId = precedingSiblingId(activeItems, item)
       if (previousId) {
         setExpandedIds((current) => new Set(current).add(previousId))
       }
@@ -515,10 +576,7 @@ export function Outliner({
       requestItemFocus(createdItemId, { selectTitle: true })
       setSelectedItemId(createdItemId)
     } else if (result.deletedItemId) {
-      clearItemFocus()
-      setSelectedItemId(
-        items.find((candidate) => candidate.id !== item.id)?.id ?? null
-      )
+      markItemSubtreeDeleted(item)
     } else if (result.handled) {
       requestItemFocus(item.id)
       setSelectedItemId(item.id)
@@ -527,14 +585,11 @@ export function Outliner({
 
   async function removeItem(item: TreeItem) {
     await mutationActions.deleteItem(item.id)
-    clearItemFocus()
-    setSelectedItemId(
-      items.find((candidate) => candidate.id !== item.id)?.id ?? null
-    )
+    markItemSubtreeDeleted(item)
   }
 
   async function moveUp(item: TreeItem) {
-    const target = moveTargets(items, item).upTarget
+    const target = moveTargets(activeItems, item).upTarget
     if (!target) {
       return
     }
@@ -548,7 +603,7 @@ export function Outliner({
   }
 
   async function moveDown(item: TreeItem) {
-    const target = moveTargets(items, item).downTarget
+    const target = moveTargets(activeItems, item).downTarget
     if (!target) {
       return
     }
@@ -600,7 +655,7 @@ export function Outliner({
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <MarkerControls onFilterChange={changeMarkerFilter} />
           <ProductSwitcher
-            items={items}
+            items={activeItems}
             onJump={jumpToItem}
             className="lg:max-w-xl"
           />
@@ -608,7 +663,7 @@ export function Outliner({
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="divide-border border-border min-w-0 divide-y border-y text-sm">
-          {items.length === 0 ? (
+          {activeItems.length === 0 ? (
             <FirstRootCreator onCreate={createRoot} />
           ) : (
             rows.map(
@@ -619,7 +674,7 @@ export function Outliner({
                 collapsed,
                 filteredOutNewlyAdded,
               }) => {
-                const targets = moveTargets(items, item)
+                const targets = moveTargets(activeItems, item)
 
                 return (
                   <div

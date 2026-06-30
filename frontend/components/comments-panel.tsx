@@ -28,21 +28,33 @@ export function CommentsPanel({ item, className }: CommentsPanelProps) {
   const [error, setError] = React.useState<string | null>(null)
 
   const itemId = item?.id ?? null
+  const currentItemId = React.useRef<string | null>(itemId)
+  currentItemId.current = itemId
 
   const loadComments = React.useCallback(async () => {
-    if (!itemId) {
+    const requestedItemId = itemId
+    if (!requestedItemId) {
       setComments([])
+      setLoading(false)
+      setError(null)
       return
     }
 
     setLoading(true)
     setError(null)
     try {
-      setComments(await fetchComments(itemId))
+      const loadedComments = await fetchComments(requestedItemId)
+      if (currentItemId.current === requestedItemId) {
+        setComments(loadedComments)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to load')
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to load')
+      }
     } finally {
-      setLoading(false)
+      if (currentItemId.current === requestedItemId) {
+        setLoading(false)
+      }
     }
   }, [itemId])
 
@@ -56,13 +68,19 @@ export function CommentsPanel({ item, className }: CommentsPanelProps) {
       return
     }
 
+    const requestedItemId = itemId
     setError(null)
     try {
-      await createComment(itemId, { body: draft.trim() })
+      await createComment(requestedItemId, { body: draft.trim() })
+      if (currentItemId.current !== requestedItemId) {
+        return
+      }
       setDraft('')
       await loadComments()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to add')
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to add')
+      }
     }
   }
 
