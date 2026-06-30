@@ -96,6 +96,11 @@ export function CommentsPanel({
   const currentDescription =
     detailOverride?.description ?? item?.description ?? ''
   const currentRepoUrl = detailOverride?.repo_url ?? item?.repo_url ?? null
+  const currentRepoValue = currentRepoUrl?.trim() || null
+  const repoDraftValue = repoDraft.trim() || null
+  const detailsDirty =
+    descriptionDraft !== currentDescription ||
+    (isRootItem && repoDraftValue !== currentRepoValue)
 
   React.useEffect(() => {
     setDescriptionDraft(currentDescription)
@@ -183,7 +188,7 @@ export function CommentsPanel({
 
   async function saveDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!itemId || !item) {
+    if (!itemId || !item || !detailsDirty) {
       return
     }
 
@@ -327,7 +332,7 @@ export function CommentsPanel({
             <Button
               type="submit"
               size="sm"
-              disabled={!item || savingDetails}
+              disabled={!item || savingDetails || !detailsDirty}
               aria-label="Save details"
             >
               <Save className="size-3.5" aria-hidden="true" />

@@ -363,6 +363,132 @@ describe('Outliner comment target lifecycle', () => {
     )
   })
 
+  it('keeps Details Save disabled until root detail fields differ from persisted values', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: 'Existing plan',
+            repo_url: 'https://github.com/example/root-project',
+          }),
+        ],
+      })
+    )
+
+    const saveButton = getButton(container, 'Save details')
+    expect(saveButton.disabled).toBe(true)
+
+    await changeTextarea(
+      getTextarea(container, 'Item description'),
+      'Next pass'
+    )
+    expect(saveButton.disabled).toBe(false)
+
+    await changeTextarea(
+      getTextarea(container, 'Item description'),
+      'Existing plan'
+    )
+    expect(saveButton.disabled).toBe(true)
+
+    await changeInput(
+      getInput(container, 'Repository URL'),
+      'https://github.com/example/next-pass'
+    )
+    expect(saveButton.disabled).toBe(false)
+  })
+
+  it('disables Details Save again after a successful details save', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: DetailPatch) =>
+        item({
+          id: 'root',
+          title: 'Root project',
+          description: patch.description ?? '',
+          repo_url: patch.repo_url ?? null,
+        })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: 'Existing plan',
+            repo_url: 'https://github.com/example/root-project',
+          }),
+        ],
+      })
+    )
+
+    const saveButton = getButton(container, 'Save details')
+    await changeTextarea(
+      getTextarea(container, 'Item description'),
+      'Saved plan'
+    )
+    await changeInput(
+      getInput(container, 'Repository URL'),
+      'https://github.com/example/saved-plan'
+    )
+
+    expect(saveButton.disabled).toBe(false)
+
+    await click(saveButton)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      description: 'Saved plan',
+      repo_url: 'https://github.com/example/saved-plan',
+    })
+    expect(saveButton.disabled).toBe(true)
+  })
+
+  it('resets Details Save dirty state when the selected item changes', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: 'Root plan',
+            repo_url: 'https://github.com/example/root-project',
+          }),
+          item({
+            id: 'child',
+            title: 'Child task',
+            parent_id: 'root',
+            description: 'Child plan',
+          }),
+        ],
+      })
+    )
+
+    const saveButton = getButton(container, 'Save details')
+    await changeTextarea(
+      getTextarea(container, 'Item description'),
+      'Unsaved root plan'
+    )
+
+    expect(saveButton.disabled).toBe(false)
+
+    await click(getItemButton(container, 'child', 'Open comments'))
+
+    expect(container.textContent).toContain('Child task')
+    expect(getTextarea(container, 'Item description').value).toBe('Child plan')
+    expect(saveButton.disabled).toBe(true)
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+
+    await click(getItemButton(container, 'root', 'Open comments'))
+
+    expect(container.textContent).toContain('Root project')
+    expect(getTextarea(container, 'Item description').value).toBe('Root plan')
+    expect(saveButton.disabled).toBe(true)
+    expect(getInput(container, 'Repository URL').value).toBe(
+      'https://github.com/example/root-project'
+    )
+  })
+
   it('does not show repository URL editing for non-root items', async () => {
     const container = await render(
       React.createElement(Outliner, {
