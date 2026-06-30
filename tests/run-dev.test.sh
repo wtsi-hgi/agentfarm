@@ -118,7 +118,7 @@ fi
 set +e
 (
   cd "${repo_root}"
-  FRONTEND_HOST=0.0.0.0 AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 > "${run_log}" 2>&1
+  FRONTEND_HOST=0.0.0.0 FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 > "${run_log}" 2>&1
 )
 status=$?
 set -e
@@ -145,6 +145,12 @@ fi
 if ! grep -F "FRONTEND_HOST=0.0.0.0" "${setsid_log}" >/dev/null; then
   cat "${setsid_log}"
   echo "frontend was not started with the configured FRONTEND_HOST" >&2
+  exit 1
+fi
+
+if ! grep -F "FRONTEND_ALLOWED_DEV_ORIGINS=" "${setsid_log}" | grep -F "localhost" | grep -F "127.0.0.1" | grep -F "devhost.local" | grep -F "farm22-wrstat01.internal.sanger.ac.uk" >/dev/null; then
+  cat "${setsid_log}"
+  echo "frontend was not started with the expected allowed dev origins" >&2
   exit 1
 fi
 

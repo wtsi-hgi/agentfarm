@@ -6,7 +6,7 @@ import LoginPage from '@/app/login/page'
 import { normalizeNextPath } from '@/components/login-form'
 
 describe('login page', () => {
-  it('renders the session login form targeted by auth middleware', async () => {
+  it('renders the session login form targeted by auth proxy', async () => {
     const markup = renderToStaticMarkup(
       await LoginPage({
         searchParams: Promise.resolve({ next: '/api/v1/tree' }),

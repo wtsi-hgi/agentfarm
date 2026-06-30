@@ -115,6 +115,32 @@ frontend_hostname_url() {
   frontend_access_url "$host" "$port"
 }
 
+frontend_allowed_dev_origins() {
+  local bind_host="$1"
+  local configured_origins="$2"
+  local host
+
+  printf 'localhost,127.0.0.1,[::1]'
+
+  if [[ "$bind_host" != "0.0.0.0" && "$bind_host" != "::" ]]; then
+    printf ',%s' "$bind_host"
+  fi
+
+  host="$(hostname 2>/dev/null || true)"
+  if [[ -n "$host" && "$host" != "localhost" && "$host" != "0.0.0.0" && "$host" != "::" ]]; then
+    printf ',%s' "$host"
+  fi
+
+  host="$(hostname -f 2>/dev/null || true)"
+  if [[ -n "$host" && "$host" != "localhost" && "$host" != "0.0.0.0" && "$host" != "::" ]]; then
+    printf ',%s' "$host"
+  fi
+
+  if [[ -n "$configured_origins" ]]; then
+    printf ',%s' "$configured_origins"
+  fi
+}
+
 resolve_tls_paths() {
   local python_bin="${PYTHON:-python3}"
 
@@ -151,6 +177,8 @@ else
 fi
 FRONTEND_URL="$(frontend_access_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
 FRONTEND_HOSTNAME_URL="$(frontend_hostname_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
+CONFIGURED_FRONTEND_ALLOWED_DEV_ORIGINS="${FRONTEND_ALLOWED_DEV_ORIGINS:-}"
+FRONTEND_ALLOWED_DEV_ORIGINS="$(frontend_allowed_dev_origins "${FRONTEND_HOST}" "${CONFIGURED_FRONTEND_ALLOWED_DEV_ORIGINS}")"
 TLS_PATHS="$(resolve_tls_paths)"
 FRONTEND_TLS_CERT="$(printf '%s\n' "${TLS_PATHS}" | sed -n '1p')"
 FRONTEND_TLS_KEY="$(printf '%s\n' "${TLS_PATHS}" | sed -n '2p')"
@@ -273,7 +301,7 @@ if [[ "${FRONTEND_HOST}" == "0.0.0.0" || "${FRONTEND_HOST}" == "::" ]]; then
   echo "For access from another device, use this machine's hostname or LAN IP with port ${FRONTEND_PORT}."
 fi
 echo "Frontend TLS certificate: ${FRONTEND_TLS_CERT}"
-setsid env FRONTEND_HOST="${FRONTEND_HOST}" FRONTEND_PORT="${FRONTEND_PORT}" FRONTEND_TLS_CERT="${FRONTEND_TLS_CERT}" FRONTEND_TLS_KEY="${FRONTEND_TLS_KEY}" BACKEND_PORT="${BACKEND_PORT}" BACKEND_URL="${FRONTEND_BACKEND_URL}" bash -lc "cd frontend && pnpm dev" > logs/frontend.log 2>&1 &
+setsid env FRONTEND_HOST="${FRONTEND_HOST}" FRONTEND_PORT="${FRONTEND_PORT}" FRONTEND_ALLOWED_DEV_ORIGINS="${FRONTEND_ALLOWED_DEV_ORIGINS}" FRONTEND_TLS_CERT="${FRONTEND_TLS_CERT}" FRONTEND_TLS_KEY="${FRONTEND_TLS_KEY}" BACKEND_PORT="${BACKEND_PORT}" BACKEND_URL="${FRONTEND_BACKEND_URL}" bash -lc "cd frontend && pnpm dev" > logs/frontend.log 2>&1 &
 FRONT_PID=$!
 
 echo "Frontend PID: ${FRONT_PID}, Backend PID: ${BACK_PID}"

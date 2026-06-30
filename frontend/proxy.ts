@@ -7,8 +7,6 @@ import { SESSION_COOKIE_NAME, parseSessionIdentity } from '@/lib/session'
 const PUBLIC_PATHS = new Set(['/login', '/api/v1/auth/login', '/api/health'])
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'DELETE'])
 
-export const runtime = 'nodejs'
-
 function normalizeBackendPath(pathname: string): string {
   return pathname.startsWith('/api/v1')
     ? pathname.slice('/api/v1'.length) || '/'
@@ -73,7 +71,7 @@ async function verifySessionToken(
   }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
   if (PUBLIC_PATHS.has(pathname)) {
     return NextResponse.next()

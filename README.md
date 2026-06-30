@@ -129,8 +129,12 @@ Important runtime notes:
   self-signed certificate.
 - The frontend talks to the backend through server-side BFF calls.
 - The frontend binds to `FRONTEND_HOST` (default `0.0.0.0`).
+- `run-dev.sh` configures Next `allowedDevOrigins` for loopback, the machine
+  hostname/FQDN, and any extra aliases in `FRONTEND_ALLOWED_DEV_ORIGINS`.
 - `run-dev.sh` passes `BACKEND_URL=https://127.0.0.1:${BACKEND_PORT}` to the
   frontend process.
+- Next still logs that self-signed certificates are experimental because local
+  HTTPS is intentionally enabled for credential entry.
 - Backend runtime state defaults to repo-root `data/`, which is ignored by git.
 - `backend/run_uvicorn.sh` uses reload by default. Set `UVICORN_RELOAD=0` for
   one-process startup, which CI/e2e uses.
@@ -150,8 +154,8 @@ role headers are ignored.
 
 For e2e tests, Playwright writes a session secret into an isolated scratch data
 directory and sets a real signed session cookie in the browser context. This
-keeps the tests independent from external LDAP while still exercising Next.js
-middleware, Server Actions, backend auth, SQLite, and the rendered UI.
+keeps the tests independent from external LDAP while still exercising the
+Next.js proxy, Server Actions, backend auth, SQLite, and the rendered UI.
 
 ## Environment Variables
 
@@ -159,6 +163,8 @@ Common local settings:
 
 - `FRONTEND_HOST` (default `0.0.0.0`)
 - `FRONTEND_PORT` (default `3000`)
+- `FRONTEND_ALLOWED_DEV_ORIGINS` (extra comma-separated hostnames that may load
+  Next dev assets from this frontend)
 - `BACKEND_PORT` (default `8000`)
 - `BACKEND_URL` (frontend server-side backend URL)
 - `AGENTFARM_DATA_DIR` (default `data`)
@@ -175,6 +181,7 @@ Example `.env`:
 ```bash
 FRONTEND_HOST=0.0.0.0
 FRONTEND_PORT=4000
+FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk
 BACKEND_PORT=9000
 BACKEND_URL=https://127.0.0.1:9000
 AGENTFARM_DATA_DIR=data

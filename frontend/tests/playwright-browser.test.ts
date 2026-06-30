@@ -109,6 +109,43 @@ describe('Playwright browser resolution', () => {
     }
   })
 
+  it('does not pass conflicting color environment flags to Playwright web servers', async () => {
+    const previousNoColor = process.env.NO_COLOR
+    const previousForceColor = process.env.FORCE_COLOR
+    process.env.NO_COLOR = '1'
+    process.env.FORCE_COLOR = '1'
+
+    try {
+      const configModule = (await import(
+        `${pathToFileURL(path.join(frontendRoot, 'playwright.config.ts')).href}?test=${Date.now()}`
+      )) as {
+        default: {
+          webServer?: Array<{
+            env?: Record<string, string | undefined>
+          }>
+        }
+      }
+
+      const webServers = configModule.default.webServer ?? []
+      expect(webServers).toHaveLength(2)
+      for (const server of webServers) {
+        expect(server.env?.FORCE_COLOR).toBe('1')
+        expect(server.env).not.toHaveProperty('NO_COLOR')
+      }
+    } finally {
+      if (previousNoColor === undefined) {
+        delete process.env.NO_COLOR
+      } else {
+        process.env.NO_COLOR = previousNoColor
+      }
+      if (previousForceColor === undefined) {
+        delete process.env.FORCE_COLOR
+      } else {
+        process.env.FORCE_COLOR = previousForceColor
+      }
+    }
+  })
+
   it('loads the Playwright config without project path aliases', () => {
     const scratchParent = path.join(frontendRoot, '.tmp', 'agent')
     mkdirSync(scratchParent, { recursive: true })

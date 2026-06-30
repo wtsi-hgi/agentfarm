@@ -89,4 +89,4 @@ frontend-e2e-install:
 	fi
 
 frontend-e2e-test:
-	PLAYWRIGHT_RUN_ID="$$(date +%s)-$$$$" $(PNPM) test:e2e
+	env -u NO_COLOR PLAYWRIGHT_RUN_ID="$$(date +%s)-$$$$" $(PNPM) test:e2e

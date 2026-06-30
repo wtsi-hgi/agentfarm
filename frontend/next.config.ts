@@ -1,7 +1,15 @@
+import os from 'node:os'
+
 import type { NextConfig } from 'next'
 
+import { buildAllowedDevOrigins } from './lib/dev-origins'
+
 const nextConfig: NextConfig = {
-  // Enable React strict mode for better development experience
+  allowedDevOrigins: buildAllowedDevOrigins({
+    frontendHost: process.env.FRONTEND_HOST,
+    machineHostname: os.hostname(),
+    extraOrigins: process.env.FRONTEND_ALLOWED_DEV_ORIGINS,
+  }),
   reactStrictMode: true,
 }
 

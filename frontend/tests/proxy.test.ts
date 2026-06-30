@@ -2,11 +2,7 @@ import { NextRequest } from 'next/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseSessionIdentity } from '@/lib/session'
-import {
-  isOwnerOnlyMutation,
-  isOwnerOnlyPagePath,
-  middleware,
-} from '@/middleware'
+import { isOwnerOnlyMutation, isOwnerOnlyPagePath, proxy } from '@/proxy'
 
 function sessionCookie(username: string, role: 'owner' | 'viewer'): string {
   return encodeURIComponent(
@@ -14,7 +10,7 @@ function sessionCookie(username: string, role: 'owner' | 'viewer'): string {
   )
 }
 
-describe('middleware auth helpers', () => {
+describe('proxy auth helpers', () => {
   it('parses a valid temporary session identity cookie', () => {
     expect(parseSessionIdentity(sessionCookie('alice', 'owner'))).toEqual({
       username: 'alice',
@@ -93,7 +89,7 @@ describe('middleware auth helpers', () => {
   })
 
   it('redirects unauthenticated non-public requests to login', async () => {
-    const response = await middleware(
+    const response = await proxy(
       new NextRequest('https://agentfarm.test/api/v1/tree?filter=open')
     )
 
@@ -120,7 +116,7 @@ describe('middleware auth helpers', () => {
         },
       }
     )
-    const response = await middleware(request)
+    const response = await proxy(request)
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe(
@@ -149,7 +145,7 @@ describe('middleware auth helpers', () => {
         cookie: `agentfarm_session=${sessionCookie('vue', 'owner')}`,
       },
     })
-    const response = await middleware(request)
+    const response = await proxy(request)
 
     expect(response.status).toBe(403)
   })
@@ -169,7 +165,7 @@ describe('middleware auth helpers', () => {
         cookie: `agentfarm_session=${sessionCookie('alice', 'viewer')}`,
       },
     })
-    const response = await middleware(request)
+    const response = await proxy(request)
 
     expect(response.status).toBe(200)
   })
@@ -189,7 +185,7 @@ describe('middleware auth helpers', () => {
         cookie: `agentfarm_session=${sessionCookie('vue', 'viewer')}`,
       },
     })
-    const response = await middleware(request)
+    const response = await proxy(request)
 
     expect(response.status).toBe(403)
   })

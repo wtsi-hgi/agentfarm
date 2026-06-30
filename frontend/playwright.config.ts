@@ -23,6 +23,17 @@ process.env.PLAYWRIGHT_BACKEND_URL = backendUrl
 process.env.PLAYWRIGHT_FRONTEND_URL = frontendUrl
 process.env.PLAYWRIGHT_RUN_ID = runId
 
+export function buildWebServerEnv(
+  overrides: Record<string, string>
+): NodeJS.ProcessEnv {
+  const { NO_COLOR: _noColor, ...baseEnv } = process.env
+
+  return {
+    ...baseEnv,
+    ...overrides,
+  }
+}
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -51,12 +62,11 @@ export default defineConfig({
     {
       command: 'cd backend && ./run_uvicorn.sh',
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: buildWebServerEnv({
         AGENTFARM_DATA_DIR: dataDir,
         BACKEND_PORT: String(backendPort),
         UVICORN_RELOAD: '0',
-      },
+      }),
       ignoreHTTPSErrors: true,
       reuseExistingServer: false,
       timeout: 180_000,
@@ -65,13 +75,12 @@ export default defineConfig({
     {
       command: `pnpm --dir frontend exec next dev --experimental-https --experimental-https-key ${tlsKey} --experimental-https-cert ${tlsCert} -H 0.0.0.0 -p ${frontendPort}`,
       cwd: repoRoot,
-      env: {
-        ...process.env,
+      env: buildWebServerEnv({
         BACKEND_PORT: String(backendPort),
         BACKEND_URL: backendUrl,
         FRONTEND_PORT: String(frontendPort),
         NEXT_TELEMETRY_DISABLED: '1',
-      },
+      }),
       ignoreHTTPSErrors: true,
       reuseExistingServer: false,
       timeout: 180_000,
