@@ -49,46 +49,70 @@ describe('Outliner', () => {
     }
   })
 
-  it('filters display rows by selected mode only when a mode is selected', () => {
+  it('keeps review-state rows visible in the default tree view', () => {
     const items = [
       item({ id: 'prompt', title: 'Prompt work', mode: 'prompt-agent' }),
-      item({ id: 'review', title: 'Review work', mode: 'review' }),
+      item({
+        id: 'review',
+        title: 'Review work',
+        mode: 'prompt-agent',
+        state: 'review',
+        sort_order: 2,
+      }),
     ]
 
-    expect(
-      visibleOutlinerRows(items, new Set(), {
-        selectedModes: new Set(['review']),
-      }).map((row) => row.item.id)
-    ).toEqual(['review'])
     expect(
       visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
     ).toEqual(['prompt', 'review'])
   })
 
-  it('shows matching mode descendants through hidden collapsed containers', () => {
+  it('shows up-next rows as actionable non-waiting work in priority order', () => {
     const items = [
       item({
-        id: 'prompt-root',
-        title: 'Prompt root',
+        id: 'section',
+        title: 'Section',
         actionable: false,
-        mode: 'prompt-agent',
       }),
       item({
-        id: 'review-child',
-        title: 'Review child',
-        mode: 'review',
-        parent_id: 'prompt-root',
+        id: 'ready',
+        title: 'Ready work',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'feedback',
+        title: 'Waiting on feedback',
+        parent_id: 'section',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+      item({
+        id: 'respond',
+        title: 'Respond to feedback',
+        sort_order: 2,
+        state: 'respond',
+      }),
+      item({
+        id: 'blocked',
+        title: 'Externally blocked',
+        sort_order: 3,
+        actionable: false,
+        blocked_external: true,
       }),
     ]
 
     expect(
-      visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
-    ).toEqual(['prompt-root'])
-    expect(
-      visibleOutlinerRows(items, new Set(), {
-        selectedModes: new Set(['review']),
+      visibleOutlinerRows(items, new Set(['section']), {
+        priorityItems: [
+          { id: 'feedback', rank: 1 },
+          { id: 'respond', rank: 2 },
+          { id: 'blocked', rank: 3 },
+          { id: 'ready', rank: 4 },
+        ],
+        view: 'up-next',
       }).map((row) => row.item.id)
-    ).toEqual(['review-child'])
+    ).toEqual(['respond', 'ready'])
   })
 
   it('orders actionable rows by leverage priority without mutating stored order', () => {

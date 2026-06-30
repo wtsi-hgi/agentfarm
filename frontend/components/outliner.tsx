@@ -24,10 +24,9 @@ import {
 } from '@/components/product-switcher'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ModeToggles } from '@/components/view-controls'
+import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
   ItemActivity,
-  Mode,
   PriorityItem,
   State,
   TreeItem,
@@ -56,9 +55,9 @@ export type VisibleOutlinerRow = {
 type IdCollection = ReadonlySet<string> | readonly string[]
 
 export type VisibleOutlinerOptions = {
-  selectedModes?: ReadonlySet<Mode>
   leverageSort?: boolean
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
+  view?: OutlinerView
   hiddenItemIds?: IdCollection
   newlyAddedIds?: IdCollection
 }
@@ -66,7 +65,6 @@ export type VisibleOutlinerOptions = {
 type OutlinerProps = {
   items: TreeItem[]
   className?: string
-  initialSelectedModes?: Mode[]
   leverageSort?: boolean
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hiddenItemIds?: IdCollection
@@ -176,6 +174,19 @@ function isDoneForProjection(item: TreeItem): boolean {
   return item.complete || item.state === 'done' || item.state === 'abandoned'
 }
 
+function isUpNextItem(
+  item: TreeItem,
+  priorityRanks: ReadonlyMap<string, number>
+): boolean {
+  return (
+    priorityRanks.has(item.id) &&
+    item.actionable &&
+    !isDoneForProjection(item) &&
+    !item.blocked_external &&
+    !isExternalWaitingState(item.state)
+  )
+}
+
 function isRestorableDoneState(state: State): boolean {
   return state !== 'done' && state !== 'abandoned'
 }
@@ -227,6 +238,7 @@ function makeChildMap(
   }
 
   const priorityRanks = makePriorityRanks(order.priorityItems)
+  const view = order.view ?? 'tree'
   const bestRankCache = new Map<string, number>()
 
   function bestPriorityRank(item: TreeItem): number {
@@ -240,7 +252,10 @@ function makeChildMap(
       return Number.POSITIVE_INFINITY
     }
 
-    let rank = priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY
+    let rank =
+      view === 'up-next' && !isUpNextItem(item, priorityRanks)
+        ? Number.POSITIVE_INFINITY
+        : (priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY)
     for (const child of children.get(item.id) ?? []) {
       rank = Math.min(rank, bestPriorityRank(child))
     }
@@ -448,8 +463,12 @@ export function visibleOutlinerRows(
   expandedIds: ReadonlySet<string>,
   options: VisibleOutlinerOptions = {}
 ): VisibleOutlinerRow[] {
-  const selectedModes = options.selectedModes ?? new Set<Mode>()
-  const children = makeChildMap(items, options)
+  const view = options.view ?? 'tree'
+  const priorityRanks = makePriorityRanks(options.priorityItems)
+  const children = makeChildMap(items, {
+    ...options,
+    leverageSort: view === 'up-next' ? true : options.leverageSort,
+  })
   const rows: VisibleOutlinerRow[] = []
 
   function visit(parentId: string | null, depth: number) {
@@ -457,13 +476,13 @@ export function visibleOutlinerRows(
       const hasChildren = (children.get(item.id) ?? []).length > 0
       const collapsed =
         hasChildren && collapsedByDefault(item) && !expandedIds.has(item.id)
-      const hiddenByMode =
-        selectedModes.size > 0 && !selectedModes.has(item.mode)
-      const hiddenByFilter =
-        hiddenByMode || hasId(options.hiddenItemIds, item.id)
+      const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
+      const hiddenByView =
+        view === 'up-next' && !isUpNextItem(item, priorityRanks)
       const filteredOutNewlyAdded =
-        hiddenByFilter && hasId(options.newlyAddedIds, item.id)
-      const visible = !hiddenByFilter || filteredOutNewlyAdded
+        hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
+      const visible =
+        (!hiddenByExplicitFilter && !hiddenByView) || filteredOutNewlyAdded
 
       if (visible) {
         rows.push({
@@ -488,7 +507,6 @@ export function visibleOutlinerRows(
 export function Outliner({
   items,
   className,
-  initialSelectedModes = [],
   leverageSort = false,
   priorityItems = [],
   hiddenItemIds,
@@ -511,9 +529,7 @@ export function Outliner({
     () => items[0]?.id ?? null
   )
   const [detailRefreshKey, setDetailRefreshKey] = React.useState(0)
-  const [selectedModes, setSelectedModes] = React.useState<Set<Mode>>(
-    () => new Set(initialSelectedModes)
-  )
+  const [selectedView, setSelectedView] = React.useState<OutlinerView>('tree')
   const [sessionNewlyAddedIds, setSessionNewlyAddedIds] = React.useState(
     () => new Set<string>()
   )
@@ -571,10 +587,10 @@ export function Outliner({
     () =>
       visibleOutlinerRows(activeItems, expandedIds, {
         hiddenItemIds: mergedHiddenItemIds,
-        leverageSort,
+        leverageSort: selectedView === 'up-next' ? true : leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems,
-        selectedModes,
+        view: selectedView,
       }),
     [
       activeItems,
@@ -583,7 +599,7 @@ export function Outliner({
       leverageSort,
       mergedNewlyAddedIds,
       priorityItems,
-      selectedModes,
+      selectedView,
     ]
   )
   const selectedItem = selectedItemId
@@ -688,9 +704,9 @@ export function Outliner({
     })
   }
 
-  function changeSelectedModes(nextSelectedModes: Set<Mode>) {
+  function changeSelectedView(nextView: OutlinerView) {
     setSessionNewlyAddedIds(new Set())
-    setSelectedModes(nextSelectedModes)
+    setSelectedView(nextView)
   }
 
   function changeMarkerFilter(itemIds: readonly string[] | null) {
@@ -908,10 +924,7 @@ export function Outliner({
   return (
     <div className={cn('space-y-3', className)}>
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-        <ModeToggles
-          selectedModes={selectedModes}
-          onSelectedModesChange={changeSelectedModes}
-        />
+        <ViewControls view={selectedView} onViewChange={changeSelectedView} />
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <MarkerControls onFilterChange={changeMarkerFilter} />
           <ProductSwitcher

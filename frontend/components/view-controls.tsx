@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Check } from 'lucide-react'
+import { ListTodo, ListTree } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -10,71 +10,72 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { modeSchema, type Mode } from '@/lib/contracts'
+import { modeSchema } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
 export const MODES = modeSchema.options
+export const OUTLINER_VIEWS = ['tree', 'up-next'] as const
 
-type ModeTogglesProps = {
-  selectedModes: ReadonlySet<Mode>
-  onSelectedModesChange: (selectedModes: Set<Mode>) => void
+export type OutlinerView = (typeof OUTLINER_VIEWS)[number]
+
+type ViewControlsProps = {
+  view: OutlinerView
+  onViewChange: (view: OutlinerView) => void
   className?: string
 }
 
-const MODE_LABELS = {
-  'prompt-agent': 'Prompt',
-  review: 'Review',
-  merge: 'Merge',
-  release: 'Release',
-  spec: 'Spec',
-} satisfies Record<Mode, string>
+const VIEW_LABELS = {
+  tree: 'Tree',
+  'up-next': 'Up Next',
+} satisfies Record<OutlinerView, string>
 
-export function ModeToggles({
-  selectedModes,
-  onSelectedModesChange,
+const VIEW_ARIA_LABELS = {
+  tree: 'Show tree view',
+  'up-next': 'Show up next work',
+} satisfies Record<OutlinerView, string>
+
+function ViewIcon({ view }: { view: OutlinerView }) {
+  const Icon = view === 'tree' ? ListTree : ListTodo
+  return <Icon className="size-3.5" aria-hidden="true" />
+}
+
+export function ViewControls({
+  view,
+  onViewChange,
   className,
-}: ModeTogglesProps) {
-  function toggleMode(mode: Mode) {
-    const next = new Set(selectedModes)
-    if (next.has(mode)) {
-      next.delete(mode)
-    } else {
-      next.add(mode)
-    }
-    onSelectedModesChange(next)
-  }
-
+}: ViewControlsProps) {
   return (
     <TooltipProvider>
       <div
-        className={cn('flex flex-wrap items-center gap-1.5', className)}
-        aria-label="Mode filters"
+        className={cn(
+          'border-border bg-muted/30 inline-flex items-center gap-1 rounded-md border p-0.5',
+          className
+        )}
+        aria-label="Outliner view"
       >
-        {MODES.map((mode) => {
-          const selected = selectedModes.has(mode)
+        {OUTLINER_VIEWS.map((option) => {
+          const selected = option === view
 
           return (
-            <Tooltip key={mode}>
+            <Tooltip key={option}>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  variant={selected ? 'secondary' : 'outline'}
+                  variant={selected ? 'secondary' : 'ghost'}
                   size="sm"
                   aria-pressed={selected}
-                  aria-label={`${MODE_LABELS[mode]} mode`}
-                  onClick={() => toggleMode(mode)}
+                  aria-label={VIEW_ARIA_LABELS[option]}
+                  onClick={() => onViewChange(option)}
                   className={cn(
                     'h-8 gap-1.5 px-2.5',
                     selected && 'border-foreground/20'
                   )}
                 >
-                  {selected ? (
-                    <Check className="size-3.5" aria-hidden="true" />
-                  ) : null}
-                  {MODE_LABELS[mode]}
+                  <ViewIcon view={option} />
+                  {VIEW_LABELS[option]}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{MODE_LABELS[mode]}</TooltipContent>
+              <TooltipContent>{VIEW_LABELS[option]}</TooltipContent>
             </Tooltip>
           )
         })}

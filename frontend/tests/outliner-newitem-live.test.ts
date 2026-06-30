@@ -6,12 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
-import type {
-  ItemActivity,
-  Mode,
-  PriorityItem,
-  TreeItem,
-} from '@/lib/contracts'
+import type { ItemActivity, PriorityItem, TreeItem } from '@/lib/contracts'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -68,7 +63,6 @@ type CreateItemInput = {
 
 type LiveOutlinerHarnessProps = {
   initialItems?: TreeItem[]
-  initialSelectedModes?: Mode[]
   leverageSort?: boolean
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hideCreatedWithCallerFilter?: boolean
@@ -90,7 +84,6 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
 
 function LiveOutlinerHarness({
   initialItems = [],
-  initialSelectedModes = [],
   leverageSort = false,
   priorityItems = [],
   hideCreatedWithCallerFilter = false,
@@ -123,7 +116,6 @@ function LiveOutlinerHarness({
 
   return React.createElement(Outliner, {
     hiddenItemIds,
-    initialSelectedModes,
     items,
     leverageSort,
     priorityItems,
@@ -230,6 +222,11 @@ function getButton(container: ParentNode, ariaLabel: string) {
     throw new Error(`Missing button: ${ariaLabel}`)
   }
   return button
+}
+
+function queryButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  return button instanceof HTMLButtonElement ? button : null
 }
 
 function getItemButton(
@@ -467,19 +464,108 @@ describe('Outliner live newly added filter exemptions', () => {
     vi.clearAllMocks()
   })
 
-  it('hides a session-created item after the user changes mode filters', async () => {
+  it('shows tree and up-next controls without the old mode filter buttons', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
-        initialSelectedModes: ['review'],
+        initialItems: [
+          item({
+            id: 'review-state-section',
+            title: 'Review-state section',
+            actionable: false,
+            state: 'review',
+          }),
+        ],
       })
     )
+
+    expect(
+      getButton(container, 'Show tree view').getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(
+      getButton(container, 'Show up next work').getAttribute('aria-pressed')
+    ).toBe('false')
+    expect(queryButton(container, 'Prompt mode')).toBeNull()
+    expect(queryButton(container, 'Review mode')).toBeNull()
+    expect(queryButton(container, 'Merge mode')).toBeNull()
+    expect(queryButton(container, 'Release mode')).toBeNull()
+    expect(queryButton(container, 'Spec mode')).toBeNull()
+    expect(hasOutlinerItem(container, 'review-state-section')).toBe(true)
+  })
+
+  it('shows up-next work in priority order and returns to the tree view', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'ready-row',
+            title: 'Ready row',
+            sort_order: 1,
+          }),
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            sort_order: 2,
+            state: 'feedback',
+            actionable: false,
+          }),
+          item({
+            id: 'respond-row',
+            title: 'Respond to user',
+            sort_order: 3,
+            state: 'respond',
+          }),
+          item({
+            id: 'blocked-row',
+            title: 'Externally blocked',
+            sort_order: 4,
+            actionable: false,
+            blocked_external: true,
+          }),
+        ],
+        priorityItems: [
+          { id: 'feedback-row', rank: 1 },
+          { id: 'respond-row', rank: 2 },
+          { id: 'blocked-row', rank: 3 },
+          { id: 'ready-row', rank: 4 },
+        ],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-row',
+      'feedback-row',
+      'respond-row',
+      'blocked-row',
+    ])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(
+      getButton(container, 'Show tree view').getAttribute('aria-pressed')
+    ).toBe('false')
+    expect(
+      getButton(container, 'Show up next work').getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(getOutlinerItemIds(container)).toEqual(['respond-row', 'ready-row'])
+
+    await click(getButton(container, 'Show tree view'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-row',
+      'feedback-row',
+      'respond-row',
+      'blocked-row',
+    ])
+  })
+
+  it('hides a session-created item after the user switches to up-next work', async () => {
+    const container = await render(React.createElement(LiveOutlinerHarness))
 
     await submitFirstRoot(container)
 
     expect(hasOutlinerItem(container, 'created-session-item')).toBe(true)
-    expect(hasFilterNotice(container)).toBe(true)
 
-    await click(getButton(container, 'Merge mode'))
+    await click(getButton(container, 'Show up next work'))
 
     expect(hasOutlinerItem(container, 'created-session-item')).toBe(false)
     expect(hasFilterNotice(container)).toBe(false)
@@ -906,7 +992,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
-  it('preserves caller-supplied newly added ids when local filters change', async () => {
+  it('preserves caller-supplied newly added ids when marker filters change', async () => {
     const container = await render(
       React.createElement(Outliner, {
         hiddenItemIds: ['caller-added'],
@@ -918,7 +1004,8 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(hasOutlinerItem(container, 'caller-added')).toBe(true)
     expect(hasFilterNotice(container)).toBe(true)
 
-    await click(getButton(container, 'Review mode'))
+    await changeSelect(getSelect(container, 'Since marker'), 'marker-before')
+    await click(getButton(container, 'Apply marker filter'))
 
     expect(hasOutlinerItem(container, 'caller-added')).toBe(true)
     expect(hasFilterNotice(container)).toBe(true)
