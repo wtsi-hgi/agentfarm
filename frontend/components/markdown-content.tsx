@@ -358,12 +358,14 @@ export function MarkdownContent({ value, className }: MarkdownContentProps) {
   const [copiedBlockKey, setCopiedBlockKey] = React.useState<string | null>(
     null
   )
-  const canCopy =
-    typeof navigator !== 'undefined' &&
-    typeof navigator.clipboard?.writeText === 'function'
+  const [canCopy, setCanCopy] = React.useState(false)
+
+  React.useEffect(() => {
+    setCanCopy(typeof navigator.clipboard?.writeText === 'function')
+  }, [])
 
   async function copyCodeBlock(text: string, key: string) {
-    if (!canCopy) {
+    if (!canCopy || typeof navigator.clipboard?.writeText !== 'function') {
       return
     }
 
