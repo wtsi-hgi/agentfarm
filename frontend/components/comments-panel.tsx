@@ -77,6 +77,8 @@ export function CommentsPanel({
   const [repoDraft, setRepoDraft] = React.useState('')
   const [usageDraft, setUsageDraft] = React.useState('')
   const [editingRepoUrl, setEditingRepoUrl] = React.useState(false)
+  const [editingDescription, setEditingDescription] = React.useState(false)
+  const [editingUsage, setEditingUsage] = React.useState(false)
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
@@ -104,7 +106,10 @@ export function CommentsPanel({
     (isRootItem && usageDraft !== currentUsage) ||
     (isRootItem && repoDraftValue !== currentRepoValue)
   const showRepoEditor = !currentRepoValue || editingRepoUrl
-  const showUsagePreview = isRootItem && currentUsage.trim().length > 0
+  const showDescriptionEditor =
+    currentDescription.trim().length === 0 || editingDescription
+  const showUsageEditor =
+    isRootItem && (currentUsage.trim().length === 0 || editingUsage)
 
   React.useEffect(() => {
     setDescriptionDraft(currentDescription)
@@ -114,6 +119,8 @@ export function CommentsPanel({
 
   React.useEffect(() => {
     setEditingRepoUrl(false)
+    setEditingDescription(false)
+    setEditingUsage(false)
     setPendingDeleteComment(null)
   }, [itemId])
 
@@ -211,6 +218,8 @@ export function CommentsPanel({
       setRepoDraft(savedItem.repo_url ?? '')
       setUsageDraft(savedItem.usage)
       setEditingRepoUrl(false)
+      setEditingDescription(false)
+      setEditingUsage(false)
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
         setError(caught instanceof Error ? caught.message : 'Unable to save')
@@ -343,39 +352,92 @@ export function CommentsPanel({
               </div>
             </div>
           ) : null}
-          <label className="text-muted-foreground block text-xs font-medium">
-            Description
-            <textarea
-              value={descriptionDraft}
-              onChange={(event) => setDescriptionDraft(event.target.value)}
-              disabled={!item || savingDetails}
-              aria-label="Item description"
-              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </label>
+          <section className="space-y-2" aria-label="Description">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-muted-foreground text-xs font-medium">
+                Description
+              </div>
+              {!showDescriptionEditor ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        disabled={!item || savingDetails}
+                        aria-label="Edit description"
+                        className="size-8 shrink-0"
+                        onClick={() => setEditingDescription(true)}
+                      >
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Edit description</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+            </div>
+            {showDescriptionEditor ? (
+              <textarea
+                value={descriptionDraft}
+                onChange={(event) => setDescriptionDraft(event.target.value)}
+                disabled={!item || savingDetails}
+                aria-label="Item description"
+                placeholder="Add a description"
+                className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            ) : (
+              <div className="border-border bg-muted/20 rounded-md border p-3">
+                <MarkdownContent value={currentDescription} />
+              </div>
+            )}
+          </section>
           {isRootItem ? (
             <section className="space-y-2" aria-label="Usage">
-              <label className="text-muted-foreground block text-xs font-medium">
-                <span className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
                   <Terminal className="size-4" aria-hidden="true" />
                   Usage
-                </span>
+                </div>
+                {!showUsageEditor ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          disabled={!item || savingDetails}
+                          aria-label="Edit usage"
+                          className="size-8 shrink-0"
+                          onClick={() => setEditingUsage(true)}
+                        >
+                          <Pencil className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Edit usage</TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+              </div>
+              {showUsageEditor ? (
                 <textarea
                   value={usageDraft}
                   onChange={(event) => setUsageDraft(event.target.value)}
                   disabled={!item || savingDetails}
                   aria-label="Root usage"
-                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-32 w-full resize-y rounded-md border px-3 py-2 font-mono text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder="Add usage notes, commands, or code blocks"
+                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 w-full resize-y rounded-md border px-3 py-2 font-mono text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
                 />
-              </label>
-              {showUsagePreview ? (
+              ) : (
                 <div
                   className="border-border bg-muted/20 rounded-md border p-3"
                   aria-label="Saved usage preview"
                 >
                   <MarkdownContent value={currentUsage} />
                 </div>
-              ) : null}
+              )}
             </section>
           ) : null}
           <div className="flex justify-end">

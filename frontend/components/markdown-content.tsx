@@ -41,6 +41,50 @@ type TableBlock = {
 
 type Block = HeadingBlock | TextBlock | ListBlock | TableBlock
 
+function safeLinkHref(value: string): string | null {
+  const trimmed = value.trim()
+
+  try {
+    const url = new URL(trimmed)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? trimmed
+      : null
+  } catch {
+    return null
+  }
+}
+
+function splitTrailingUrlPunctuation(value: string) {
+  const match = /^(.+?)([.,;:!?]*)$/.exec(value)
+  return {
+    href: match?.[1] ?? value,
+    suffix: match?.[2] ?? '',
+  }
+}
+
+function safeLink(
+  href: string,
+  children: React.ReactNode,
+  key: string
+): React.ReactNode {
+  const safeHref = safeLinkHref(href)
+  if (!safeHref) {
+    return <React.Fragment key={key}>{children}</React.Fragment>
+  }
+
+  return (
+    <a
+      key={key}
+      href={safeHref}
+      target="_blank"
+      rel="noreferrer"
+      className="text-primary focus-visible:ring-ring rounded-sm font-medium underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+    >
+      {children}
+    </a>
+  )
+}
+
 function splitPipeCells(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
   return trimmed.split('|').map((cell) => cell.trim())
@@ -223,31 +267,79 @@ function parseBlocks(value: string): Block[] {
 }
 
 function inlineContent(text: string, keyPrefix: string): React.ReactNode[] {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)
-  return parts.map((part, index) => {
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return (
+  const pattern =
+    /(`[^`]+`|\*\*[^*]+\*\*|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>"'`]+))/g
+  const nodes: React.ReactNode[] = []
+  let lastIndex = 0
+  let index = 0
+
+  for (const match of text.matchAll(pattern)) {
+    const token = match[0]
+    const tokenIndex = match.index ?? 0
+    if (tokenIndex > lastIndex) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}-text-${index}`}>
+          {text.slice(lastIndex, tokenIndex)}
+        </React.Fragment>
+      )
+      index += 1
+    }
+
+    if (token.startsWith('`') && token.endsWith('`')) {
+      nodes.push(
         <code
           key={`${keyPrefix}-code-${index}`}
           className="bg-muted text-foreground rounded px-1 py-0.5 font-mono text-[0.9em]"
         >
-          {part.slice(1, -1)}
+          {token.slice(1, -1)}
         </code>
       )
-    }
-
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return (
+    } else if (token.startsWith('**') && token.endsWith('**')) {
+      nodes.push(
         <strong key={`${keyPrefix}-strong-${index}`}>
-          {part.slice(2, -2)}
+          {inlineContent(token.slice(2, -2), `${keyPrefix}-strong-${index}`)}
         </strong>
       )
+    } else if (match[2] !== undefined && match[3] !== undefined) {
+      const safeHref = safeLinkHref(match[3])
+      nodes.push(
+        safeHref ? (
+          safeLink(
+            safeHref,
+            inlineContent(match[2], `${keyPrefix}-link-${index}`),
+            `${keyPrefix}-link-${index}`
+          )
+        ) : (
+          <React.Fragment key={`${keyPrefix}-unsafe-link-${index}`}>
+            {token}
+          </React.Fragment>
+        )
+      )
+    } else {
+      const { href, suffix } = splitTrailingUrlPunctuation(token)
+      nodes.push(safeLink(href, href, `${keyPrefix}-bare-link-${index}`))
+      if (suffix) {
+        nodes.push(
+          <React.Fragment key={`${keyPrefix}-bare-link-suffix-${index}`}>
+            {suffix}
+          </React.Fragment>
+        )
+      }
     }
 
-    return (
-      <React.Fragment key={`${keyPrefix}-text-${index}`}>{part}</React.Fragment>
+    lastIndex = tokenIndex + token.length
+    index += 1
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(
+      <React.Fragment key={`${keyPrefix}-text-${index}`}>
+        {text.slice(lastIndex)}
+      </React.Fragment>
     )
-  })
+  }
+
+  return nodes
 }
 
 function headingClass(level: HeadingBlock['level']) {

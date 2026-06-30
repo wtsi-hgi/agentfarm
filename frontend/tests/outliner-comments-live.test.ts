@@ -189,6 +189,16 @@ function getOptionalLink(container: ParentNode, ariaLabel: string) {
   return link
 }
 
+function getLinkByText(container: ParentNode, text: string) {
+  const link = Array.from(container.querySelectorAll('a')).find(
+    (node) => node.textContent === text
+  )
+  if (!(link instanceof HTMLAnchorElement)) {
+    throw new Error(`Missing link with text: ${text}`)
+  }
+  return link
+}
+
 function getTextarea(container: ParentNode, ariaLabel: string) {
   const textarea = container.querySelector(
     `textarea[aria-label="${ariaLabel}"]`
@@ -671,10 +681,14 @@ describe('Outliner comment target lifecycle', () => {
     expect(getLink(detailsPanel, 'Open repository URL').textContent).toBe(
       repositoryUrl
     )
-    expect(getTextarea(detailsPanel, 'Item description').value).toBe(
-      'Root plan'
+    expect(detailsPanel.textContent).toContain('Root plan')
+    expect(getOptionalTextarea(detailsPanel, 'Item description')).toBeNull()
+    expect(getButton(detailsPanel, 'Edit description').disabled).toBe(false)
+    expect(getOptionalTextarea(detailsPanel, 'Root usage')).toBeNull()
+    expect(getButton(detailsPanel, 'Edit usage').disabled).toBe(false)
+    expect(getCodeBlock(detailsPanel, 'make test').textContent).toBe(
+      'make test'
     )
-    expect(getTextarea(detailsPanel, 'Root usage').value).toBe(usage)
   })
 
   it('shows a saved root repository URL as a safe accessible link', async () => {
@@ -702,7 +716,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(getButton(container, 'Edit repository URL').disabled).toBe(false)
   })
 
-  it('saves a new root repository URL from an empty editable field', async () => {
+  it('starts empty root details in editors and presents saved values after save', async () => {
     actionMocks.patchItem.mockImplementation(
       async (_itemId: string, patch: DetailPatch) =>
         item({
@@ -727,18 +741,31 @@ describe('Outliner comment target lifecycle', () => {
 
     const saveButton = getButton(container, 'Save details')
     const repositoryInput = getInput(container, 'Repository URL')
+    const descriptionField = getTextarea(container, 'Item description')
+    const usageField = getTextarea(container, 'Root usage')
 
     expect(repositoryInput.value).toBe('')
+    expect(descriptionField.value).toBe('')
+    expect(usageField.value).toBe('')
     expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
+    expect(getOptionalButton(container, 'Edit description')).toBeNull()
+    expect(getOptionalButton(container, 'Edit usage')).toBeNull()
     expect(saveButton.disabled).toBe(true)
 
-    await changeTextarea(
-      getTextarea(container, 'Item description'),
-      'Build the first usable pass'
-    )
+    await changeTextarea(descriptionField, 'Build the first usable pass')
     await changeInput(
       repositoryInput,
       'https://github.com/example/root-project'
+    )
+    await changeTextarea(
+      usageField,
+      [
+        'Read https://docs.example.com/start.',
+        '',
+        '```bash',
+        'make run',
+        '```',
+      ].join('\n')
     )
 
     expect(saveButton.disabled).toBe(false)
@@ -748,16 +775,28 @@ describe('Outliner comment target lifecycle', () => {
     expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
       description: 'Build the first usable pass',
       repo_url: 'https://github.com/example/root-project',
-      usage: '',
+      usage: [
+        'Read https://docs.example.com/start.',
+        '',
+        '```bash',
+        'make run',
+        '```',
+      ].join('\n'),
     })
-    expect(getTextarea(container, 'Item description').value).toBe(
-      'Build the first usable pass'
-    )
     expect(saveButton.disabled).toBe(true)
+    expect(container.textContent).toContain('Build the first usable pass')
+    expect(getOptionalTextarea(container, 'Item description')).toBeNull()
+    expect(getButton(container, 'Edit description').disabled).toBe(false)
     expect(getLink(container, 'Open repository URL').textContent).toBe(
       'https://github.com/example/root-project'
     )
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+    expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
+    expect(getButton(container, 'Edit usage').disabled).toBe(false)
+    expect(
+      getLinkByText(container, 'https://docs.example.com/start').href
+    ).toBe('https://docs.example.com/start')
+    expect(getCodeBlock(container, 'make run').textContent).toBe('make run')
   })
 
   it('edits a saved root repository URL through an explicit edit affordance', async () => {
@@ -819,6 +858,70 @@ describe('Outliner comment target lifecycle', () => {
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
   })
 
+  it('shows saved Description as safe rendered content with clickable links until edited', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: DetailPatch) =>
+        item({
+          id: 'root',
+          title: 'Root project',
+          description: patch.description ?? '',
+          repo_url: patch.repo_url ?? null,
+          usage: patch.usage ?? '',
+        })
+    )
+    const initialDescription =
+      'Read [the plan](https://docs.example.com/plan) before <strong>shipping</strong>.'
+    const savedDescription =
+      'Visit https://docs.example.com/next and `make test` before handoff.'
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: initialDescription,
+          }),
+        ],
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+    const saveButton = getButton(detailsPanel, 'Save details')
+
+    expect(getOptionalTextarea(detailsPanel, 'Item description')).toBeNull()
+    const initialLink = getLinkByText(detailsPanel, 'the plan')
+    expect(initialLink.href).toBe('https://docs.example.com/plan')
+    expect(initialLink.target).toBe('_blank')
+    expect(initialLink.rel).toBe('noreferrer')
+    expect(detailsPanel.textContent).toContain('<strong>shipping</strong>')
+    expect(detailsPanel.querySelector('strong')).toBeNull()
+    expect(saveButton.disabled).toBe(true)
+
+    await click(getButton(detailsPanel, 'Edit description'))
+
+    const descriptionField = getTextarea(detailsPanel, 'Item description')
+    expect(descriptionField.value).toBe(initialDescription)
+    expect(saveButton.disabled).toBe(true)
+
+    await changeTextarea(descriptionField, savedDescription)
+
+    expect(saveButton.disabled).toBe(false)
+
+    await click(saveButton)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      description: savedDescription,
+      repo_url: null,
+      usage: '',
+    })
+    expect(getOptionalTextarea(detailsPanel, 'Item description')).toBeNull()
+    expect(
+      getLinkByText(detailsPanel, 'https://docs.example.com/next').href
+    ).toBe('https://docs.example.com/next')
+    expect(detailsPanel.textContent).toContain('make test')
+    expect(saveButton.disabled).toBe(true)
+  })
+
   it('keeps Details Save disabled until root detail fields differ from persisted values', async () => {
     const container = await render(
       React.createElement(Outliner, {
@@ -835,6 +938,9 @@ describe('Outliner comment target lifecycle', () => {
 
     const saveButton = getButton(container, 'Save details')
     expect(saveButton.disabled).toBe(true)
+    expect(getOptionalTextarea(container, 'Item description')).toBeNull()
+
+    await click(getButton(container, 'Edit description'))
 
     await changeTextarea(
       getTextarea(container, 'Item description'),
@@ -885,6 +991,7 @@ describe('Outliner comment target lifecycle', () => {
     )
 
     const saveButton = getButton(container, 'Save details')
+    await click(getButton(container, 'Edit description'))
     await changeTextarea(
       getTextarea(container, 'Item description'),
       'Saved plan'
@@ -905,9 +1012,11 @@ describe('Outliner comment target lifecycle', () => {
       usage: '',
     })
     expect(saveButton.disabled).toBe(true)
+    expect(getOptionalTextarea(container, 'Item description')).toBeNull()
+    expect(container.textContent).toContain('Saved plan')
   })
 
-  it('shows saved root Usage as markdown with copyable code blocks and saves changes', async () => {
+  it('shows saved root Usage as markdown with clickable links and copyable code blocks', async () => {
     const clipboardWriteText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(window.navigator, 'clipboard', {
       configurable: true,
@@ -916,7 +1025,7 @@ describe('Outliner comment target lifecycle', () => {
     const initialUsage = [
       '## Usage',
       '',
-      'Run checks before handoff.',
+      'Read [the usage guide](https://docs.example.com/usage) before handoff.',
       '',
       '```bash',
       'pnpm test',
@@ -957,8 +1066,14 @@ describe('Outliner comment target lifecycle', () => {
     const detailsPanel = getDetailsPanel(container)
     const saveButton = getButton(detailsPanel, 'Save details')
 
-    expect(getTextarea(detailsPanel, 'Root usage').value).toBe(initialUsage)
-    expect(detailsPanel.textContent).toContain('Run checks before handoff.')
+    expect(getOptionalTextarea(detailsPanel, 'Root usage')).toBeNull()
+    expect(detailsPanel.textContent).toContain(
+      'Read the usage guide before handoff.'
+    )
+    const initialLink = getLinkByText(detailsPanel, 'the usage guide')
+    expect(initialLink.href).toBe('https://docs.example.com/usage')
+    expect(initialLink.target).toBe('_blank')
+    expect(initialLink.rel).toBe('noreferrer')
     expect(getCodeBlock(detailsPanel, 'pnpm test').textContent).toBe(
       'pnpm test'
     )
@@ -966,6 +1081,10 @@ describe('Outliner comment target lifecycle', () => {
     await click(getButton(detailsPanel, 'Copy code block'))
 
     expect(clipboardWriteText).toHaveBeenCalledWith('pnpm test')
+    expect(saveButton.disabled).toBe(true)
+
+    await click(getButton(detailsPanel, 'Edit usage'))
+    expect(getTextarea(detailsPanel, 'Root usage').value).toBe(initialUsage)
     expect(saveButton.disabled).toBe(true)
 
     await changeTextarea(getTextarea(detailsPanel, 'Root usage'), savedUsage)
@@ -980,6 +1099,7 @@ describe('Outliner comment target lifecycle', () => {
       usage: savedUsage,
     })
     expect(saveButton.disabled).toBe(true)
+    expect(getOptionalTextarea(detailsPanel, 'Root usage')).toBeNull()
     expect(detailsPanel.textContent).toContain('Run the complete gate.')
     expect(getCodeBlock(detailsPanel, 'make test').textContent).toBe(
       'make test'
@@ -1008,6 +1128,8 @@ describe('Outliner comment target lifecycle', () => {
     )
 
     const saveButton = getButton(container, 'Save details')
+    await click(getButton(container, 'Edit description'))
+    await click(getButton(container, 'Edit usage'))
     await changeTextarea(
       getTextarea(container, 'Item description'),
       'Unsaved root plan'
@@ -1022,7 +1144,9 @@ describe('Outliner comment target lifecycle', () => {
     await click(getItemRow(container, 'child'))
 
     expect(getDetailsPanel(container).textContent).toContain('Child task')
-    expect(getTextarea(container, 'Item description').value).toBe('Child plan')
+    expect(getDetailsPanel(container).textContent).toContain('Child plan')
+    expect(getOptionalTextarea(container, 'Item description')).toBeNull()
+    expect(getButton(container, 'Edit description').disabled).toBe(false)
     expect(saveButton.disabled).toBe(true)
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
     expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
@@ -1030,15 +1154,15 @@ describe('Outliner comment target lifecycle', () => {
     await click(getItemRow(container, 'root'))
 
     expect(getDetailsPanel(container).textContent).toContain('Root project')
-    expect(getTextarea(container, 'Item description').value).toBe('Root plan')
+    expect(getDetailsPanel(container).textContent).toContain('Root plan')
+    expect(getOptionalTextarea(container, 'Item description')).toBeNull()
     expect(saveButton.disabled).toBe(true)
     expect(getLink(container, 'Open repository URL').textContent).toBe(
       'https://github.com/example/root-project'
     )
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
-    expect(getTextarea(container, 'Root usage').value).toBe(
-      '```bash\nmake lint\n```'
-    )
+    expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
+    expect(getCodeBlock(container, 'make lint').textContent).toBe('make lint')
   })
 
   it('does not show repository URL controls for non-root items', async () => {
@@ -1063,7 +1187,8 @@ describe('Outliner comment target lifecycle', () => {
     expect(getOptionalLink(container, 'Open repository URL')).not.toBeNull()
     expect(getOptionalButton(container, 'Edit repository URL')).not.toBeNull()
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
-    expect(getOptionalTextarea(container, 'Root usage')).not.toBeNull()
+    expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
+    expect(getOptionalButton(container, 'Edit usage')).not.toBeNull()
 
     await click(getItemRow(container, 'child'))
 
@@ -1079,6 +1204,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
     expect(getOptionalButton(container, 'Edit repository URL')).toBeNull()
     expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
+    expect(getOptionalButton(container, 'Edit usage')).toBeNull()
     expect(getOptionalButton(container, 'Copy code block')).toBeNull()
   })
 
