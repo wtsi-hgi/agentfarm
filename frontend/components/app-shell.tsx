@@ -19,16 +19,10 @@ export function AppShell({
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
         <header className="border-border flex flex-col gap-4 border-b pb-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 space-y-1">
+            <div className="min-w-0">
               <h1 className="text-foreground text-2xl font-semibold tracking-tight">
                 {ownerUsername}&apos;s Agent Farm
               </h1>
-              <p className="text-muted-foreground text-sm">
-                Viewing farm owner{' '}
-                <span className="text-foreground font-medium">
-                  {ownerUsername}
-                </span>
-              </p>
             </div>
             <AuthUtility session={session} />
           </div>

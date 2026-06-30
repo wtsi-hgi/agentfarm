@@ -77,6 +77,7 @@ describe('login page', () => {
       fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
     ).toEqual(['/api/v1/auth/context'])
     expect(header?.querySelector('h1')?.textContent).toBe("alice's Agent Farm")
+    expect(header?.textContent).not.toContain('Viewing farm owner')
     expect(account?.textContent).toContain('Not signed in')
     expect(account?.textContent).toContain('Login required')
     expect(account?.querySelector('a[href^="/login"]')).toBeNull()
