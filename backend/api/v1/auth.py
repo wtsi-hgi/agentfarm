@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.schemas import LoginRequest, WhoAmI
+from api.schemas import LoginRequest, LoginResponse, WhoAmI
+from api.v1.authz import require_identity
 from config import settings
 from services.auth_ldap import (
     AccessDeniedError,
@@ -14,10 +17,9 @@ from services.auth_ldap import (
     LdapConfigurationError,
     role_for_username,
 )
+from services.session_tokens import issue_session_token
 
 router = APIRouter(prefix="/auth")
-
-_current_identity: WhoAmI | None = None
 
 
 def get_authenticator() -> LdapAuthenticator:
@@ -35,14 +37,12 @@ def get_authenticator() -> LdapAuthenticator:
     )
 
 
-@router.post("/login", response_model=WhoAmI)
+@router.post("/login", response_model=LoginResponse)
 async def login(
     request: LoginRequest,
     authenticator: LdapAuthenticator = Depends(get_authenticator),
-) -> WhoAmI:
+) -> LoginResponse:
     """Authenticate a username/password by direct-binding to LDAP."""
-
-    global _current_identity  # noqa: PLW0603
 
     try:
         username = authenticator.authenticate(
@@ -67,14 +67,17 @@ async def login(
             detail="access denied",
         ) from exc
 
-    _current_identity = WhoAmI(username=username, role=role)
-    return _current_identity
+    return LoginResponse(
+        username=username,
+        role=role,
+        session_token=issue_session_token(username=username, role=role),
+    )
 
 
 @router.get("/whoami", response_model=WhoAmI)
-async def whoami() -> WhoAmI:
-    """Return the current placeholder identity until sessions are added."""
+async def whoami(
+    identity: Annotated[WhoAmI, Depends(require_identity)],
+) -> WhoAmI:
+    """Return the identity verified from the request's session token."""
 
-    if _current_identity is not None:
-        return _current_identity
-    return WhoAmI(username=settings.owner, role="owner")
+    return identity

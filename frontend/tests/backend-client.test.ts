@@ -85,4 +85,48 @@ describe('backend client TLS dispatch', () => {
       expect.not.objectContaining({ dispatcher: expect.anything() })
     )
   })
+
+  it('validates expected non-2xx JSON responses against the supplied schema', async () => {
+    vi.stubEnv('BACKEND_URL', 'http://127.0.0.1:8000')
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'not implemented' }), {
+        status: 501,
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    const { backendJson } = await import('@/lib/backend-client')
+
+    await expect(
+      backendJson(
+        '/api/v1/items/item-1/spawn',
+        z.object({ detail: z.string() }),
+        { method: 'POST' },
+        { expectedStatuses: [501] }
+      )
+    ).resolves.toEqual({ detail: 'not implemented' })
+  })
+
+  it('rejects expected non-2xx responses that fail schema validation', async () => {
+    vi.stubEnv('BACKEND_URL', 'http://127.0.0.1:8000')
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: 'not implemented' }), {
+        status: 501,
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    const { backendJson } = await import('@/lib/backend-client')
+
+    await expect(
+      backendJson(
+        '/api/v1/items/item-1/spawn',
+        z.object({ detail: z.string() }),
+        { method: 'POST' },
+        { expectedStatuses: [501] }
+      )
+    ).rejects.toThrow('Response validation failed')
+  })
 })

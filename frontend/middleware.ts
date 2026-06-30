@@ -41,7 +41,14 @@ export function isOwnerOnlyMutation(pathname: string, method: string): boolean {
   if (method === 'POST' && path === '/markers') {
     return true
   }
+  if (method === 'POST' && /^\/items\/[^/]+\/(runs|spawn)$/.test(path)) {
+    return true
+  }
   return false
+}
+
+export function isOwnerOnlyPagePath(pathname: string): boolean {
+  return pathname === '/owner' || pathname.startsWith('/owner/')
 }
 
 export function middleware(request: NextRequest) {
@@ -60,7 +67,8 @@ export function middleware(request: NextRequest) {
   }
 
   if (
-    isOwnerOnlyMutation(pathname, request.method) &&
+    (isOwnerOnlyMutation(pathname, request.method) ||
+      isOwnerOnlyPagePath(pathname)) &&
     identity.role !== 'owner'
   ) {
     return new NextResponse('owner only', { status: 403 })

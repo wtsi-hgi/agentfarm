@@ -6,7 +6,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import config
-from api.v1 import auth as auth_module
 from api.v1.auth import get_authenticator
 from config import settings
 from db.connection import get_connection
@@ -18,6 +17,7 @@ from services.auth_ldap import (
     LdapBindSettings,
     LdapConfigurationError,
 )
+from services.session_tokens import issue_session_token
 
 
 class StubBinder:
@@ -42,18 +42,32 @@ def fresh_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_auth_overrides() -> None:
+def clear_auth_overrides(tmp_path, monkeypatch) -> None:
     """Keep dependency overrides isolated between tests."""
 
+    monkeypatch.setattr(config.settings, "data_dir", tmp_path)
     app.dependency_overrides.clear()
-    auth_module._current_identity = None
     yield
     app.dependency_overrides.clear()
-    auth_module._current_identity = None
 
 
-def _identity_headers(username: str, role: str) -> dict[str, str]:
-    return {"x-agentfarm-username": username, "x-agentfarm-role": role}
+def _session_headers(username: str, role: str) -> dict[str, str]:
+    return {
+        "x-agentfarm-session": issue_session_token(
+            username=username,
+            role=role,
+        )
+    }
+
+
+def _assert_login_identity(response, username: str, role: str) -> str:
+    body = response.json()
+    assert body["username"] == username
+    assert body["role"] == role
+    token = body.get("session_token")
+    assert isinstance(token, str)
+    assert token
+    return token
 
 
 def _item_count(db_path) -> int:
@@ -82,9 +96,16 @@ async def test_login_success_returns_identity_with_username(monkeypatch) -> None
             "/api/v1/auth/login",
             json={"username": "alice", "password": "correct horse"},
         )
+        body = response.json()
+        whoami = await client.get(
+            "/api/v1/auth/whoami",
+            headers={"x-agentfarm-session": body.get("session_token", "")},
+        )
 
     assert response.status_code == 200
-    assert response.json() == {"username": "alice", "role": "owner"}
+    _assert_login_identity(response, "alice", "owner")
+    assert whoami.status_code == 200
+    assert whoami.json() == {"username": "alice", "role": "owner"}
     assert binder.calls == [
         (
             "ldap://directory.example",
@@ -167,7 +188,7 @@ async def test_percent_s_template_sends_correct_bind_dn_for_bob(monkeypatch) -> 
         )
 
     assert response.status_code == 200
-    assert response.json() == {"username": "bob", "role": "owner"}
+    _assert_login_identity(response, "bob", "owner")
     assert binder.calls == [
         (
             "ldap://directory.example",
@@ -178,9 +199,9 @@ async def test_percent_s_template_sends_correct_bind_dn_for_bob(monkeypatch) -> 
 
 
 @pytest.mark.anyio
-async def test_whoami_returns_current_identity_after_login(monkeypatch) -> None:
+async def test_whoami_is_scoped_to_the_request_session_token(monkeypatch) -> None:
     monkeypatch.setattr(settings, "owner", "alice")
-    monkeypatch.setattr(settings, "whitelist_raw", "")
+    monkeypatch.setattr(settings, "whitelist_raw", "vue")
     authenticator = LdapAuthenticator(
         LdapBindSettings(
             server_uri="ldap://directory.example",
@@ -192,14 +213,42 @@ async def test_whoami_returns_current_identity_after_login(monkeypatch) -> None:
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        await client.post(
+        owner_login = await client.post(
             "/api/v1/auth/login",
             json={"username": "alice", "password": "correct horse"},
         )
-        response = await client.get("/api/v1/auth/whoami")
+        viewer_login = await client.post(
+            "/api/v1/auth/login",
+            json={"username": "vue", "password": "correct horse"},
+        )
+        missing = await client.get("/api/v1/auth/whoami")
+        owner = await client.get(
+            "/api/v1/auth/whoami",
+            headers={
+                "x-agentfarm-session": owner_login.json().get("session_token", "")
+            },
+        )
+        viewer = await client.get(
+            "/api/v1/auth/whoami",
+            headers={
+                "x-agentfarm-session": viewer_login.json().get("session_token", "")
+            },
+        )
+        invalid = await client.get(
+            "/api/v1/auth/whoami",
+            headers={"x-agentfarm-session": "not-a-valid-token"},
+        )
 
-    assert response.status_code == 200
-    assert response.json() == {"username": "alice", "role": "owner"}
+    assert owner_login.status_code == 200
+    assert viewer_login.status_code == 200
+    assert missing.status_code == 401
+    assert missing.json() == {"detail": "authentication required"}
+    assert owner.status_code == 200
+    assert owner.json() == {"username": "alice", "role": "owner"}
+    assert viewer.status_code == 200
+    assert viewer.json() == {"username": "vue", "role": "viewer"}
+    assert invalid.status_code == 401
+    assert invalid.json() == {"detail": "invalid session"}
 
 
 @pytest.mark.anyio
@@ -223,7 +272,7 @@ async def test_login_assigns_owner_role_for_configured_owner(monkeypatch) -> Non
         )
 
     assert response.status_code == 200
-    assert response.json() == {"username": "alice", "role": "owner"}
+    _assert_login_identity(response, "alice", "owner")
 
 
 @pytest.mark.anyio
@@ -247,7 +296,7 @@ async def test_login_assigns_viewer_role_for_whitelisted_user(monkeypatch) -> No
         )
 
     assert response.status_code == 200
-    assert response.json() == {"username": "vue", "role": "viewer"}
+    _assert_login_identity(response, "vue", "viewer")
 
 
 @pytest.mark.anyio
@@ -303,7 +352,7 @@ async def test_login_allows_owner_when_absent_from_whitelist(monkeypatch) -> Non
         )
 
     assert response.status_code == 200
-    assert response.json() == {"username": "alice", "role": "owner"}
+    _assert_login_identity(response, "alice", "owner")
 
 
 @pytest.mark.anyio
@@ -313,7 +362,7 @@ async def test_viewer_post_item_returns_403_and_does_not_create(fresh_db) -> Non
         response = await client.post(
             "/api/v1/items",
             json={"title": "Viewer cannot create"},
-            headers=_identity_headers("vue", "viewer"),
+            headers=_session_headers("vue", "viewer"),
         )
 
     assert response.status_code == 403
@@ -328,11 +377,11 @@ async def test_viewer_get_tree_is_allowed(fresh_db) -> None:
         created = await client.post(
             "/api/v1/items",
             json={"title": "Readable"},
-            headers=_identity_headers("alice", "owner"),
+            headers=_session_headers("alice", "owner"),
         )
         response = await client.get(
             "/api/v1/tree",
-            headers=_identity_headers("vue", "viewer"),
+            headers=_session_headers("vue", "viewer"),
         )
 
     assert created.status_code == 200
@@ -347,14 +396,14 @@ async def test_viewer_can_post_comment(fresh_db) -> None:
         created = await client.post(
             "/api/v1/items",
             json={"title": "Commentable"},
-            headers=_identity_headers("alice", "owner"),
+            headers=_session_headers("alice", "owner"),
         )
         item_id = created.json()["id"]
 
         response = await client.post(
             f"/api/v1/items/{item_id}/comments",
             json={"body": "I can comment"},
-            headers=_identity_headers("vue", "viewer"),
+            headers=_session_headers("vue", "viewer"),
         )
 
     assert created.status_code == 200
@@ -376,11 +425,60 @@ async def test_missing_or_invalid_identity_is_rejected_without_mutation(
         invalid = await client.post(
             "/api/v1/items",
             json={"title": "Bad role"},
-            headers=_identity_headers("mallory", "admin"),
+            headers={
+                "x-agentfarm-session": "not-a-valid-token",
+                "x-agentfarm-username": "mallory",
+                "x-agentfarm-role": "owner",
+            },
         )
 
     assert missing.status_code == 401
     assert missing.json() == {"detail": "authentication required"}
     assert invalid.status_code == 401
-    assert invalid.json() == {"detail": "invalid identity"}
+    assert invalid.json() == {"detail": "invalid session"}
+    assert _item_count(fresh_db) == 0
+
+
+@pytest.mark.anyio
+async def test_forged_identity_headers_do_not_escalate_viewer_token(
+    fresh_db,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/v1/items",
+            json={"title": "Forged owner"},
+            headers={
+                **_session_headers("vue", "viewer"),
+                "x-agentfarm-username": "alice",
+                "x-agentfarm-role": "owner",
+            },
+        )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "owner only"}
+    assert _item_count(fresh_db) == 0
+
+
+@pytest.mark.anyio
+async def test_forged_identity_headers_without_session_are_rejected(
+    fresh_db,
+) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/v1/items",
+            json={"title": "Forged cookie"},
+            headers={
+                "x-agentfarm-username": "alice",
+                "x-agentfarm-role": "owner",
+                "cookie": (
+                    "agentfarm_session=%7B%22username%22%3A%22alice%22%2C"
+                    "%22role%22%3A%22owner%22%7D"
+                ),
+            },
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "authentication required"}
     assert _item_count(fresh_db) == 0

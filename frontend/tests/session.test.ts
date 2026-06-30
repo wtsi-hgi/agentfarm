@@ -49,11 +49,19 @@ describe('session cookie helpers', () => {
     const store = cookieStore()
     mockedCookies.mockResolvedValue(store as unknown as CookieStore)
 
-    await setSessionCookie({ username: 'alice', role: 'owner' })
+    await setSessionCookie({
+      username: 'alice',
+      role: 'owner',
+      session_token: 'signed-owner-token',
+    })
 
     expect(store.set).toHaveBeenCalledWith(
       SESSION_COOKIE_NAME,
-      encodeSessionIdentity({ username: 'alice', role: 'owner' }),
+      encodeSessionIdentity({
+        username: 'alice',
+        role: 'owner',
+        session_token: 'signed-owner-token',
+      }),
       expect.objectContaining({
         httpOnly: true,
         sameSite: 'lax',
@@ -63,7 +71,11 @@ describe('session cookie helpers', () => {
   })
 
   it('reads an encoded identity cookie', async () => {
-    const encoded = encodeSessionIdentity({ username: 'vue', role: 'viewer' })
+    const encoded = encodeSessionIdentity({
+      username: 'vue',
+      role: 'viewer',
+      session_token: 'signed-viewer-token',
+    })
     mockedCookies.mockResolvedValue(
       cookieStore(encoded) as unknown as CookieStore
     )
@@ -71,6 +83,7 @@ describe('session cookie helpers', () => {
     await expect(readSessionIdentity()).resolves.toEqual({
       username: 'vue',
       role: 'viewer',
+      session_token: 'signed-viewer-token',
     })
   })
 })
@@ -83,7 +96,11 @@ describe('login server action', () => {
   it('sets the httpOnly session cookie after successful backend login', async () => {
     const store = cookieStore()
     mockedCookies.mockResolvedValue(store as unknown as CookieStore)
-    mockedBackendJson.mockResolvedValue({ username: 'alice', role: 'owner' })
+    mockedBackendJson.mockResolvedValue({
+      username: 'alice',
+      role: 'owner',
+      session_token: 'signed-owner-token',
+    })
 
     const formData = new FormData()
     formData.set('username', 'alice')
@@ -102,7 +119,11 @@ describe('login server action', () => {
     )
     expect(store.set).toHaveBeenCalledWith(
       SESSION_COOKIE_NAME,
-      expect.any(String),
+      encodeSessionIdentity({
+        username: 'alice',
+        role: 'owner',
+        session_token: 'signed-owner-token',
+      }),
       expect.objectContaining({ httpOnly: true })
     )
   })

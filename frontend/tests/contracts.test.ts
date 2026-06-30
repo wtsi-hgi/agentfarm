@@ -7,12 +7,17 @@ import {
   dependencySchema,
   healthResponseSchema,
   itemSchema,
+  loginResponseSchema,
   markerListSchema,
   markerSchema,
   messageResponseSchema,
+  notImplementedResponseSchema,
   priorityResponseSchema,
   markerChangeItemsSchema,
+  runListSchema,
+  runSchema,
   treeSchema,
+  whoamiSchema,
 } from '@/lib/contracts'
 
 describe('shared API contracts', () => {
@@ -31,6 +36,24 @@ describe('shared API contracts', () => {
   it('parses the health payload while allowing custom statuses', () => {
     const payload = { status: 'healthy' }
     expect(healthResponseSchema.parse(payload)).toEqual(payload)
+  })
+
+  it('parses identity and login payloads with backend session tokens', () => {
+    expect(whoamiSchema.parse({ username: 'alice', role: 'owner' })).toEqual({
+      username: 'alice',
+      role: 'owner',
+    })
+
+    const login = {
+      username: 'alice',
+      role: 'owner',
+      session_token: 'signed.session',
+    }
+    expect(loginResponseSchema.parse(login)).toEqual(login)
+    expect(
+      loginResponseSchema.safeParse({ username: 'alice', role: 'owner' })
+        .success
+    ).toBe(false)
   })
 })
 
@@ -175,6 +198,30 @@ describe('mutation response contracts', () => {
     expect(dependencySchema.parse(payload)).toEqual(payload)
     expect(
       dependencySchema.safeParse({ ...payload, kind: 'implicit' }).success
+    ).toBe(false)
+  })
+
+  it('parses RunOut payloads and run lists', () => {
+    const run = {
+      id: 'run-1',
+      item_id: 'item-1',
+      status: 'pending',
+      created_at: '2026-06-29T00:00:00.000000Z',
+    }
+
+    expect(runSchema.parse(run)).toEqual(run)
+    expect(runListSchema.parse([run])).toEqual([run])
+    expect(runSchema.safeParse({ ...run, status: 'running' }).success).toBe(
+      false
+    )
+  })
+
+  it('parses intentionally unimplemented seam responses', () => {
+    const payload = { detail: 'spawn for item item-1 is not implemented in v1' }
+
+    expect(notImplementedResponseSchema.parse(payload)).toEqual(payload)
+    expect(
+      notImplementedResponseSchema.safeParse({ message: 'nope' }).success
     ).toBe(false)
   })
 })

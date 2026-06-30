@@ -9,32 +9,30 @@ from fastapi import Depends, Header, HTTPException, status
 
 from api.schemas import WhoAmI
 from services.identity import reset_current_actor, set_current_actor
+from services.session_tokens import verify_session_token
 
 
-def _identity_from_headers(
-    username: str | None,
-    role: str | None,
-) -> WhoAmI:
-    """Parse the temporary request identity headers used before K4 sessions."""
-    if not username or not role:
+def _identity_from_session_token(session_token: str | None) -> WhoAmI:
+    """Verify a backend-issued session token and return its identity claims."""
+    if not session_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="authentication required",
         )
-    if role not in {"owner", "viewer"}:
+    claims = verify_session_token(session_token)
+    if claims is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid identity",
+            detail="invalid session",
         )
-    return WhoAmI(username=username, role=role)
+    return WhoAmI(username=claims.username, role=claims.role)
 
 
 async def require_identity(
-    username: Annotated[str | None, Header(alias="x-agentfarm-username")] = None,
-    role: Annotated[str | None, Header(alias="x-agentfarm-role")] = None,
+    session_token: Annotated[str | None, Header(alias="x-agentfarm-session")] = None,
 ) -> AsyncIterator[WhoAmI]:
     """Require an authenticated request identity and expose it as actor context."""
-    identity = _identity_from_headers(username, role)
+    identity = _identity_from_session_token(session_token)
     token = set_current_actor(identity.username)
     try:
         yield identity

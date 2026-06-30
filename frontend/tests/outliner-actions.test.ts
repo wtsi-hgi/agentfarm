@@ -5,6 +5,7 @@ import {
   createComment,
   createItem,
   createMarker,
+  createRun,
   deleteComment,
   deleteDependency,
   deleteItem,
@@ -12,10 +13,12 @@ import {
   fetchChanges,
   fetchComments,
   fetchMarkers,
+  listRuns,
   indentItem,
   moveItem,
   outdentItem,
   patchItem,
+  spawnItem,
 } from '@/app/actions'
 import type { Item } from '@/lib/contracts'
 
@@ -63,8 +66,9 @@ function item(overrides: Partial<Item> = {}) {
   }
 }
 
-function jsonResponse(payload: unknown) {
+function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
+    status,
     headers: { 'content-type': 'application/json' },
   })
 }
@@ -76,6 +80,7 @@ function requestBody(init: RequestInit | undefined) {
 function requestAuthHeaders(init: RequestInit | undefined) {
   const headers = new Headers(init?.headers)
   return {
+    session: headers.get('x-agentfarm-session'),
     username: headers.get('x-agentfarm-username'),
     role: headers.get('x-agentfarm-role'),
   }
@@ -83,8 +88,9 @@ function requestAuthHeaders(init: RequestInit | undefined) {
 
 function expectedAuthHeaders(count: number) {
   return Array.from({ length: count }, () => ({
-    username: 'alice',
-    role: 'owner',
+    session: 'signed-owner-token',
+    username: null,
+    role: null,
   }))
 }
 
@@ -93,6 +99,7 @@ describe('outliner mutation Server Actions', () => {
     sessionMocks.readSessionIdentity.mockResolvedValue({
       username: 'alice',
       role: 'owner',
+      session_token: 'signed-owner-token',
     })
   })
 
@@ -376,6 +383,58 @@ describe('outliner mutation Server Actions', () => {
         .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
         .map(([, init]) => requestAuthHeaders(init))
     ).toEqual(expectedAuthHeaders(4))
+  })
+
+  it('exposes run and spawn workflows through validated Server Actions', async () => {
+    const run = {
+      id: 'run-1',
+      item_id: 'current',
+      status: 'pending',
+      created_at: '2026-06-29T00:00:00.000000Z',
+    }
+    const notImplemented = {
+      detail: 'spawn for item current is not implemented in v1',
+    }
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'POST' && pathname === '/api/v1/items/current/runs') {
+        return jsonResponse(run)
+      }
+      if (method === 'GET' && pathname === '/api/v1/items/current/runs') {
+        return jsonResponse([run])
+      }
+      if (method === 'POST' && pathname === '/api/v1/items/current/spawn') {
+        return jsonResponse(notImplemented, 501)
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(createRun('current')).resolves.toEqual(run)
+    await expect(listRuns('current')).resolves.toEqual([run])
+    await expect(spawnItem('current')).resolves.toEqual(notImplemented)
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      { method: 'POST', path: '/api/v1/items/current/runs', body: null },
+      { method: 'GET', path: '/api/v1/items/current/runs', body: null },
+      { method: 'POST', path: '/api/v1/items/current/spawn', body: null },
+    ])
+    expect(
+      fetch.mock.calls
+        .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
+        .map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(2))
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(1)
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
 
   it('fails fast when a mutation response does not match its contract', async () => {

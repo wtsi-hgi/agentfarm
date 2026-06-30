@@ -26,6 +26,12 @@ export const whoamiSchema = z.object({
 
 export type WhoAmI = z.infer<typeof whoamiSchema>
 
+export const loginResponseSchema = whoamiSchema.extend({
+  session_token: z.string().min(1),
+})
+
+export type LoginResponse = z.infer<typeof loginResponseSchema>
+
 // Closed enum sets, mirroring backend models/enums.py (exact lowercase values).
 export const stateSchema = z.enum([
   'not-started',
@@ -115,6 +121,29 @@ export const dependencySchema = z
   .strict()
 
 export type Dependency = z.infer<typeof dependencySchema>
+
+export const runSchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    status: z.literal('pending'),
+    created_at: z.string(),
+  })
+  .strict()
+
+export const runListSchema = z.array(runSchema)
+
+export type Run = z.infer<typeof runSchema>
+
+export const notImplementedResponseSchema = z
+  .object({
+    detail: z.string(),
+  })
+  .strict()
+
+export type NotImplementedResponse = z.infer<
+  typeof notImplementedResponseSchema
+>
 
 export const commentSchema = z
   .object({

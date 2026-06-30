@@ -2,10 +2,12 @@ import { NextRequest } from 'next/server'
 import { describe, expect, it } from 'vitest'
 
 import { parseSessionIdentity } from '@/lib/session'
-import { isOwnerOnlyMutation, middleware } from '@/middleware'
+import { isOwnerOnlyMutation, isOwnerOnlyPagePath, middleware } from '@/middleware'
 
 function sessionCookie(username: string, role: 'owner' | 'viewer'): string {
-  return encodeURIComponent(JSON.stringify({ username, role }))
+  return encodeURIComponent(
+    JSON.stringify({ username, role, session_token: `${username}-token` })
+  )
 }
 
 describe('middleware auth helpers', () => {
@@ -13,6 +15,7 @@ describe('middleware auth helpers', () => {
     expect(parseSessionIdentity(sessionCookie('alice', 'owner'))).toEqual({
       username: 'alice',
       role: 'owner',
+      session_token: 'alice-token',
     })
   })
 
@@ -21,6 +24,13 @@ describe('middleware auth helpers', () => {
     expect(
       parseSessionIdentity(
         sessionCookie('mallory', 'viewer').replace('viewer', 'admin')
+      )
+    ).toBeNull()
+    expect(
+      parseSessionIdentity(
+        encodeURIComponent(
+          JSON.stringify({ username: 'legacy', role: 'owner' })
+        )
       )
     ).toBeNull()
   })
@@ -40,6 +50,8 @@ describe('middleware auth helpers', () => {
       true
     )
     expect(isOwnerOnlyMutation('/api/v1/markers', 'POST')).toBe(true)
+    expect(isOwnerOnlyMutation('/api/v1/items/item-1/runs', 'POST')).toBe(true)
+    expect(isOwnerOnlyMutation('/api/v1/items/item-1/spawn', 'POST')).toBe(true)
   })
 
   it('allows reads and comment routes through the owner-only role gate', () => {
@@ -56,6 +68,14 @@ describe('middleware auth helpers', () => {
     expect(isOwnerOnlyMutation('/api/v1/comments/comment-1', 'DELETE')).toBe(
       false
     )
+    expect(isOwnerOnlyMutation('/api/v1/items/item-1/runs', 'GET')).toBe(false)
+  })
+
+  it('gates owner page paths', () => {
+    expect(isOwnerOnlyPagePath('/owner')).toBe(true)
+    expect(isOwnerOnlyPagePath('/owner/settings')).toBe(true)
+    expect(isOwnerOnlyPagePath('/')).toBe(false)
+    expect(isOwnerOnlyPagePath('/login')).toBe(false)
   })
 
   it('redirects unauthenticated non-public requests to login', () => {
@@ -72,6 +92,17 @@ describe('middleware auth helpers', () => {
   it('returns owner only when a viewer hits an owner-only mutation', () => {
     const request = new NextRequest('https://agentfarm.test/api/v1/items', {
       method: 'POST',
+      headers: {
+        cookie: `agentfarm_session=${sessionCookie('vue', 'viewer')}`,
+      },
+    })
+    const response = middleware(request)
+
+    expect(response.status).toBe(403)
+  })
+
+  it('returns owner only when a viewer hits an owner page path', () => {
+    const request = new NextRequest('https://agentfarm.test/owner/settings', {
       headers: {
         cookie: `agentfarm_session=${sessionCookie('vue', 'viewer')}`,
       },

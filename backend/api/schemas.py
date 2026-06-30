@@ -39,6 +39,12 @@ class WhoAmI(BaseModel):
     role: Literal["owner", "viewer"]
 
 
+class LoginResponse(WhoAmI):
+    """Authenticated identity plus the backend-issued session token."""
+
+    session_token: str
+
+
 class ItemCreate(BaseModel):
     """Request body for ``POST /items`` (spec: A1).
 

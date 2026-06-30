@@ -22,6 +22,10 @@ export class BackendRequestError extends Error {
   }
 }
 
+export type BackendJsonOptions = {
+  expectedStatuses?: readonly number[]
+}
+
 export function buildBackendUrl(path: string | URL): URL {
   if (path instanceof URL) {
     return path
@@ -54,7 +58,8 @@ const backendDispatcher = createBackendDispatcher(backendOrigin)
 export async function backendJson<T>(
   path: string,
   schema: ZodSchema<T>,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  options: BackendJsonOptions = {}
 ): Promise<T> {
   const url = buildBackendUrl(path)
   const headers = new Headers(init.headers ?? {})
@@ -80,7 +85,10 @@ export async function backendJson<T>(
   const isJson = contentType.includes('application/json')
   const payload = isJson ? await response.json() : await response.text()
 
-  if (!response.ok) {
+  const expectedStatuses = new Set(options.expectedStatuses ?? [])
+  const shouldValidate = response.ok || expectedStatuses.has(response.status)
+
+  if (!shouldValidate) {
     const parsed = isJson ? errorResponseSchema.safeParse(payload) : null
     throw new BackendRequestError(
       parsed?.data?.message ?? `Backend request failed with ${response.status}`,

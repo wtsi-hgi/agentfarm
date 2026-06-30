@@ -3,6 +3,7 @@ export const SESSION_COOKIE_NAME = 'agentfarm_session'
 export type SessionIdentity = {
   username: string
   role: 'owner' | 'viewer'
+  session_token: string
 }
 
 const SESSION_COOKIE_OPTIONS = {
@@ -29,9 +30,15 @@ export function parseSessionIdentity(
     if (
       typeof parsed.username === 'string' &&
       parsed.username.length > 0 &&
-      (parsed.role === 'owner' || parsed.role === 'viewer')
+      (parsed.role === 'owner' || parsed.role === 'viewer') &&
+      typeof parsed.session_token === 'string' &&
+      parsed.session_token.length > 0
     ) {
-      return { username: parsed.username, role: parsed.role }
+      return {
+        username: parsed.username,
+        role: parsed.role,
+        session_token: parsed.session_token,
+      }
     }
   } catch {
     return null

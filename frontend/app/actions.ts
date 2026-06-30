@@ -11,13 +11,16 @@ import {
   dependencySchema,
   healthResponseSchema,
   itemSchema,
+  loginResponseSchema,
   markerChangeItemsSchema,
   markerListSchema,
   markerSchema,
   messageResponseSchema,
+  notImplementedResponseSchema,
   priorityResponseSchema,
+  runListSchema,
+  runSchema,
   treeSchema,
-  whoamiSchema,
   type Effort,
   type MarkerChangeField,
   type Mode,
@@ -98,8 +101,7 @@ async function authenticatedInit(init: RequestInit): Promise<RequestInit> {
   }
 
   const headers = new Headers(init.headers)
-  headers.set('x-agentfarm-username', identity.username)
-  headers.set('x-agentfarm-role', identity.role)
+  headers.set('x-agentfarm-session', identity.session_token)
   return {
     ...init,
     headers,
@@ -217,6 +219,30 @@ export async function deleteDependency(dependencyId: string) {
   )
 }
 
+export async function createRun(itemId: string) {
+  return mutation(
+    `/api/v1/items/${encodeURIComponent(itemId)}/runs`,
+    runSchema,
+    jsonInit('POST')
+  )
+}
+
+export async function listRuns(itemId: string) {
+  return backendJson(
+    `/api/v1/items/${encodeURIComponent(itemId)}/runs`,
+    runListSchema
+  )
+}
+
+export async function spawnItem(itemId: string) {
+  return backendJson(
+    `/api/v1/items/${encodeURIComponent(itemId)}/spawn`,
+    notImplementedResponseSchema,
+    await authenticatedInit(jsonInit('POST')),
+    { expectedStatuses: [501] }
+  )
+}
+
 export async function fetchComments(itemId: string) {
   return backendJson(
     `/api/v1/items/${encodeURIComponent(itemId)}/comments`,
@@ -284,10 +310,14 @@ export async function login(
   const password = (formData.get('password') ?? '').toString()
 
   try {
-    const identity = await backendJson('/api/v1/auth/login', whoamiSchema, {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    })
+    const identity = await backendJson(
+      '/api/v1/auth/login',
+      loginResponseSchema,
+      {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      }
+    )
     await setSessionCookie(identity)
     return { status: 'success', error: null }
   } catch (error) {
