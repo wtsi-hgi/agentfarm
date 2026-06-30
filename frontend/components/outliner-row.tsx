@@ -6,11 +6,11 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  CornerDownLeft,
   GripVertical,
   IndentDecrease,
   IndentIncrease,
   MessagesSquare,
-  Save,
   Trash2,
 } from 'lucide-react'
 
@@ -54,6 +54,7 @@ type OutlinerRowProps = {
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
   onSubmitText: (item: TreeItem, text: string) => Promise<void>
+  onCreateSibling: (item: TreeItem, text: string) => Promise<void>
   onKeyboardCommand: (
     item: TreeItem,
     text: string,
@@ -81,6 +82,7 @@ export function OutlinerRow({
   onToggle,
   onSelect,
   onSubmitText,
+  onCreateSibling,
   onKeyboardCommand,
   onDelete,
   onMoveUp,
@@ -125,6 +127,10 @@ export function OutlinerRow({
     void run(() => onSubmitText(item, draft))
   }
 
+  function createSibling() {
+    void run(() => onCreateSibling(item, draft))
+  }
+
   function runKeyboardCommand(command: RowKeyboardCommand) {
     void run(() => onKeyboardCommand(item, draft, command))
   }
@@ -145,7 +151,7 @@ export function OutlinerRow({
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Enter') {
       event.preventDefault()
-      runKeyboardCommand({ key: 'Enter' })
+      submitCurrentText()
       return
     }
 
@@ -258,14 +264,14 @@ export function OutlinerRow({
                   variant="ghost"
                   size="icon"
                   className="size-8 shrink-0"
-                  aria-label="Save row"
+                  aria-label="Add sibling"
                   disabled={pending}
-                  onClick={submitCurrentText}
+                  onClick={createSibling}
                 >
-                  <Save className="size-3.5" aria-hidden="true" />
+                  <CornerDownLeft className="size-3.5" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Save</TooltipContent>
+              <TooltipContent>Add sibling</TooltipContent>
             </Tooltip>
           </div>
           {item.needs.length > 0 ? (

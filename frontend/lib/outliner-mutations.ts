@@ -193,8 +193,7 @@ export async function applyRowKeyboardCommand(
 ): Promise<RowKeyboardResult> {
   if (command.key === 'Enter') {
     await submitRowText(item, text, actions, options)
-    const created = await createNextSibling(item, actions)
-    return { handled: true, createdItemId: created.id }
+    return { handled: true }
   }
 
   if (command.key === 'Tab') {

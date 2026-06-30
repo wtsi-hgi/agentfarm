@@ -7,6 +7,7 @@ import {
   DependencyRemovalConfirmationRequiredError,
   NEW_ITEM_TITLE,
   applyRowKeyboardCommand,
+  createNextSibling,
   createFirstRoot,
   moveRowAfter,
   moveRowToFirst,
@@ -173,11 +174,31 @@ describe('editable outliner behaviours', () => {
     expect(actions.deleteDependency).not.toHaveBeenCalled()
   })
 
-  it('wires Enter, Tab, Shift-Tab, and delete keyboard commands to Server Action adapters', async () => {
+  it('wires Enter to save row text without creating a sibling', async () => {
     const current = item({ id: 'current', title: 'Current' })
     const actions = mutationActions()
 
-    await applyRowKeyboardCommand(current, 'Current', { key: 'Enter' }, actions)
+    await applyRowKeyboardCommand(
+      current,
+      'Renamed current @review',
+      { key: 'Enter' },
+      actions
+    )
+
+    expect(actions.patchItem).toHaveBeenCalledWith('current', {
+      title: 'Renamed current',
+      mode: 'review',
+    })
+    expect(actions.createItem).not.toHaveBeenCalled()
+    expect(actions.indentItem).not.toHaveBeenCalled()
+    expect(actions.outdentItem).not.toHaveBeenCalled()
+    expect(actions.deleteItem).not.toHaveBeenCalled()
+  })
+
+  it('wires Tab, Shift-Tab, and delete keyboard commands to Server Action adapters', async () => {
+    const current = item({ id: 'current', title: 'Current' })
+    const actions = mutationActions()
+
     await applyRowKeyboardCommand(current, 'Current', { key: 'Tab' }, actions)
     await applyRowKeyboardCommand(
       current,
@@ -192,15 +213,24 @@ describe('editable outliner behaviours', () => {
       actions
     )
 
+    expect(actions.indentItem).toHaveBeenCalledWith('current')
+    expect(actions.outdentItem).toHaveBeenCalledWith('current')
+    expect(actions.deleteItem).toHaveBeenCalledWith('current')
+    expect(actions.createItem).not.toHaveBeenCalled()
+    expect(actions.createDependency).not.toHaveBeenCalled()
+  })
+
+  it('creates an explicit next sibling after the current row', async () => {
+    const current = item({ id: 'current', title: 'Current' })
+    const actions = mutationActions()
+
+    await createNextSibling(current, actions)
+
     expect(actions.createItem).toHaveBeenCalledWith({
       title: NEW_ITEM_TITLE,
       parent_id: 'parent',
       after_id: 'current',
     })
-    expect(actions.indentItem).toHaveBeenCalledWith('current')
-    expect(actions.outdentItem).toHaveBeenCalledWith('current')
-    expect(actions.deleteItem).toHaveBeenCalledWith('current')
-    expect(actions.createDependency).not.toHaveBeenCalled()
   })
 
   it('moves a row after a sibling without mutating dependency edges', async () => {
@@ -264,7 +294,7 @@ describe('editable outliner behaviours', () => {
     )
 
     expect(markup).toContain('aria-label="Item text"')
-    expect(markup).toContain('aria-label="Save row"')
+    expect(markup).toContain('aria-label="Add sibling"')
     expect(markup).toContain('aria-label="Delete item"')
     expect(markup).toContain('aria-label="Move item down"')
     expect(markup).not.toContain('aria-label="Open comments"')

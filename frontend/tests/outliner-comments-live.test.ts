@@ -489,7 +489,7 @@ describe('Outliner comment target lifecycle', () => {
     const input = getItemInput(container, 'root')
 
     await changeInput(input, 'Renamed root')
-    await click(getItemButton(container, 'root', 'Save row'))
+    await keyDown(input, 'Enter')
 
     expect(getDialog().textContent).toContain('Remove dependency')
     expect(getDialog().textContent).toContain('deploy-db')
@@ -521,7 +521,7 @@ describe('Outliner comment target lifecycle', () => {
     const input = getItemInput(container, 'root')
 
     await changeInput(input, 'Renamed root')
-    await click(getItemButton(container, 'root', 'Save row'))
+    await keyDown(input, 'Enter')
     await click(getDialogButton('Confirm deletion'))
 
     expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)

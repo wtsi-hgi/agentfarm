@@ -1176,7 +1176,23 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(getSelect(container, 'Until marker').value).toBe('')
   })
 
-  it('selects the default title for an Enter-created sibling so immediate typing replaces it', async () => {
+  it('saves an existing item title on Enter without creating a sibling', async () => {
+    const container = await render(React.createElement(SiblingCreationHarness))
+    const currentInput = getItemInput(container, 'current')
+
+    currentInput.setSelectionRange(0, currentInput.value.length)
+    await typeThroughCurrentSelection(currentInput, 'Renamed current')
+    await keyDown(currentInput, 'Enter')
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('current', {
+      title: 'Renamed current',
+    })
+    expect(actionMocks.createItem).not.toHaveBeenCalled()
+    expect(getOutlinerItemIds(container)).toEqual(['current'])
+    expect(getItemInput(container, 'current').value).toBe('Renamed current')
+  })
+
+  it('selects the default title for a button-created sibling so immediate typing replaces it', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1191,7 +1207,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
     const container = await render(React.createElement(SiblingCreationHarness))
 
-    await keyDown(getItemInput(container, 'current'), 'Enter')
+    await click(getItemButton(container, 'current', 'Add sibling'))
 
     const createdInput = getItemInput(container, 'created-sibling')
 
@@ -1205,7 +1221,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.value).toBe('Write docs')
   })
 
-  it('creates an Enter-created child sibling below the current child and selects it', async () => {
+  it('creates a button-created child sibling below the current child and selects it', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1227,7 +1243,7 @@ describe('Outliner live newly added filter exemptions', () => {
       currentInput.value.length,
       currentInput.value.length
     )
-    await keyDown(currentInput, 'Enter')
+    await click(getItemButton(container, 'current-child', 'Add sibling'))
 
     const createdInput = getItemInput(container, 'created-child-sibling')
 
