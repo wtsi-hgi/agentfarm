@@ -1,197 +1,390 @@
 # AgentFarm v1 - Feature Description
 
-This is the requirements brief that seeds the spec-writer workflow for
-AgentFarm v1. It is the evolving source of truth for requirements. Genuinely
-open product decisions are listed at the end for the clarifying loop to resolve
-with the user; the spec-author should not invent answers to them.
+This is the consolidated, authoritative feature description for AgentFarm v1 and
+the single source of truth for the spec. It is internally consistent: there is
+no "supersedes" layering to interpret. If anything here is ambiguous, stop and
+ask rather than inventing behaviour.
 
 ## 1. Problem and context
 
 The primary user is a developer orchestrating many LLM agents across many
-software products at high velocity. Work and new product ideas appear faster
+software products at high velocity. Work and new product ideas arrive faster
 than traditional tooling can keep up with.
 
-Existing tools have been tried and rejected:
+Tools already tried and rejected: Jira / Asana (slow card creation, cross-
+project visibility poor, a project-creation bottleneck for new products); a
+high-level spreadsheet (categorisation churns and never gets updated); a private
+markdown-checklist note app (cannot be shared with the user's manager, is an
+unwieldy flat list, and cannot express dependencies, parallelism, mode-of-work,
+or priority).
 
-- Jira / Asana: creating cards is slow and awkward; understanding work across
-  products in separate projects is worse; some products have no project at all
-  because ideas need working on before an admin can create one.
-- A high-level Google Sheets spreadsheet: categorisation constantly changes as
-  products are better understood and broken down, and the user never remembers
-  to update it.
-- A private markdown-checklist note app (current habit): cannot be shared with
-  the user's manager; it is an unwieldy flat list that must be repeatedly
-  rescanned; it cannot express dependencies, "what can I do in parallel now",
-  mode-of-work grouping, or priority ordering.
-
-What is needed is a near-zero-friction tracker that is also live-shareable with
-the user's manager on the internal network, and that (in v2) becomes the
+AgentFarm is a near-zero-friction tracker that is also live-shareable with the
+user's manager on the internal network, and that in a later v2 becomes the
 interface for running the agents themselves.
 
 ## 2. v1 goal
 
-A single internal web app to capture, organise, and share ad-hoc software
-development tasks across many products at markdown-checklist entry speed, with
-computed views that tell the user what to work on next.
+A single internal web app to capture, organise, and share software development
+work across many products at the speed of editing a markdown checklist, with a
+computed view that shows what to work on next.
 
 ## 3. Users, sharing, deployment
 
-- Primary user: the developer running the agent farm (single author in v1).
-- Manager: live access to the same data (sharing is a core requirement, not an
-  afterthought).
-- Internal network only; no public exposure; simple authentication.
-- Runs as a long-lived service on a VM (required for v2 - see Architecture).
+- Owner: the developer who runs the agent farm; has full read/write.
+- Manager and named team members: live access; can read everything and comment.
+- Internal network only; no public exposure.
+- Runs as a long-lived service on a VM (required for v2; see section 15).
 
-## 4. Architecture constraints
+## 4. Architecture and stack
 
-- Start from a wholesale copy of the wtsi-hgi/llm-knowledge-base repository
-  (excluding its skills) as the scaffold.
-- Inherited stack: Next.js 16 (App Router) + React 19 + shadcn/ui + Tailwind
-  CSS v4 (TypeScript) frontend; FastAPI + Uvicorn (Python 3.11) backend;
-  Next.js Server Actions call FastAPI directly; Zod-typed contracts across the
-  boundary; Vitest (frontend) + pytest/httpx (backend) for tests.
-- Persistence: a single-file SQLite database (simple to run and back up on a
-  VM). The database is the source of truth.
-- The backend must be a long-lived process on the VM (not serverless or edge),
-  because v2 will spawn local CLI agents on that VM.
-- Leave two seams for v2 but do NOT build v2: (a) the data model must let an
-  item own many later "runs"; (b) there must be a backend service boundary for
-  "spawn a local CLI process and stream its output", reusable by both
-  natural-language entry and v2 agent-running.
-- One-way export: on every change, render the whole model to a human-readable
-  markdown checklist file committed to git, giving a diffable history, a
-  familiar artefact, and a safety net (mirrors the user's current habit).
+- Build by wholesale-copying the wtsi-hgi/llm-knowledge-base scaffold (excluding
+  its skills) and building on it.
+- Inherited stack: Next.js 16 (App Router) + React 19 + shadcn/ui + Tailwind CSS
+  v4 (TypeScript) frontend; FastAPI + Uvicorn (Python) backend; Next.js Server
+  Actions call FastAPI directly (browser never sees the backend URL); Zod-typed
+  contracts validate everything crossing the boundary; Vitest (frontend) and
+  pytest + httpx (backend) for tests.
+- Persistence: a single-file SQLite database; the database is the source of
+  truth.
+- The backend is a long-lived process on the VM (not serverless/edge), because
+  v2 will spawn local agent CLIs there.
+- Scaffold note: the scaffold's `.gitignore` has a Python-style `lib/` rule that
+  accidentally un-tracks `frontend/lib/` (backend-client, contracts, etc.),
+  although they are imported everywhere. When copying the scaffold, restore and
+  un-ignore those files.
 
-## 5. Core model
+## 5. Data model
 
-- A single tree of items. Root items are "products"; any item may have
-  arbitrarily nested child items (tasks, subtasks, and deeper). The user's real
-  data is deeply hierarchical, so nesting depth is unbounded.
-- Re-categorisation must be cheap and is a first-class need: rename an item,
-  move a subtree to a new parent, promote an item to a product, split one
-  product into several, and merge items. This directly addresses the
-  "categorisation constantly changing" pain.
-- Lifecycle state per item, covering at least: not-started, spec, implement,
-  review, merged, released, plus done and abandoned. Not every item traverses
-  every stage; some items are single actions (for example "merge a PR" or
-  "release").
-- Next-action mode per item: the kind of attention the item needs next, from a
-  small fixed set:
-  - prompt-agent: prompt an agent to feed it more work
-  - review: manually review agent output and file bug feedback
-  - merge: merge a PR
-  - release: release software to users
-  - spec: spec a new product or feature
-  Modes drive the "work now" lanes.
-- Dependencies: a cross-cutting directed acyclic graph over items (item X
-  "needs" item Y). Adding and removing a dependency must be trivial. Used to
-  compute readiness and priority.
-- Blocked-external flag: the item is waiting on an outside factor (for example
-  user feedback) with an optional note and an optional follow-up/nudge date.
-  This is distinct from being blocked by an internal dependency.
-- Effort: a coarse estimate of how much of the user's own time the item needs
-  (for example quick / medium / long). Used for priority.
-- Timestamps retained for every item: created, last-updated, state-changed, and
-  completed - needed for time filtering.
+### 5.1 Item tree
 
-## 6. Readiness and priority (the heart of the tool)
+- Everything is an item in a single tree. Root items (parent is null) are
+  "products"; any item may have arbitrarily nested children. Nesting depth is
+  unbounded.
+- A leaf is an item with no children. A container is an item with at least one
+  child. The same item can move between the two as children are added or
+  removed (see 5.4).
 
-- An item is "actionable now" when it is not done or abandoned, is not
-  blocked-external, and all of its dependencies are satisfied.
-- Priority is "unblock-leverage": actionable items are ranked so that work which
-  is quick for the user but unblocks large or long-running downstream work rises
-  to the top. The canonical example is "prompt an agent to start a multi-hour
-  implementation": cheap for the user, unblocks hours of agent work, so it
-  should sit at the top of the list.
-- The score should rise as the item's own effort falls (quicker is higher) and
-  rise with the amount, effort, or duration of the work it unblocks (count and
-  effort of dependent items, especially prompt-agent or long-running ones).
-  prompt-agent items are inherently quick-for-the-user and high-leverage, so
-  they should naturally dominate the ordering.
+### 5.2 Item fields
 
-## 7. Entry (zero-friction is the top requirement)
+- id: stable internal identifier (never changes).
+- title: free text, freely editable.
+- slug: a human-facing label derived from the current title, uniqueness-suffixed
+  on collision. It re-derives whenever the title changes. Slugs are used only
+  for display and for typing `>needs:slug` in the outliner; they are NOT used as
+  stored references (see 6.4).
+- parent and sibling order: define the item's position in the tree.
+- state: lifecycle stage (see 5.3).
+- mode: the kind of attention the item needs next (see 5.3).
+- effort: the user's own time cost (see 5.3).
+- blocked_external: a boolean flag with an optional note and an optional
+  follow-up/nudge date. Distinct from being blocked by a dependency.
+- authorship and last-editor: who created and who last edited the item.
+- timestamps: created, last-updated, state-changed, and completed.
 
-- v1 core, the guaranteed fast path: a single global quick-add bar with a terse,
-  keyboard-first, one-line grammar available everywhere. Proposed starting
-  grammar (to refine during specing):
+### 5.3 Frozen enums and defaults
 
-  `#product @mode !effort >needs:other-item ::state free text title`
+- state: exactly these eight values (closed set): not-started, spec, implement,
+  review, merged, released, done, abandoned. There is no enforced transition
+  state-machine; state may be set freely, and single-action items simply skip
+  stages that do not apply. New items default to not-started. "Complete" means
+  state is done or abandoned.
+- mode: exactly these five values (closed set): prompt-agent, review, merge,
+  release, spec. New items default to prompt-agent.
+- effort: one of quick, medium, long, with numeric weights 1, 3, 8. New items
+  default to medium.
 
-  for example `#wr @prompt-agent !quick >needs:wr-release jobrun docs update`.
-  Tokens are optional and order-free; bare text creates an item under a default
-  or last-used product.
-- Quick edits from any view (change state, change mode, mark done, add a
-  dependency) must each be one or two keystrokes.
-- Natural-language entry (desirable): the user types plain English (for example
-  "done the bakker merge; start jobrun docs; that one is blocked on the wr
-  release") and an LLM applies the changes to the model. Because of the no-API
-  constraint (see v2), this must shell out to an already-authenticated local
-  claude/codex CLI - the same mechanism v2 uses - rather than a hosted API.
+### 5.4 Leaf / container transition
 
-## 8. Views
+- A container's stored mode and effort are RETAINED but ignored while it has
+  children: containers are structural - they are not directly actionable and do
+  not contribute to priority sums.
+- When a container loses its last child it becomes a leaf again and its retained
+  mode and effort apply once more.
+- A container is complete exactly when all of its children are complete.
 
-- Home, "Work now, in parallel": all actionable items grouped into mode lanes
-  (prompt-agent / review / merge / release / spec), each lane ordered by
-  unblock-leverage. This is the default screen and answers "what can I do right
-  now, and what is most worth doing first".
-- Tree / per-product view: the full hierarchy, collapsible, showing each item's
-  state, mode, and blocked/dependency badges; used for browsing and for bulk
-  re-categorisation.
-- Dependency view: see what blocks and is blocked by an item, and visualise the
-  dependency chains enough to understand them.
-- Time filter with saved markers:
-  - Saved markers are named points in time (for example "Sprint review
-    2026-06-29").
-  - The user can filter to items created, changed, or completed since a marker,
-    or between two markers. "Show only what changed since the last sprint
-    review" must be a single click.
+## 6. Dependencies and sequencing
 
-## 9. Markdown mirror
+"X needs Y" means X depends on Y: Y must be complete before X can be worked, and
+X is downstream of Y. The dependency graph is always acyclic; adding an edge
+that would create a cycle is rejected with a clear error.
 
-On every change, export the full model to a single human-readable markdown
-checklist file and commit it to git. This is one-way (database to markdown),
-giving a diffable history, a familiar artefact, and a safety net. It is not
-re-imported in v1.
+### 6.1 Tree structure is independent by default
 
-## 10. v2 (deferred - do NOT build, but keep the seam)
+Sibling order means display/order-of-thought, not dependency. Nesting means
+sub-section, not automatic sequencing.
 
-- AgentFarm becomes the interface for doing the work: from an item, the user
-  launches the appropriate agent (claude code / codex) on the VM and views and
-  streams its output inside the app, iterating (prompt, watch, feed back)
-  in-system.
-- Constraint: no API usage. It must use the user's enterprise OpenAI and
-  Anthropic accounts via the official CLIs already authenticated on the VM
-  (mirroring and streaming their input/output), not raw API keys.
-- v1 obligations toward this: a persistent backend on the VM; a data seam where
-  an item can own many runs; and a stubbed-but-unbuilt service boundary for
-  "spawn a local CLI and stream its output" (WebSocket or SSE).
+- Root items (products) are independent siblings by default.
+- Children under the same parent are independent siblings by default, at every
+  nesting depth.
+- A container is complete only when all its children are complete, but the item
+  after that container is not blocked by the container merely because it follows
+  it in the outline.
+- A section dependency is explicit: add a `>needs:slug` edge from one root item
+  or subsection/container to another item. Dependencies attached to a container
+  apply to every leaf inside that container.
+- A dependency on a container is satisfied only when that whole container is
+  complete, recursively.
 
-## 11. Non-goals for v1
+Worked example. Outline (indentation shows nesting):
 
-- Running or streaming agents (this is v2).
-- Multiple human authors, assignees, or comment threads (unless manager-edit is
-  chosen - see open decisions).
+    A
+    B
+      B1
+      B2
+    C
+
+Resulting dependencies and readiness:
+
+- No dependency edges are generated by this outline.
+- A, B1, B2, and C are all workable at once if none is complete or externally
+  blocked.
+- B is a container: complete only when B1 and B2 are complete; B is not itself
+  directly workable.
+- If B has `>needs:a`, then B1 and B2 are blocked until A is complete.
+- If C has `>needs:b`, then C is blocked until the whole B sub-section is
+  complete.
+
+### 6.2 Explicit edges are real and editable
+
+Dependencies are ordinary edges in the graph. They are preserved across
+structural changes because edges are stored by item id. Removing an edge restores
+parallelism between those items or sections.
+
+### 6.3 Explicit dependencies
+
+Typed in the outliner as `>needs:slug` (repeatable for multiple dependencies).
+Use it for cross-product dependencies, sibling/subsection dependencies, or a
+whole section depending on another section.
+
+### 6.4 References are stored by id
+
+Explicit dependencies are stored by target item id, not by slug. `>needs:slug`
+is resolved to the target's id at entry time. When a title changes and its slug
+re-derives, every place the slug is shown (other items' `>needs:` labels, the
+markdown mirror) updates to the new slug, while the underlying id-based edges are
+unchanged, so references always keep resolving. Churn in the mirror's `needs:`
+labels on rename is accepted.
+
+## 7. Readiness and priority (unblock-leverage)
+
+### 7.1 Actionable
+
+A leaf item is actionable when it is not complete, not blocked_external, and all
+of its own dependencies plus all ancestor-section dependencies are satisfied
+(each needed item is complete). Containers are never directly actionable.
+
+### 7.2 Unblock-leverage score
+
+Priority ranks actionable work so that things that are quick for the user but
+unblock large or long-running downstream work rise to the top (the canonical
+case: "prompt an agent to start a multi-hour job" is cheap and unblocks a lot).
+
+For an actionable leaf L:
+
+- Downstream(L) = every open leaf (not complete; not a container) whose own
+  dependencies or ancestor-section dependencies depend on L directly or
+  transitively.
+- Each downstream leaf D contributes effort(D) x mode_weight(D), where
+  mode_weight is 2 if D's mode is prompt-agent, else 1. (Long downstream work is
+  already weighted via effort = 8, so there is no separate long multiplier.)
+- score(L) = sum of downstream contributions / effort(L).
+
+Only the resulting ordering is shown, never the numeric score. These weights are
+a deliberate, tunable default chosen so acceptance tests can assert exact
+orderings.
+
+### 7.3 Tie-break and sort scope
+
+- When two actionable items have equal scores, order them by most-recently-
+  updated first, then newest-created, then id.
+- The leverage ordering is a DISPLAY ordering only; it never changes stored
+  sibling order or dependency edges. It applies where items are independently
+  actionable, which includes sibling products and subsection siblings unless
+  explicit dependencies say otherwise.
+
+## 8. Entry: the keyboard outliner
+
+The primary and only creation surface is a keyboard-driven outliner, like
+editing a markdown checklist in a note-taking app. There is no separate one-line
+quick-add bar.
+
+### 8.1 Typing and structure
+
+- Type anywhere: items can be inserted and typed at any point in the tree and at
+  any depth, not only under product roots.
+- Enter: create a new item as the next sibling of the current item. It is
+  independent unless the user adds `>needs:...`.
+- Tab (indent): the current item becomes the first child of the preceding item,
+  which thereby becomes a container; subsequent Enters create further items
+  within it.
+- Shift-Tab (outdent): move up one level, creating an item that is a sibling of
+  the former parent. It remains independent unless the user adds a dependency on
+  the former parent.
+
+### 8.2 Structured, identity-preserving editing
+
+The outliner is structured: each row is bound to a stored item by id (it is not
+a raw-text blob re-parsed from scratch). It supports creating, editing text in
+place, indent/outdent, reordering, and deleting items. All structural changes
+preserve item identity, so explicit `>needs:` references, dependencies, and
+comments survive edits.
+
+### 8.3 Drag-and-drop
+
+Items and whole sub-sections (subtrees) can be moved by drag-and-drop to a
+different position, a different level (reparent), or a different product, in
+addition to keyboard indent/outdent. Cross-product subtree moves are allowed.
+The same identity-preservation rules apply; dependencies remain attached to
+their item ids.
+
+### 8.4 Inline tokens per row
+
+Each row may carry frozen inline tokens for per-item metadata, in any order:
+`@mode`, `!effort`, `::state`, and `>needs:slug` (repeatable). Token values are
+matched case-insensitively against the closed enum sets; an unrecognised value
+is a parse error reported to the user. `#product` is NOT used in the outliner -
+the section is implied by where you type.
+
+## 9. The unified view (work-now projection plus filters)
+
+There is a single primary view: the one editable outliner tree. "What to work on
+next" is not a separate screen; it is a projection (filter, collapse, colour, and
+sort) of that same tree. Filters and sorts compose.
+
+### 9.1 Work-now projection
+
+- Collapse, not remove: branches that are not actionable now (blocked by
+  dependencies, blocked_external, and completed items) are
+  collapsed by default. The full tree structure stays present and any collapsed
+  part expands with one action so you can read or type into it.
+- Mode by colour: every item is identified by its mode through obvious colour
+  coding; no text badge is needed, since the tree structure gives context.
+- Mode toggles (this is how mode-of-work is surfaced - not grouping): a toggle
+  per mode filters the tree to show only items of the selected mode(s). With no
+  mode selected, all items show, colour-coded by mode.
+- Leverage sort: orders work so the highest unblock-leverage actionable items
+  surface to the top (display-only, per 7.3).
+
+### 9.2 Editable under any filter
+
+- The tree stays fully editable under any filter: type anywhere, drag-and-drop,
+  and expand collapsed parts to edit.
+- A newly created item stays visible in the current filtered view even if the
+  active filter would otherwise hide it (for example a brand-new item is non-
+  actionable and would be hidden by work-now). It is shown with an "added this
+  session, currently filtered out" affordance until the view is explicitly
+  refreshed or re-filtered, at which point the filter applies normally. This
+  keeps capture friction-free.
+- Because there is no global capture bar, the UI must make it fast to jump to any
+  product or point in the tree (for example a product switcher / quick jump).
+
+### 9.3 Time markers and windows
+
+- A marker is a named point in time (for example "Sprint review 2026-06-29").
+- The user can filter to items created, changed, or completed since a marker, or
+  between two markers. "Show only what changed since the last marker" must be one
+  action.
+
+## 10. Re-categorisation
+
+Categorisation changes constantly as products are better understood, so these
+must be cheap, and are available via both keyboard outlining and drag-and-drop:
+
+- rename: edit an item's title.
+- move: move a subtree to a new parent or position.
+- promote: reparent an item to root, so it becomes a product.
+- split: create one or more new root items and move subtrees under them.
+- merge: reparent one item's children under another item, then remove the
+  emptied item.
+
+## 11. Comments
+
+- Comments are a first-class entity attached to items, each authored by an
+  authenticated user with a timestamp.
+- Whitelisted non-owner users (viewers) can add comments. An author may edit or
+  delete only their own comments (even the owner cannot edit another user's
+  comment).
+- Comments are flat (not threaded).
+- Comments are NOT written to the markdown mirror.
+
+## 12. Markdown mirror
+
+- On every change, render the full item tree (in tree order, as a nested
+  markdown checklist reflecting item state) and commit it.
+- The commit goes to a dedicated git repository initialised inside the data
+  directory (see 14) - not the agentfarm app repo and not a branch of it -
+  isolating runtime commit churn from application history.
+- The export is one-way (database to markdown); it is not re-imported in v1.
+- Skip the commit if the rendered output is unchanged. Comments are excluded.
+
+## 13. Authentication and authorization
+
+Mirrors the approach in wtsi-hgi/wa (cmd/results.go and internal/authldap),
+translated to Python/FastAPI.
+
+### 13.1 LDAP
+
+- Direct bind with a DN template. Configure (via env) the LDAP server address
+  and a bind-DN template containing a username placeholder (`{username}` or
+  `%s`). Validate at startup that the template contains the placeholder.
+- To authenticate, substitute the submitted username into the template and bind
+  with the submitted password; a successful bind means authenticated. Use a
+  maintained Python LDAP client (for example ldap3). The username is the user's
+  identity.
+
+### 13.2 Owner and whitelist
+
+- The owner has full create/edit/restructure rights over all items. The owner
+  username defaults to the OS user that started the service and is overridable by
+  env (for example AGENTFARM_OWNER). On LDAP login, the authenticated user whose
+  username equals the owner username gets the owner role. (Optionally, a 0600
+  owner-token file in the data dir may grant owner access to local/automation
+  clients, mirroring wa; the primary web path is the username match.)
+- A configured access whitelist lists the allowed LDAP usernames (the manager and
+  named team members). The owner is implicitly allowed. An LDAP user who
+  authenticates but is neither the owner nor whitelisted is denied access
+  entirely. A whitelisted non-owner gets the viewer role: read everything and add
+  comments, but no item edits.
+
+### 13.3 Sessions and TLS
+
+- The session is held in an httpOnly cookie set at the Next.js layer; route
+  middleware enforces authentication; mutations are guarded to owner-only.
+- The app serves over HTTPS. TLS cert/key paths are configurable via env; if none
+  are supplied, it auto-generates a self-signed certificate on startup.
+- Self-signed operation must work end to end: internal service-to-service calls
+  (Server Actions to FastAPI) accept the self-signed certificate instead of
+  failing verification, and deployment docs explain accepting the browser
+  warning. This deliberately relaxes strict-TLS verification, which is acceptable
+  for an internal-network tool.
+
+## 14. Storage and configuration
+
+- The SQLite database file and the markdown mirror both live in a configurable,
+  gitignored data directory (for example AGENTFARM_DATA_DIR), outside the app
+  source tree.
+- Environment configuration includes at least: the data directory; LDAP server
+  and DN template; owner override; access whitelist; and TLS cert/key paths.
+
+## 15. v2 (deferred) and required v1 seams
+
+- v2 (NOT built in v1): AgentFarm becomes the interface for doing the work - from
+  an item, launch the appropriate agent (claude code / codex) on the VM and view
+  and stream its output in the app, iterating in-system. Constraint: no API
+  usage; use the user's enterprise OpenAI/Anthropic accounts via the official
+  CLIs already authenticated on the VM, not raw API keys.
+- v1 must leave these seams (present but unbuilt): a data-model seam where an item
+  can own many later "runs" (for example a runs table plus an empty/stub
+  endpoint); and a stubbed "spawn a local CLI and stream output" service boundary
+  (for example returning 501) over WebSocket/SSE.
+- Natural-language entry is also deferred to v2 (it depends on the same local-CLI
+  mechanism). v1 ships only the keyboard outliner.
+
+## 16. Non-goals for v1
+
+- Running or streaming agents, and natural-language entry (all v2).
+- Any human editing of items beyond the owner; non-owners may only comment.
+- Threaded comments.
 - Jira / Asana / Slack integrations, notifications, or a mobile app.
-- Bidirectional markdown synchronisation (export is one-way).
+- Bidirectional markdown sync (the mirror is one-way).
 - Time tracking or clocking.
-
-## 12. Open decisions for the clarifying loop
-
-1. Manager access: read-only, or also edit and comment? (Affects auth and
-   whether a multi-user model is needed in v1.)
-2. Authentication on the internal network: reuse the llm-knowledge-base
-   pattern, a shared login, or institutional SSO?
-3. Natural-language entry in v1 (via a thin one-shot local-CLI call) versus
-   deferring it to the v2 LLM layer. The one-line grammar is the guaranteed v1
-   fast path; v1 must not be blocked on NL entry.
-4. Exact lifecycle state set; whether single-action items (merge, release) use a
-   reduced lifecycle; whether mode is an explicit field or derived from state;
-   whether "blocked/waiting" is a mode or a separate flag.
-5. The unblock-leverage formula and its inputs (effort scale, how downstream
-   weight is computed); whether to surface the numeric score or only the
-   ordering.
-6. One-line quick-add grammar specifics (token set, delimiters, defaults).
-7. Whether products are simply root items of the tree or a distinct entity, and
-   exactly how promote / split / merge behave.
-8. SQLite location and backup; whether the markdown mirror is committed to the
-   agentfarm repo itself or to a separate data directory or branch.
