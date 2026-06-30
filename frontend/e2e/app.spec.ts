@@ -3,14 +3,23 @@ import { expect, test } from '@playwright/test'
 import { createItem, gotoPath, signInAs } from './helpers'
 
 test.describe('Agent Farm app shell', () => {
-  test('redirects unauthenticated visitors to the sign-in page', async ({
+  test('renders the sign-in box for unauthenticated visitors', async ({
     page,
   }) => {
     await gotoPath(page, '/')
 
-    await expect(page).toHaveURL(/\/login\?next=%2F$/)
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
     await expect(page.getByLabel('Username')).toBeVisible()
+    await expect(page.getByLabel('Password')).toBeVisible()
+    await expect(
+      page.getByRole('navigation', { name: 'Account' })
+    ).toContainText('Not signed in')
+    await expect(
+      page.getByRole('textbox', { name: 'First root title' })
+    ).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Create root' })).toHaveCount(
+      0
+    )
   })
 
   test('selects the first root default title so immediate typing replaces it', async ({
@@ -70,5 +79,22 @@ test.describe('Agent Farm app shell', () => {
       .toBe(true)
     await expect(page.getByText('Items')).toBeVisible()
     await expect(page.getByText('Ready').first()).toBeVisible()
+  })
+
+  test('shows only the sign-in box after signing out', async ({ page }) => {
+    await signInAs(page)
+    await gotoPath(page, '/')
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+    await expect(page.getByLabel('Username')).toBeVisible()
+    await expect(page.getByLabel('Password')).toBeVisible()
+    await expect(
+      page.getByRole('textbox', { name: 'First root title' })
+    ).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Create root' })).toHaveCount(
+      0
+    )
   })
 })

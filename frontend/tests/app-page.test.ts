@@ -328,7 +328,7 @@ describe('app page BFF wiring', () => {
     expect(account?.textContent).not.toContain('Primary user')
   })
 
-  it('renders the signed-out home shell without protected data reads', async () => {
+  it('renders the signed-out home shell with the login form without protected data reads', async () => {
     sessionMocks.readSessionIdentity.mockResolvedValue(null)
     const fetch = stubBackend()
 
@@ -346,17 +346,70 @@ describe('app page BFF wiring', () => {
     expect(account?.textContent).toContain('Login required')
     expect(account?.querySelector('a[href="/login"]')).toBeNull()
     expect(account?.querySelector('button')).toBeNull()
-    expect(header?.textContent).toContain('Items')
-    expect(header?.textContent).toContain('Priority')
-    expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('0')
-    expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('0')
+    expect(header?.textContent).not.toContain('Items')
+    expect(header?.textContent).not.toContain('Priority')
+    expect(document.body.textContent).toContain('Sign in')
+    expect(document.querySelector('input[name="username"]')).not.toBeNull()
+    expect(document.querySelector('input[name="password"]')).not.toBeNull()
     expect(
       document.querySelector('input[aria-label="First root title"]')
-    ).not.toBeNull()
+    ).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Create root"]')
+    ).toBeNull()
     expect(document.body.textContent).not.toContain('Alpha')
   })
 
-  it('renders a signed-out home shell after logout without surfacing protected 401s', async () => {
+  it('renders the login form when protected home data rejects an otherwise verified session', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      if (pathname === '/api/v1/auth/context') {
+        return jsonResponse({ owner_username: 'alice' })
+      }
+      if (pathname === '/api/v1/auth/whoami') {
+        expect(authToken(init)).toBe('signed-viewer-token')
+        return jsonResponse({ username: 'vue', role: 'viewer' })
+      }
+      if (
+        pathname === '/api/v1/tree' ||
+        pathname === '/api/v1/priority' ||
+        pathname === '/api/v1/markers'
+      ) {
+        expect(authToken(init)).toBe('signed-viewer-token')
+        return errorResponse(401, 'Authentication required')
+      }
+
+      return jsonResponse({ message: `Unexpected path: ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+    const account = document.querySelector('[aria-label="Account"]')
+
+    expect(
+      fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
+    ).toEqual(
+      expect.arrayContaining([
+        '/api/v1/auth/context',
+        '/api/v1/auth/whoami',
+        '/api/v1/tree',
+        '/api/v1/priority',
+        '/api/v1/markers',
+      ])
+    )
+    expect(account?.textContent).toContain('Not signed in')
+    expect(account?.textContent).toContain('Login required')
+    expect(document.body.textContent).toContain('Sign in')
+    expect(document.querySelector('input[name="username"]')).not.toBeNull()
+    expect(document.querySelector('input[name="password"]')).not.toBeNull()
+    expect(
+      document.querySelector('input[aria-label="First root title"]')
+    ).toBeNull()
+    expect(document.body.textContent).not.toContain('Backend request failed')
+  })
+
+  it('renders a signed-out home login form after logout without surfacing protected 401s', async () => {
     const mockedRevalidatePath = vi.mocked(revalidatePath)
     sessionMocks.clearSessionCookie.mockImplementation(async () => {
       sessionMocks.readSessionIdentity.mockResolvedValue(null)
@@ -376,6 +429,12 @@ describe('app page BFF wiring', () => {
     expect(account?.textContent).toContain('Not signed in')
     expect(account?.querySelector('a[href="/login"]')).toBeNull()
     expect(account?.querySelector('button')).toBeNull()
+    expect(document.body.textContent).toContain('Sign in')
+    expect(document.querySelector('input[name="username"]')).not.toBeNull()
+    expect(document.querySelector('input[name="password"]')).not.toBeNull()
+    expect(
+      document.querySelector('input[aria-label="First root title"]')
+    ).toBeNull()
     expect(document.body.textContent).not.toContain('Something went wrong')
     expect(document.body.textContent).not.toContain(
       'Backend request failed with 401'
