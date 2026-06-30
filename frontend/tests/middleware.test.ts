@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseSessionIdentity } from '@/lib/session'
 import { isOwnerOnlyMutation, isOwnerOnlyPagePath, middleware } from '@/middleware'
@@ -78,8 +78,12 @@ describe('middleware auth helpers', () => {
     expect(isOwnerOnlyPagePath('/login')).toBe(false)
   })
 
-  it('redirects unauthenticated non-public requests to login', () => {
-    const response = middleware(
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('redirects unauthenticated non-public requests to login', async () => {
+    const response = await middleware(
       new NextRequest('https://agentfarm.test/api/v1/tree')
     )
 
@@ -89,25 +93,90 @@ describe('middleware auth helpers', () => {
     )
   })
 
-  it('returns owner only when a viewer hits an owner-only mutation', () => {
+  it('redirects forged session cookies rejected by the backend verifier', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'invalid session' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    const request = new NextRequest('https://agentfarm.test/api/v1/tree', {
+      headers: {
+        cookie: `agentfarm_session=${sessionCookie('mallory', 'owner')}`,
+      },
+    })
+    const response = await middleware(request)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe(
+      'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree'
+    )
+    const [url, init] = fetch.mock.calls[0]
+    expect(url.toString()).toBe('https://127.0.0.1:8000/api/v1/auth/whoami')
+    expect(new Headers(init?.headers).get('x-agentfarm-session')).toBe(
+      'mallory-token'
+    )
+  })
+
+  it('returns owner only when the verified backend role is viewer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ username: 'vue', role: 'viewer' }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+    )
+
     const request = new NextRequest('https://agentfarm.test/api/v1/items', {
       method: 'POST',
       headers: {
-        cookie: `agentfarm_session=${sessionCookie('vue', 'viewer')}`,
+        cookie: `agentfarm_session=${sessionCookie('vue', 'owner')}`,
       },
     })
-    const response = middleware(request)
+    const response = await middleware(request)
 
     expect(response.status).toBe(403)
   })
 
-  it('returns owner only when a viewer hits an owner page path', () => {
+  it('allows owner paths when the verified backend role is owner', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ username: 'alice', role: 'owner' }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+    )
+
+    const request = new NextRequest('https://agentfarm.test/owner/settings', {
+      headers: {
+        cookie: `agentfarm_session=${sessionCookie('alice', 'viewer')}`,
+      },
+    })
+    const response = await middleware(request)
+
+    expect(response.status).toBe(200)
+  })
+
+  it('returns owner only when a verified viewer hits an owner page path', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ username: 'vue', role: 'viewer' }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+    )
+
     const request = new NextRequest('https://agentfarm.test/owner/settings', {
       headers: {
         cookie: `agentfarm_session=${sessionCookie('vue', 'viewer')}`,
       },
     })
-    const response = middleware(request)
+    const response = await middleware(request)
 
     expect(response.status).toBe(403)
   })

@@ -218,8 +218,8 @@ if command -v curl >/dev/null; then
 
     wait_for_url "https://localhost:${BACKEND_PORT}/api/v1/health" "Backend" "${BACK_PID}" "-k"
     wait_for_url "http://localhost:${FRONTEND_PORT}/api/health" "Frontend" "${FRONT_PID}"
-    # Warm up the main page so the first browser visit is fast
-    wait_for_url "http://localhost:${FRONTEND_PORT}/" "Frontend (Warmup)" "${FRONT_PID}"
+    # Warm up a public frontend page so unauthenticated auth redirects do not fail startup.
+    wait_for_url "http://localhost:${FRONTEND_PORT}/login" "Frontend (Warmup)" "${FRONT_PID}"
 else
     echo "curl not found, skipping health checks."
 fi
