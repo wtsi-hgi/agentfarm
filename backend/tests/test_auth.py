@@ -181,6 +181,20 @@ async def test_login_success_returns_identity_with_username(monkeypatch) -> None
 
 
 @pytest.mark.anyio
+async def test_auth_context_names_configured_farm_owner_without_session(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "owner", "alice")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/v1/auth/context")
+
+    assert response.status_code == 200
+    assert response.json() == {"owner_username": "alice"}
+
+
+@pytest.mark.anyio
 async def test_failed_bind_returns_401_authentication_failed(
     caplog, monkeypatch
 ) -> None:

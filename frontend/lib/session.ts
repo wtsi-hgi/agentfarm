@@ -59,6 +59,12 @@ export async function setSessionCookie(
   )
 }
 
+export async function clearSessionCookie(): Promise<void> {
+  const { cookies } = await import('next/headers')
+  const cookieStore = await cookies()
+  cookieStore.delete(SESSION_COOKIE_NAME)
+}
+
 export async function readSessionIdentity(): Promise<SessionIdentity | null> {
   const { cookies } = await import('next/headers')
   const cookieStore = await cookies()

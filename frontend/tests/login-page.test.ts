@@ -1,19 +1,64 @@
 import * as React from 'react'
+import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import LoginPage from '@/app/login/page'
 import { normalizeNextPath } from '@/components/login-form'
 
+const sessionMocks = vi.hoisted(() => ({
+  readSessionIdentity: vi.fn(),
+}))
+
+vi.mock('@/lib/session', () => ({
+  readSessionIdentity: sessionMocks.readSessionIdentity,
+}))
+
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), {
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
+function stubBackend() {
+  const fetch = vi.fn(async (url: URL | string) => {
+    const pathname = new URL(url.toString()).pathname
+    if (pathname === '/api/v1/auth/context') {
+      return jsonResponse({ owner_username: 'alice' })
+    }
+
+    return jsonResponse({ message: `Unexpected path: ${pathname}` })
+  })
+  vi.stubGlobal('fetch', fetch)
+  return fetch
+}
+
 describe('login page', () => {
-  it('renders the session login form targeted by auth proxy', async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+  })
+
+  it('renders the farm shell, unauthenticated account utility, and login form', async () => {
+    sessionMocks.readSessionIdentity.mockResolvedValue(null)
+    const fetch = stubBackend()
+
     const markup = renderToStaticMarkup(
       await LoginPage({
         searchParams: Promise.resolve({ next: '/api/v1/tree' }),
       })
     )
+    const document = new JSDOM(markup).window.document
+    const header = document.querySelector('header')
+    const account = header?.querySelector('[aria-label="Account"]')
 
-    expect(markup).toContain('Sign in')
+    expect(
+      fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
+    ).toEqual(['/api/v1/auth/context'])
+    expect(header?.querySelector('h1')?.textContent).toBe("alice's Agent Farm")
+    expect(account?.textContent).toContain('Not signed in')
+    expect(account?.textContent).toContain('Sign in')
+    expect(account?.querySelector('a[href^="/login"]')).not.toBeNull()
     expect(markup).toContain('name="username"')
     expect(markup).toContain('name="password"')
   })

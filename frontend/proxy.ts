@@ -4,7 +4,12 @@ import { backendJson } from '@/lib/backend-client'
 import { whoamiSchema, type WhoAmI } from '@/lib/contracts'
 import { SESSION_COOKIE_NAME, parseSessionIdentity } from '@/lib/session'
 
-const PUBLIC_PATHS = new Set(['/login', '/api/v1/auth/login', '/api/health'])
+const PUBLIC_PATHS = new Set([
+  '/login',
+  '/api/v1/auth/context',
+  '/api/v1/auth/login',
+  '/api/health',
+])
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'DELETE'])
 
 function normalizeBackendPath(pathname: string): string {

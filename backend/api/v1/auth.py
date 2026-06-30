@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.schemas import LoginRequest, LoginResponse, WhoAmI
+from api.schemas import FarmContext, LoginRequest, LoginResponse, WhoAmI
 from api.v1.authz import require_identity
 from config import settings
 from services.auth_ldap import (
@@ -133,6 +133,13 @@ async def login(
         role=role,
         session_token=issue_session_token(username=username, role=role),
     )
+
+
+@router.get("/context", response_model=FarmContext)
+async def context() -> FarmContext:
+    """Return the public identity for the Agent Farm being viewed."""
+
+    return FarmContext(owner_username=settings.owner)
 
 
 @router.get("/whoami", response_model=WhoAmI)

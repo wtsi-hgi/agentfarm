@@ -99,6 +99,14 @@ describe('proxy auth helpers', () => {
     )
   })
 
+  it('allows public farm context requests without a session', async () => {
+    const response = await proxy(
+      new NextRequest('https://agentfarm.test/api/v1/auth/context')
+    )
+
+    expect(response.status).toBe(200)
+  })
+
   it('redirects forged session cookies rejected by the backend verifier', async () => {
     const fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ detail: 'invalid session' }), {

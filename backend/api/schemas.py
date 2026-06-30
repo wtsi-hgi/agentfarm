@@ -39,6 +39,12 @@ class WhoAmI(BaseModel):
     role: Literal["owner", "viewer"]
 
 
+class FarmContext(BaseModel):
+    """Public farm identity used to label which owner's UI is being viewed."""
+
+    owner_username: str
+
+
 class LoginResponse(WhoAmI):
     """Authenticated identity plus the backend-issued session token."""
 

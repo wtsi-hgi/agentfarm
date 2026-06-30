@@ -1,7 +1,8 @@
 import { cookies } from 'next/headers'
+import { revalidatePath } from 'next/cache'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { login } from '@/app/actions'
+import { login, logout } from '@/app/actions'
 import { backendJson } from '@/lib/backend-client'
 import {
   SESSION_COOKIE_NAME,
@@ -12,6 +13,10 @@ import {
 
 vi.mock('next/headers', () => ({
   cookies: vi.fn(),
+}))
+
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
 }))
 
 vi.mock('@/lib/backend-client', () => ({
@@ -26,18 +31,20 @@ type CookieSetOptions = {
 }
 
 const mockedCookies = vi.mocked(cookies)
+const mockedRevalidatePath = vi.mocked(revalidatePath)
 const mockedBackendJson = vi.mocked(backendJson)
 type CookieStore = Awaited<ReturnType<typeof cookies>>
 
 function cookieStore(initialCookie?: string) {
   const set =
     vi.fn<(name: string, value: string, options: CookieSetOptions) => void>()
+  const deleteCookie = vi.fn<(name: string) => void>()
   const get = vi.fn((name: string) =>
     initialCookie && name === SESSION_COOKIE_NAME
       ? { name, value: initialCookie }
       : undefined
   )
-  return { get, set }
+  return { delete: deleteCookie, get, set }
 }
 
 describe('session cookie helpers', () => {
@@ -162,5 +169,15 @@ describe('login server action', () => {
       status: 'error',
       error: 'Your account is not allowed to use Agent Farm',
     })
+  })
+
+  it('clears the httpOnly session cookie when logging out', async () => {
+    const store = cookieStore()
+    mockedCookies.mockResolvedValue(store as unknown as CookieStore)
+
+    await logout()
+
+    expect(store.delete).toHaveBeenCalledWith(SESSION_COOKIE_NAME)
+    expect(mockedRevalidatePath).toHaveBeenCalledWith('/')
   })
 })

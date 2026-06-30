@@ -26,6 +26,14 @@ export const whoamiSchema = z.object({
 
 export type WhoAmI = z.infer<typeof whoamiSchema>
 
+export const farmContextSchema = z
+  .object({
+    owner_username: z.string().min(1),
+  })
+  .strict()
+
+export type FarmContext = z.infer<typeof farmContextSchema>
+
 export const loginResponseSchema = whoamiSchema.extend({
   session_token: z.string().min(1),
 })

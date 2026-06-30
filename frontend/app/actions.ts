@@ -9,6 +9,7 @@ import {
   commentSchema,
   deletedResponseSchema,
   dependencySchema,
+  farmContextSchema,
   healthResponseSchema,
   itemSchema,
   loginResponseSchema,
@@ -25,9 +26,14 @@ import {
   type MarkerChangeField,
   type Mode,
   type State,
+  whoamiSchema,
 } from '@/lib/contracts'
 import { type GreetingState } from '@/lib/greeting-state'
-import { readSessionIdentity, setSessionCookie } from '@/lib/session'
+import {
+  clearSessionCookie,
+  readSessionIdentity,
+  setSessionCookie,
+} from '@/lib/session'
 
 export type LoginState = {
   status: 'idle' | 'success' | 'error'
@@ -183,6 +189,31 @@ export async function fetchInitialGreeting() {
 
 export async function fetchHealth() {
   return backendJson('/api/v1/health', healthResponseSchema)
+}
+
+export async function fetchFarmContext() {
+  return backendJson('/api/v1/auth/context', farmContextSchema)
+}
+
+export async function fetchSessionIdentity() {
+  const identity = await readSessionIdentity()
+  if (!identity) {
+    return null
+  }
+
+  try {
+    const verified = await backendJson('/api/v1/auth/whoami', whoamiSchema, {
+      headers: {
+        'x-agentfarm-session': identity.session_token,
+      },
+    })
+    return {
+      ...verified,
+      session_token: identity.session_token,
+    }
+  } catch {
+    return null
+  }
 }
 
 export async function fetchTree() {
@@ -360,4 +391,9 @@ export async function login(
       error: loginErrorMessage(error),
     }
   }
+}
+
+export async function logout(): Promise<void> {
+  await clearSessionCookie()
+  revalidatePath(PRIMARY_PATH)
 }

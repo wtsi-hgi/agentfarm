@@ -5,6 +5,7 @@ import {
   commentSchema,
   deletedResponseSchema,
   dependencySchema,
+  farmContextSchema,
   healthResponseSchema,
   itemSchema,
   loginResponseSchema,
@@ -53,6 +54,18 @@ describe('shared API contracts', () => {
     expect(
       loginResponseSchema.safeParse({ username: 'alice', role: 'owner' })
         .success
+    ).toBe(false)
+  })
+
+  it('parses public farm context without session tokens', () => {
+    const context = { owner_username: 'alice' }
+
+    expect(farmContextSchema.parse(context)).toEqual(context)
+    expect(
+      farmContextSchema.safeParse({
+        owner_username: 'alice',
+        session_token: 'signed.session',
+      }).success
     ).toBe(false)
   })
 })
