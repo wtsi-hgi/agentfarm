@@ -8,7 +8,7 @@ describe('backend client TLS dispatch', () => {
     vi.resetModules()
   })
 
-  it('constructs a relaxed TLS dispatcher for https backend origins', async () => {
+  it('constructs a relaxed TLS dispatcher for local https backend origins', async () => {
     vi.stubEnv('BACKEND_URL', 'https://127.0.0.1:8000')
     const fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
@@ -40,6 +40,47 @@ describe('backend client TLS dispatch', () => {
         connect: { rejectUnauthorized: false },
       },
     })
+  })
+
+  it('constructs a relaxed TLS dispatcher for explicit local loopback origins', async () => {
+    const { createBackendDispatcher } = await import('@/lib/backend-client')
+
+    for (const origin of [
+      'https://localhost:8000',
+      'https://127.12.34.56:8000',
+      'https://[::1]:8000',
+    ]) {
+      expect(createBackendDispatcher(new URL(origin))).toMatchObject({
+        [Symbol.for('agentfarm.backendDispatcherOptions')]: {
+          connect: { rejectUnauthorized: false },
+        },
+      })
+    }
+  })
+
+  it('keeps TLS verification enabled for production https backend origins', async () => {
+    vi.stubEnv('BACKEND_URL', 'https://api.example.com')
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    const { backendJson, createBackendDispatcher } =
+      await import('@/lib/backend-client')
+
+    expect(createBackendDispatcher(new URL('https://api.example.com'))).toBe(
+      undefined
+    )
+
+    await backendJson('/api/v1/health', z.object({ ok: z.boolean() }))
+
+    const [url, init] = fetch.mock.calls[0]
+    expect(url.toString()).toBe('https://api.example.com/api/v1/health')
+    expect(init).toEqual(
+      expect.not.objectContaining({ dispatcher: expect.anything() })
+    )
   })
 
   it('defaults to the HTTPS dev backend origin when BACKEND_URL is absent', async () => {
@@ -75,7 +116,12 @@ describe('backend client TLS dispatch', () => {
     )
     vi.stubGlobal('fetch', fetch)
 
-    const { backendJson } = await import('@/lib/backend-client')
+    const { backendJson, createBackendDispatcher } =
+      await import('@/lib/backend-client')
+
+    expect(createBackendDispatcher(new URL('http://127.0.0.1:8000'))).toBe(
+      undefined
+    )
 
     await backendJson('/api/v1/health', z.object({ ok: z.boolean() }))
 

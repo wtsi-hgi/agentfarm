@@ -11,6 +11,34 @@ const DISPATCHER_OPTIONS_SYMBOL = Symbol.for(
   'agentfarm.backendDispatcherOptions'
 )
 
+function isLoopbackIpv4(hostname: string): boolean {
+  const octets = hostname.split('.')
+  if (octets.length !== 4) {
+    return false
+  }
+
+  const values = octets.map((octet) =>
+    /^\d+$/.test(octet) ? Number(octet) : Number.NaN
+  )
+  return values[0] === 127 && values.every((value) => value >= 0 && value <= 255)
+}
+
+function isLocalBackendOrigin(origin: URL): boolean {
+  const hostname = origin.hostname.toLowerCase()
+  const normalizedHostname =
+    hostname.startsWith('[') && hostname.endsWith(']')
+      ? hostname.slice(1, -1)
+      : hostname
+
+  return (
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.endsWith('.localhost') ||
+    normalizedHostname === '::1' ||
+    normalizedHostname === '0:0:0:0:0:0:0:1' ||
+    isLoopbackIpv4(normalizedHostname)
+  )
+}
+
 export class BackendRequestError extends Error {
   constructor(
     message: string,
@@ -40,7 +68,7 @@ export function buildBackendUrl(path: string | URL): URL {
 }
 
 export function createBackendDispatcher(origin: URL): Dispatcher | undefined {
-  if (origin.protocol !== 'https:') {
+  if (origin.protocol !== 'https:' || !isLocalBackendOrigin(origin)) {
     return undefined
   }
 
