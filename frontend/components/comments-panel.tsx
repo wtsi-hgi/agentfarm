@@ -16,16 +16,23 @@ import { cn } from '@/lib/utils'
 
 type CommentsPanelProps = {
   item: TreeItem | null
+  focusRequest?: number | null
   className?: string
 }
 
-export function CommentsPanel({ item, className }: CommentsPanelProps) {
+export function CommentsPanel({
+  item,
+  focusRequest = null,
+  className,
+}: CommentsPanelProps) {
   const [comments, setComments] = React.useState<Comment[]>([])
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const panelRef = React.useRef<HTMLElement>(null)
+  const draftInputRef = React.useRef<HTMLInputElement>(null)
 
   const itemId = item?.id ?? null
   const currentItemId = React.useRef<string | null>(itemId)
@@ -61,6 +68,23 @@ export function CommentsPanel({ item, className }: CommentsPanelProps) {
   React.useEffect(() => {
     void loadComments()
   }, [loadComments])
+
+  React.useEffect(() => {
+    if (focusRequest === null) {
+      return
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      panelRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+        behavior: 'smooth',
+      })
+      draftInputRef.current?.focus({ preventScroll: true })
+    })
+
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [focusRequest])
 
   async function addCurrentComment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -112,8 +136,9 @@ export function CommentsPanel({ item, className }: CommentsPanelProps) {
 
   return (
     <aside
+      ref={panelRef}
       className={cn(
-        'border-border flex min-h-0 flex-col border-l pl-4',
+        'border-border focus-within:ring-ring/30 flex min-h-0 scroll-mt-4 flex-col rounded-sm border-l pl-4 focus-within:ring-2 focus-within:ring-offset-2',
         className
       )}
       aria-label="Comments"
@@ -225,6 +250,7 @@ export function CommentsPanel({ item, className }: CommentsPanelProps) {
         onSubmit={addCurrentComment}
       >
         <Input
+          ref={draftInputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           disabled={!item}

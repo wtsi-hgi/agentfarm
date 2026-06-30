@@ -198,4 +198,31 @@ describe('Outliner comment target lifecycle', () => {
     expect(container.textContent).toContain('Select a row')
     expect(getInput(container, 'New comment').disabled).toBe(true)
   })
+
+  it('opens a row comment target ready for new comment entry', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'first',
+            title: 'First task',
+            sort_order: 1,
+          }),
+          item({
+            id: 'second',
+            title: 'Second task',
+            sort_order: 2,
+          }),
+        ],
+      })
+    )
+
+    await click(getItemButton(container, 'second', 'Open comments'))
+
+    const newCommentInput = getInput(container, 'New comment')
+
+    expect(container.textContent).toContain('Second task')
+    expect(newCommentInput.disabled).toBe(false)
+    expect(document.activeElement).toBe(newCommentInput)
+  })
 })
