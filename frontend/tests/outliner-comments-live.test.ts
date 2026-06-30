@@ -119,6 +119,22 @@ function getOptionalInput(container: ParentNode, ariaLabel: string) {
   return input
 }
 
+function getLink(container: ParentNode, ariaLabel: string) {
+  const link = container.querySelector(`a[aria-label="${ariaLabel}"]`)
+  if (!(link instanceof HTMLAnchorElement)) {
+    throw new Error(`Missing link: ${ariaLabel}`)
+  }
+  return link
+}
+
+function getOptionalLink(container: ParentNode, ariaLabel: string) {
+  const link = container.querySelector(`a[aria-label="${ariaLabel}"]`)
+  if (link !== null && !(link instanceof HTMLAnchorElement)) {
+    throw new Error(`Expected link: ${ariaLabel}`)
+  }
+  return link
+}
+
 function getTextarea(container: ParentNode, ariaLabel: string) {
   const textarea = container.querySelector(
     `textarea[aria-label="${ariaLabel}"]`
@@ -133,6 +149,14 @@ function getButton(container: ParentNode, ariaLabel: string) {
   const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(button instanceof HTMLButtonElement)) {
     throw new Error(`Missing button: ${ariaLabel}`)
+  }
+  return button
+}
+
+function getOptionalButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (button !== null && !(button instanceof HTMLButtonElement)) {
+    throw new Error(`Expected button: ${ariaLabel}`)
   }
   return button
 }
@@ -319,7 +343,32 @@ describe('Outliner comment target lifecycle', () => {
     expect(document.activeElement).toBe(newCommentInput)
   })
 
-  it('saves and displays editable description and root repository URL', async () => {
+  it('shows a saved root repository URL as a safe accessible link', async () => {
+    const repositoryUrl = 'https://github.com/example/root-project'
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            repo_url: repositoryUrl,
+          }),
+        ],
+      })
+    )
+
+    const link = getLink(container, 'Open repository URL')
+
+    expect(link.textContent).toBe(repositoryUrl)
+    expect(link.href).toBe(repositoryUrl)
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noreferrer')
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+    expect(getButton(container, 'Edit repository URL').disabled).toBe(false)
+  })
+
+  it('saves a new root repository URL from an empty editable field', async () => {
     actionMocks.patchItem.mockImplementation(
       async (_itemId: string, patch: DetailPatch) =>
         item({
@@ -341,15 +390,25 @@ describe('Outliner comment target lifecycle', () => {
       })
     )
 
+    const saveButton = getButton(container, 'Save details')
+    const repositoryInput = getInput(container, 'Repository URL')
+
+    expect(repositoryInput.value).toBe('')
+    expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
+    expect(saveButton.disabled).toBe(true)
+
     await changeTextarea(
       getTextarea(container, 'Item description'),
       'Build the first usable pass'
     )
     await changeInput(
-      getInput(container, 'Repository URL'),
+      repositoryInput,
       'https://github.com/example/root-project'
     )
-    await click(getButton(container, 'Save details'))
+
+    expect(saveButton.disabled).toBe(false)
+
+    await click(saveButton)
 
     expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
       description: 'Build the first usable pass',
@@ -358,9 +417,68 @@ describe('Outliner comment target lifecycle', () => {
     expect(getTextarea(container, 'Item description').value).toBe(
       'Build the first usable pass'
     )
-    expect(getInput(container, 'Repository URL').value).toBe(
+    expect(saveButton.disabled).toBe(true)
+    expect(getLink(container, 'Open repository URL').textContent).toBe(
       'https://github.com/example/root-project'
     )
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+  })
+
+  it('edits a saved root repository URL through an explicit edit affordance', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: DetailPatch) =>
+        item({
+          id: 'root',
+          title: 'Root project',
+          description: patch.description ?? '',
+          repo_url: patch.repo_url ?? null,
+        })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: 'Existing plan',
+            repo_url: 'https://github.com/example/root-project',
+          }),
+        ],
+      })
+    )
+
+    const saveButton = getButton(container, 'Save details')
+    expect(saveButton.disabled).toBe(true)
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+
+    await click(getButton(container, 'Edit repository URL'))
+
+    const repositoryInput = getInput(container, 'Repository URL')
+    expect(repositoryInput.value).toBe(
+      'https://github.com/example/root-project'
+    )
+    expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
+    expect(saveButton.disabled).toBe(true)
+
+    await changeInput(
+      repositoryInput,
+      'https://github.com/example/edited-root-project'
+    )
+
+    expect(saveButton.disabled).toBe(false)
+
+    await click(saveButton)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      description: 'Existing plan',
+      repo_url: 'https://github.com/example/edited-root-project',
+    })
+    expect(saveButton.disabled).toBe(true)
+    expect(getLink(container, 'Open repository URL').textContent).toBe(
+      'https://github.com/example/edited-root-project'
+    )
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
   })
 
   it('keeps Details Save disabled until root detail fields differ from persisted values', async () => {
@@ -390,6 +508,10 @@ describe('Outliner comment target lifecycle', () => {
       getTextarea(container, 'Item description'),
       'Existing plan'
     )
+    expect(saveButton.disabled).toBe(true)
+
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+    await click(getButton(container, 'Edit repository URL'))
     expect(saveButton.disabled).toBe(true)
 
     await changeInput(
@@ -428,6 +550,7 @@ describe('Outliner comment target lifecycle', () => {
       getTextarea(container, 'Item description'),
       'Saved plan'
     )
+    await click(getButton(container, 'Edit repository URL'))
     await changeInput(
       getInput(container, 'Repository URL'),
       'https://github.com/example/saved-plan'
@@ -484,18 +607,20 @@ describe('Outliner comment target lifecycle', () => {
     expect(container.textContent).toContain('Root project')
     expect(getTextarea(container, 'Item description').value).toBe('Root plan')
     expect(saveButton.disabled).toBe(true)
-    expect(getInput(container, 'Repository URL').value).toBe(
+    expect(getLink(container, 'Open repository URL').textContent).toBe(
       'https://github.com/example/root-project'
     )
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
   })
 
-  it('does not show repository URL editing for non-root items', async () => {
+  it('does not show repository URL controls for non-root items', async () => {
     const container = await render(
       React.createElement(Outliner, {
         items: [
           item({
             id: 'root',
             title: 'Root project',
+            repo_url: 'https://github.com/example/root-project',
           }),
           item({
             id: 'child',
@@ -506,12 +631,16 @@ describe('Outliner comment target lifecycle', () => {
       })
     )
 
-    expect(getOptionalInput(container, 'Repository URL')).not.toBeNull()
+    expect(getOptionalLink(container, 'Open repository URL')).not.toBeNull()
+    expect(getOptionalButton(container, 'Edit repository URL')).not.toBeNull()
+    expect(getOptionalInput(container, 'Repository URL')).toBeNull()
 
     await click(getItemButton(container, 'child', 'Open comments'))
 
     expect(container.textContent).toContain('Child task')
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
+    expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
+    expect(getOptionalButton(container, 'Edit repository URL')).toBeNull()
   })
 
   it('shows comment timestamps in the right-side activity area', async () => {

@@ -23,6 +23,12 @@ import {
 } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { Comment, ItemActivity, State, TreeItem } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
@@ -77,6 +83,7 @@ export function CommentsPanel({
   )
   const [descriptionDraft, setDescriptionDraft] = React.useState('')
   const [repoDraft, setRepoDraft] = React.useState('')
+  const [editingRepoUrl, setEditingRepoUrl] = React.useState(false)
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
@@ -101,11 +108,16 @@ export function CommentsPanel({
   const detailsDirty =
     descriptionDraft !== currentDescription ||
     (isRootItem && repoDraftValue !== currentRepoValue)
+  const showRepoEditor = !currentRepoValue || editingRepoUrl
 
   React.useEffect(() => {
     setDescriptionDraft(currentDescription)
     setRepoDraft(currentRepoUrl ?? '')
   }, [currentDescription, currentRepoUrl, itemId])
+
+  React.useEffect(() => {
+    setEditingRepoUrl(false)
+  }, [itemId])
 
   const loadComments = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -213,6 +225,7 @@ export function CommentsPanel({
       })
       setDescriptionDraft(savedItem.description)
       setRepoDraft(savedItem.repo_url ?? '')
+      setEditingRepoUrl(false)
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
         setError(caught instanceof Error ? caught.message : 'Unable to save')
@@ -311,22 +324,54 @@ export function CommentsPanel({
             />
           </label>
           {isRootItem ? (
-            <label className="text-muted-foreground block text-xs font-medium">
-              Repository
+            <div className="text-muted-foreground block text-xs font-medium">
+              <div>Repository</div>
               <div className="mt-1 flex items-center gap-2">
                 <Link
                   className="text-muted-foreground size-4"
                   aria-hidden="true"
                 />
-                <Input
-                  value={repoDraft}
-                  onChange={(event) => setRepoDraft(event.target.value)}
-                  disabled={!item || savingDetails}
-                  aria-label="Repository URL"
-                  className="h-8 min-w-0 flex-1"
-                />
+                {showRepoEditor ? (
+                  <Input
+                    value={repoDraft}
+                    onChange={(event) => setRepoDraft(event.target.value)}
+                    disabled={!item || savingDetails}
+                    aria-label="Repository URL"
+                    className="h-8 min-w-0 flex-1"
+                  />
+                ) : (
+                  <>
+                    <a
+                      href={currentRepoValue}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="Open repository URL"
+                      className="text-primary focus-visible:ring-ring min-w-0 flex-1 truncate rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-offset-2"
+                    >
+                      {currentRepoValue}
+                    </a>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            disabled={!item || savingDetails}
+                            aria-label="Edit repository URL"
+                            className="size-8 shrink-0"
+                            onClick={() => setEditingRepoUrl(true)}
+                          >
+                            <Pencil className="size-3.5" aria-hidden="true" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Edit repository URL</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </>
+                )}
               </div>
-            </label>
+            </div>
           ) : null}
           <div className="flex justify-end">
             <Button
