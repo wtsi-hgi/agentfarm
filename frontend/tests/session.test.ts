@@ -127,4 +127,40 @@ describe('login server action', () => {
       expect.objectContaining({ httpOnly: true })
     )
   })
+
+  it('shows a generic invalid-credentials message for backend 401 responses', async () => {
+    const formData = new FormData()
+    formData.set('username', 'alice')
+    formData.set('password', 'wrong')
+    mockedBackendJson.mockRejectedValue(
+      Object.assign(new Error('Backend request failed with 401'), {
+        status: 401,
+      })
+    )
+
+    const result = await login({ status: 'idle', error: null }, formData)
+
+    expect(result).toEqual({
+      status: 'error',
+      error: 'Invalid username or password',
+    })
+  })
+
+  it('shows a generic access message for backend 403 responses', async () => {
+    const formData = new FormData()
+    formData.set('username', 'mallory')
+    formData.set('password', 'secret')
+    mockedBackendJson.mockRejectedValue(
+      Object.assign(new Error('Backend request failed with 403'), {
+        status: 403,
+      })
+    )
+
+    const result = await login({ status: 'idle', error: null }, formData)
+
+    expect(result).toEqual({
+      status: 'error',
+      error: 'Your account is not allowed to use Agent Farm',
+    })
+  })
 })

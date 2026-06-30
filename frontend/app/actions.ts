@@ -94,6 +94,26 @@ export type ChangesInput = {
 
 const PRIMARY_PATH = '/'
 
+function statusFromError(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return null
+  }
+
+  const status = (error as { status: unknown }).status
+  return typeof status === 'number' ? status : null
+}
+
+function loginErrorMessage(error: unknown): string {
+  switch (statusFromError(error)) {
+    case 401:
+      return 'Invalid username or password'
+    case 403:
+      return 'Your account is not allowed to use Agent Farm'
+    default:
+      return error instanceof Error ? error.message : 'Login failed'
+  }
+}
+
 function jsonInit(method: string, body?: unknown): RequestInit {
   return {
     method,
@@ -337,7 +357,7 @@ export async function login(
   } catch (error) {
     return {
       status: 'error',
-      error: error instanceof Error ? error.message : 'Login failed',
+      error: loginErrorMessage(error),
     }
   }
 }

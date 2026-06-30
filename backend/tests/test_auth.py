@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -179,17 +181,20 @@ async def test_login_success_returns_identity_with_username(monkeypatch) -> None
 
 
 @pytest.mark.anyio
-async def test_failed_bind_returns_401_authentication_failed(monkeypatch) -> None:
+async def test_failed_bind_returns_401_authentication_failed(
+    caplog, monkeypatch
+) -> None:
     monkeypatch.setattr(settings, "owner", "alice")
     monkeypatch.setattr(settings, "whitelist_raw", "")
     authenticator = LdapAuthenticator(
         LdapBindSettings(
-            server_uri="ldap://directory.example",
+            server_uri="ldaps://ldap.example.org",
             dn_template="uid={username},ou=people,dc=example,dc=com",
         ),
         binder=StubBinder(succeeds=False),
     )
     app.dependency_overrides[get_authenticator] = lambda: authenticator
+    caplog.set_level(logging.WARNING, logger="agentfarm.auth")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -200,6 +205,18 @@ async def test_failed_bind_returns_401_authentication_failed(monkeypatch) -> Non
 
     assert response.status_code == 401
     assert response.json() == {"detail": "authentication failed"}
+    auth_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agentfarm.auth"
+    ]
+    assert any(
+        "LDAP bind failed for username=alice" in message
+        and "server=ldaps://ldap.example.org" in message
+        and "dn_template_placeholder={username}" in message
+        for message in auth_logs
+    )
+    assert all("wrong" not in message for message in auth_logs)
 
 
 def test_missing_placeholder_validation_error_names_placeholder() -> None:
@@ -363,7 +380,9 @@ async def test_login_assigns_viewer_role_for_whitelisted_user(monkeypatch) -> No
 
 
 @pytest.mark.anyio
-async def test_login_rejects_bound_user_who_is_not_whitelisted(monkeypatch) -> None:
+async def test_login_rejects_bound_user_who_is_not_whitelisted(
+    caplog, monkeypatch
+) -> None:
     binder = StubBinder(succeeds=True)
     monkeypatch.setattr(settings, "owner", "alice")
     monkeypatch.setattr(settings, "whitelist_raw", "vue")
@@ -375,6 +394,7 @@ async def test_login_rejects_bound_user_who_is_not_whitelisted(monkeypatch) -> N
         binder=binder,
     )
     app.dependency_overrides[get_authenticator] = lambda: authenticator
+    caplog.set_level(logging.WARNING, logger="agentfarm.auth")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -392,6 +412,18 @@ async def test_login_rejects_bound_user_who_is_not_whitelisted(monkeypatch) -> N
             "correct horse",
         )
     ]
+    auth_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "agentfarm.auth"
+    ]
+    assert any(
+        "LDAP login denied for username=mallory" in message
+        and "owner_match=False" in message
+        and "whitelist_count=1" in message
+        for message in auth_logs
+    )
+    assert all("correct horse" not in message for message in auth_logs)
 
 
 @pytest.mark.anyio

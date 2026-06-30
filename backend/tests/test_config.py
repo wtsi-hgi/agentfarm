@@ -100,6 +100,37 @@ def test_ldap_and_tls_fields_read_from_env(monkeypatch, tmp_path) -> None:
     assert settings.tls_key == str(key)
 
 
+def test_ldap_fields_unwrap_shell_style_outer_quotes_from_env(monkeypatch) -> None:
+    """Make-exported shell-style .env quotes are not part of LDAP config."""
+    monkeypatch.setenv("AGENTFARM_LDAP_SERVER", "'ldaps://ldap.example.org'")
+    monkeypatch.setenv(
+        "AGENTFARM_LDAP_DN_TEMPLATE",
+        "'uid=%s,ou=people,dc=example,dc=org'",
+    )
+    monkeypatch.setenv("AGENTFARM_OWNER", "'alice'")
+    monkeypatch.setenv("AGENTFARM_WHITELIST", "'vue,manager'")
+
+    settings = Settings()
+
+    assert settings.ldap_server == "ldaps://ldap.example.org"
+    assert settings.ldap_dn_template == "uid=%s,ou=people,dc=example,dc=org"
+    assert settings.owner == "alice"
+    assert settings.whitelist == ["vue", "manager"]
+
+
+def test_shell_quote_unwrap_preserves_meaningful_internal_quotes(monkeypatch) -> None:
+    """Only one matching pair of outer shell quotes is stripped."""
+    monkeypatch.setenv("AGENTFARM_LDAP_SERVER", "ldaps://ldap.example.org")
+    monkeypatch.setenv(
+        "AGENTFARM_LDAP_DN_TEMPLATE",
+        'uid="%s",ou=people,dc=example,dc=org',
+    )
+
+    settings = Settings()
+
+    assert settings.ldap_dn_template == 'uid="%s",ou=people,dc=example,dc=org'
+
+
 def test_ldap_and_tls_fields_default_to_none(monkeypatch) -> None:
     """Optional LDAP and TLS fields default to None when unset."""
     for var in (

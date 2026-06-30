@@ -2,8 +2,9 @@
 
 import getpass
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Names of the SQLite database file and the markdown-mirror git repo directory,
@@ -11,6 +12,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # resolve their on-disk locations via ``Settings.db_path`` / ``Settings.mirror_dir``.
 DB_FILENAME = "agentfarm.db"
 MIRROR_DIRNAME = "mirror"
+
+
+def _unwrap_shell_style_outer_quotes(value: str) -> str:
+    """Remove one matching pair of shell-style outer quotes from an env value."""
+
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 class Settings(BaseSettings):
@@ -58,6 +67,15 @@ class Settings(BaseSettings):
     # generated at startup under ``data_dir`` (K4).
     tls_cert: str | None = Field(default=None, alias="AGENTFARM_TLS_CERT")
     tls_key: str | None = Field(default=None, alias="AGENTFARM_TLS_KEY")
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def unwrap_make_exported_quotes(cls, value: Any) -> Any:
+        """Treat make-exported shell quotes the same way env-file parsing does."""
+
+        if isinstance(value, str):
+            return _unwrap_shell_style_outer_quotes(value)
+        return value
 
     @computed_field  # type: ignore[prop-decorator]
     @property
