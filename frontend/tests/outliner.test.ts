@@ -185,6 +185,74 @@ describe('Outliner', () => {
     ).toEqual(['section', 'first', 'second'])
   })
 
+  it('keeps done rows at the end of priority projection without breaking a section chain', () => {
+    const items = [
+      item({
+        id: 'section',
+        title: 'Section',
+        actionable: false,
+        sort_order: 1,
+      }),
+      item({
+        id: 'first',
+        title: 'First',
+        parent_id: 'section',
+        sort_order: 1,
+        state: 'done',
+        complete: true,
+        actionable: false,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+      item({
+        id: 'ready',
+        title: 'Ready root',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['section']), {
+        leverageSort: true,
+        priorityItems: [
+          { id: 'first', rank: 1 },
+          { id: 'ready', rank: 2 },
+          { id: 'second', rank: 3 },
+        ],
+      }).map((row) => row.item.id)
+    ).toEqual(['ready', 'section', 'first', 'second'])
+  })
+
+  it('ranks unranked done rows after unranked not-done rows in priority projection', () => {
+    const items = [
+      item({
+        id: 'done',
+        title: 'Done',
+        state: 'done',
+        complete: true,
+        actionable: false,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'open',
+        title: 'Open',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        leverageSort: true,
+        priorityItems: [],
+      }).map((row) => row.item.id)
+    ).toEqual(['open', 'done'])
+  })
+
   it('keeps collapsed child data available for expansion', () => {
     const items = [
       item({

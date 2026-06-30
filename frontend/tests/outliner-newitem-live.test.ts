@@ -62,6 +62,7 @@ type CreateItemInput = {
 }
 
 type LiveOutlinerHarnessProps = {
+  initialItems?: TreeItem[]
   initialSelectedModes?: Mode[]
   hideCreatedWithCallerFilter?: boolean
 }
@@ -81,10 +82,11 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
 }
 
 function LiveOutlinerHarness({
+  initialItems = [],
   initialSelectedModes = [],
   hideCreatedWithCallerFilter = false,
 }: LiveOutlinerHarnessProps) {
-  const [items, setItems] = React.useState<TreeItem[]>([])
+  const [items, setItems] = React.useState<TreeItem[]>(initialItems)
   const [hiddenItemIds, setHiddenItemIds] = React.useState<readonly string[]>(
     []
   )
@@ -114,6 +116,32 @@ function LiveOutlinerHarness({
     hiddenItemIds,
     initialSelectedModes,
     items,
+  })
+}
+
+function NestedRowsHarness() {
+  return React.createElement(Outliner, {
+    items: [
+      item({
+        id: 'root',
+        title: 'Root',
+        actionable: false,
+        sort_order: 1,
+      }),
+      item({
+        id: 'section',
+        title: 'Section',
+        actionable: false,
+        parent_id: 'root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'leaf',
+        title: 'Leaf item',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+    ],
   })
 }
 
@@ -193,6 +221,20 @@ function getButton(container: ParentNode, ariaLabel: string) {
   return button
 }
 
+function getItemButton(
+  container: ParentNode,
+  itemId: string,
+  ariaLabel: string
+) {
+  const button = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label="${ariaLabel}"]`
+  )
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
+  }
+  return button
+}
+
 function getInput(container: ParentNode, ariaLabel: string) {
   const input = container.querySelector(`input[aria-label="${ariaLabel}"]`)
   if (!(input instanceof HTMLInputElement)) {
@@ -225,6 +267,25 @@ function getItemSelect(
   return select
 }
 
+function getItemCheckbox(container: ParentNode, itemId: string) {
+  const checkbox = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[type="checkbox"][aria-label="Mark item done"]`
+  )
+  if (!(checkbox instanceof HTMLInputElement)) {
+    throw new Error(`Missing done checkbox for ${itemId}`)
+  }
+  return checkbox
+}
+
+function getItemRowSurface(container: ParentNode, itemId: string) {
+  const wrapper = container.querySelector(`[data-outliner-item-id="${itemId}"]`)
+  const surface = wrapper?.firstElementChild
+  if (!(surface instanceof HTMLElement)) {
+    throw new Error(`Missing row surface for ${itemId}`)
+  }
+  return surface
+}
+
 function getOutlinerItemIds(container: ParentNode) {
   return Array.from(
     container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
@@ -242,6 +303,13 @@ function getSelect(container: ParentNode, ariaLabel: string) {
 async function click(button: HTMLButtonElement) {
   await act(async () => {
     button.click()
+  })
+  await flushReact()
+}
+
+async function clickCheckbox(checkbox: HTMLInputElement) {
+  await act(async () => {
+    checkbox.click()
   })
   await flushReact()
 }
@@ -456,6 +524,101 @@ describe('Outliner live newly added filter exemptions', () => {
     })
     expect(updatedStateSelect.value).toBe('review')
     expect(updatedStateSelect.selectedOptions[0]?.textContent).toBe('Review')
+    expect(getItemCheckbox(container, 'created-session-item').checked).toBe(
+      false
+    )
+  })
+
+  it('renders a done checkbox for root, section, and item rows', async () => {
+    const container = await render(React.createElement(NestedRowsHarness))
+
+    await click(getItemButton(container, 'root', 'Expand item'))
+    await click(getItemButton(container, 'section', 'Expand item'))
+
+    expect(getItemCheckbox(container, 'root')).toBeInstanceOf(HTMLInputElement)
+    expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
+      HTMLInputElement
+    )
+    expect(getItemCheckbox(container, 'leaf')).toBeInstanceOf(HTMLInputElement)
+  })
+
+  it('checks a row through the existing state mutation and greys it as done', async () => {
+    const container = await render(React.createElement(LiveOutlinerHarness))
+
+    await submitFirstRoot(container)
+
+    const checkbox = getItemCheckbox(container, 'created-session-item')
+    expect(checkbox.checked).toBe(false)
+
+    await clickCheckbox(checkbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-session-item', {
+      state: 'done',
+    })
+    expect(getItemCheckbox(container, 'created-session-item').checked).toBe(
+      true
+    )
+    expect(
+      getItemSelect(container, 'created-session-item', 'Item state').value
+    ).toBe('done')
+    expect(
+      getItemRowSurface(container, 'created-session-item').className
+    ).toContain('text-muted-foreground')
+  })
+
+  it('unchecks a done row back to not-started and syncs the selector', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'done-row',
+            title: 'Done row',
+            state: 'done',
+          }),
+        ],
+      })
+    )
+
+    expect(getItemCheckbox(container, 'done-row').checked).toBe(true)
+    expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
+      'done'
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'done-row'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
+      state: 'not-started',
+    })
+    expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
+    expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
+      'not-started'
+    )
+  })
+
+  it('keeps the done checkbox in sync when the state selector changes', async () => {
+    const container = await render(React.createElement(LiveOutlinerHarness))
+
+    await submitFirstRoot(container)
+    await changeSelect(
+      getItemSelect(container, 'created-session-item', 'Item state'),
+      'done'
+    )
+
+    expect(getItemCheckbox(container, 'created-session-item').checked).toBe(
+      true
+    )
+
+    await changeSelect(
+      getItemSelect(container, 'created-session-item', 'Item state'),
+      'review'
+    )
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-session-item', {
+      state: 'review',
+    })
+    expect(getItemCheckbox(container, 'created-session-item').checked).toBe(
+      false
+    )
   })
 
   it('preserves caller-supplied newly added ids when local filters change', async () => {

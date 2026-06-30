@@ -162,6 +162,10 @@ function makePriorityRanks(
   return new Map(priorityItems.map((item) => [item.id, item.rank]))
 }
 
+function isDoneForProjection(item: TreeItem): boolean {
+  return item.complete || item.state === 'done' || item.state === 'abandoned'
+}
+
 function makeChildMap(
   items: TreeItem[],
   order: VisibleOutlinerOptions = {}
@@ -182,6 +186,11 @@ function makeChildMap(
       return cached
     }
 
+    if (isDoneForProjection(item)) {
+      bestRankCache.set(item.id, Number.POSITIVE_INFINITY)
+      return Number.POSITIVE_INFINITY
+    }
+
     let rank = priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY
     for (const child of children.get(item.id) ?? []) {
       rank = Math.min(rank, bestPriorityRank(child))
@@ -195,9 +204,19 @@ function makeChildMap(
     return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
   }
 
+  function doneOrder(a: TreeItem, b: TreeItem) {
+    return Number(isDoneForProjection(a)) - Number(isDoneForProjection(b))
+  }
+
   function priorityOrder(a: TreeItem, b: TreeItem) {
-    const rankOrder = bestPriorityRank(a) - bestPriorityRank(b)
-    return rankOrder !== 0 ? rankOrder : treeOrder(a, b)
+    const rankA = bestPriorityRank(a)
+    const rankB = bestPriorityRank(b)
+    if (rankA !== rankB) {
+      return rankA - rankB
+    }
+
+    const completeOrder = doneOrder(a, b)
+    return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
   }
 
   function hasChildItems(item: TreeItem) {
@@ -212,11 +231,24 @@ function makeChildMap(
     return unit[0] ?? null
   }
 
+  function unitDoneOrder(a: readonly TreeItem[], b: readonly TreeItem[]) {
+    return (
+      Number(a.every((item) => isDoneForProjection(item))) -
+      Number(b.every((item) => isDoneForProjection(item)))
+    )
+  }
+
   function sortSectionUnits(units: TreeItem[][]) {
     units.sort((a, b) => {
-      const rankOrder = unitPriorityRank(a) - unitPriorityRank(b)
-      if (rankOrder !== 0) {
-        return rankOrder
+      const rankA = unitPriorityRank(a)
+      const rankB = unitPriorityRank(b)
+      if (rankA !== rankB) {
+        return rankA - rankB
+      }
+
+      const completeOrder = unitDoneOrder(a, b)
+      if (completeOrder !== 0) {
+        return completeOrder
       }
 
       const firstA = unitTreeOrder(a)

@@ -131,6 +131,15 @@ export function OutlinerRow({
     void run(() => onChangeState(item, state))
   }
 
+  function handleDoneChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const state: State = event.currentTarget.checked ? 'done' : 'not-started'
+    if (state === item.state) {
+      return
+    }
+
+    void run(() => onChangeState(item, state))
+  }
+
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Enter') {
       event.preventDefault()
@@ -154,14 +163,17 @@ export function OutlinerRow({
     }
   }
 
+  const checkedDone = item.state === 'done'
+  const displayDone = checkedDone || item.complete
+
   return (
     <TooltipProvider>
       <div
         className={cn(
-          'grid min-h-11 grid-cols-[auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
+          'grid min-h-11 grid-cols-[auto_auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
           MODE_COLOUR_MAP[item.mode],
           selected && 'bg-accent/50',
-          item.complete && 'text-muted-foreground',
+          displayDone && 'text-muted-foreground',
           item.blocked_external && 'text-muted-foreground'
         )}
         style={{ paddingLeft: `${depth * 1.25}rem` }}
@@ -185,6 +197,16 @@ export function OutlinerRow({
           </TooltipTrigger>
           <TooltipContent>Drag</TooltipContent>
         </Tooltip>
+        <div className="flex size-8 items-center justify-center">
+          <input
+            type="checkbox"
+            aria-label="Mark item done"
+            checked={checkedDone}
+            disabled={pending}
+            onChange={handleDoneChange}
+            className="border-border bg-background text-foreground focus-visible:ring-ring accent-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        </div>
         <div className="flex size-8 items-center justify-center">
           {hasChildren ? (
             <Tooltip>
@@ -210,7 +232,7 @@ export function OutlinerRow({
               </TooltipContent>
             </Tooltip>
           ) : (
-            <span className="bg-muted-foreground/60 size-1.5 rounded-full" />
+            <span className="size-7" aria-hidden="true" />
           )}
         </div>
 
@@ -258,7 +280,7 @@ export function OutlinerRow({
             aria-label="Item state"
             className={cn(
               'border-border bg-background text-foreground focus-visible:ring-ring h-8 w-32 rounded-md border px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
-              item.complete && 'bg-muted text-muted-foreground'
+              displayDone && 'bg-muted text-muted-foreground'
             )}
             value={item.state}
             disabled={pending}
@@ -372,11 +394,11 @@ export function OutlinerRow({
           <span
             className={cn(
               'border-border text-muted-foreground rounded-sm border px-2 py-0.5 text-xs',
-              item.actionable && !item.complete && 'text-foreground',
-              item.complete && 'bg-muted'
+              item.actionable && !displayDone && 'text-foreground',
+              displayDone && 'bg-muted'
             )}
           >
-            {item.complete ? 'Done' : item.actionable ? 'Ready' : 'Waiting'}
+            {displayDone ? 'Done' : item.actionable ? 'Ready' : 'Waiting'}
           </span>
         </div>
       </div>
