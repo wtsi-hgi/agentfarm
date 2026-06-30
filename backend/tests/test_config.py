@@ -41,14 +41,8 @@ def test_whitelist_unset_defaults_to_empty_list(monkeypatch) -> None:
     assert settings.whitelist == []
 
 
-def test_data_dir_drives_db_and_mirror_locations(monkeypatch, tmp_path) -> None:
-    """data_dir is honoured and the DB file and mirror both resolve inside it.
-
-    Spec N1 #2: the SQLite DB file path and the markdown-mirror git repo path
-    are both located under the configured data dir. Initialisation itself is
-    verified later (Item 1.3 / Phase 10); here we assert the configured
-    locations.
-    """
+def test_data_dir_drives_db_location(monkeypatch, tmp_path) -> None:
+    """data_dir is honoured and the DB file resolves inside it."""
     monkeypatch.setenv("AGENTFARM_DATA_DIR", str(tmp_path))
 
     settings = Settings()
@@ -56,13 +50,9 @@ def test_data_dir_drives_db_and_mirror_locations(monkeypatch, tmp_path) -> None:
     assert settings.data_dir == tmp_path
 
     db_path = Path(settings.db_path)
-    mirror_path = Path(settings.mirror_dir)
 
-    # Both derived locations live strictly inside the configured data dir.
+    # The derived DB location lives strictly inside the configured data dir.
     assert db_path.resolve().is_relative_to(tmp_path.resolve())
-    assert mirror_path.resolve().is_relative_to(tmp_path.resolve())
-    # The two locations are distinct (DB file vs. mirror git repo directory).
-    assert db_path.resolve() != mirror_path.resolve()
 
 
 def test_owner_defaults_to_os_user_when_unset(monkeypatch) -> None:

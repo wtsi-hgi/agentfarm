@@ -8,7 +8,6 @@ subsections stay independent siblings unless the user records explicit edges.
 
 from __future__ import annotations
 
-import subprocess
 import uuid
 
 import pytest
@@ -18,7 +17,6 @@ import config
 from db.connection import get_connection
 from db.migrate import apply_migrations
 from services import leverage
-from services.mirror import MIRROR_FILENAME
 
 
 @pytest.fixture
@@ -74,26 +72,6 @@ def _tree_item(payload: list[dict], item_id: str) -> dict:
     matches = [entry for entry in payload if entry["id"] == item_id]
     assert matches, f"item {item_id} missing from /tree payload"
     return matches[0]
-
-
-def _mirror_text() -> str:
-    """Return the configured markdown mirror text."""
-    path = config.settings.data_dir / "mirror" / MIRROR_FILENAME
-    return path.read_text(encoding="utf-8")
-
-
-def _mirror_commit_count() -> int:
-    """Return the current markdown mirror commit count."""
-    mirror_dir = config.settings.data_dir / "mirror"
-    return int(
-        subprocess.run(
-            ["git", "rev-list", "--count", "HEAD"],
-            cwd=mirror_dir,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    )
 
 
 def _dependency_rows(db_path) -> list[dict]:
@@ -334,7 +312,7 @@ async def test_post_dependency_accepts_target_id(fresh_db) -> None:
 
 
 @pytest.mark.anyio
-async def test_post_dependency_duplicate_edge_returns_409_without_new_commit(
+async def test_post_dependency_duplicate_edge_returns_409_without_duplicate_row(
     fresh_db,
 ) -> None:
     """D1: duplicate explicit edges get a controlled conflict response."""
@@ -345,17 +323,14 @@ async def test_post_dependency_duplicate_edge_returns_409_without_new_commit(
             client,
             {"from_id": ids["X"], "to_id": ids["deploy_db"]},
         )
-        commit_count_before_duplicate = _mirror_commit_count()
         rejected = await _post_dependency(
             client,
             {"from_id": ids["X"], "to_id": ids["deploy_db"]},
         )
-        commit_count_after_duplicate = _mirror_commit_count()
 
     assert created.status_code == 200
     assert rejected.status_code == 409
     assert rejected.json() == {"detail": "dependency already exists"}
-    assert commit_count_after_duplicate == commit_count_before_duplicate
     assert _dependency_rows(fresh_db) == [
         {
             "id": created.json()["id"],
@@ -572,10 +547,10 @@ async def test_delete_dependency_restores_section_leaf_actionability(
 
 
 @pytest.mark.anyio
-async def test_delete_dependency_reconciles_tree_and_mirror_needs(
+async def test_delete_dependency_reconciles_tree_needs(
     fresh_db,
 ) -> None:
-    """D3: deleting one explicit edge updates tree identities and mirror labels."""
+    """D3: deleting one explicit edge updates tree identities and labels."""
     async with _client() as client:
         dependent = await _create(client, {"title": "Dependent"})
         first = await _create(client, {"title": "Target One"})
@@ -604,7 +579,6 @@ async def test_delete_dependency_reconciles_tree_and_mirror_needs(
     assert entry["needs_edges"] == [
         {"id": second_edge.json()["id"], "slug": "target-two"}
     ]
-    assert _mirror_text().splitlines()[0] == "- [ ] Dependent (needs: target-two)"
 
 
 @pytest.mark.anyio

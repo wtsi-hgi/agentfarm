@@ -131,8 +131,8 @@ def items_in_tree_order(conn: sqlite3.Connection) -> list[str]:
 
     Roots (``parent_id IS NULL``) come first ordered by ``sort_order`` then
     ``id``; each item is immediately followed by its descendants, recursively in
-    the same sibling order. This is the order used by GET ``/tree`` and the
-    markdown mirror (L1) so the rendered tree matches the read API.
+    the same sibling order. This is the order used by GET ``/tree`` so the
+    payload matches the outliner.
 
     Args:
         conn: Open connection (within the caller's transaction).
@@ -257,9 +257,6 @@ def explicit_needs_slugs(conn: sqlite3.Connection, from_id: str) -> list[str]:
     shown as ``>needs:`` labels. Each target id (``to_id``) is resolved to its
     current slug, so the labels track renames. The result is sorted by current
     slug and edge id for a stable, deterministic order.
-
-    Reusable by the markdown mirror (L1), which renders the same
-    ``(needs: slug, ...)`` suffix from these live slugs.
 
     Args:
         conn: Open connection (within the caller's transaction).

@@ -7,11 +7,8 @@ from typing import Any
 from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Names of the SQLite database file and the markdown-mirror git repo directory,
-# both located inside ``data_dir``. Later items (1.3 DB init, Phase 10 mirror)
-# resolve their on-disk locations via ``Settings.db_path`` / ``Settings.mirror_dir``.
+# Name of the SQLite database file located inside ``data_dir``.
 DB_FILENAME = "agentfarm.db"
-MIRROR_DIRNAME = "mirror"
 
 
 def _unwrap_shell_style_outer_quotes(value: str) -> str:
@@ -46,8 +43,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     http_client_timeout: float = 10.0
 
-    # Storage: the SQLite DB file and the markdown mirror both live under this
-    # directory (see ``db_path`` / ``mirror_dir``).
+    # Storage: the SQLite DB file lives under this directory (see ``db_path``).
     data_dir: Path = Field(default=Path("data"), alias="AGENTFARM_DATA_DIR")
 
     # Authentication / authorisation
@@ -95,12 +91,6 @@ class Settings(BaseSettings):
     def db_path(self) -> Path:
         """Absolute-relative path to the SQLite database file inside ``data_dir``."""
         return self.data_dir / DB_FILENAME
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def mirror_dir(self) -> Path:
-        """Path to the markdown-mirror git repo directory inside ``data_dir``."""
-        return self.data_dir / MIRROR_DIRNAME
 
 
 # Global settings instance
