@@ -14,8 +14,8 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'Next.js + shadcn/ui + FastAPI',
-  description: 'A full-stack app with Next.js, shadcn/ui, and FastAPI',
+  title: 'Agent Farm',
+  description: 'Track LLM agent work across software products.',
 }
 
 export default function RootLayout({

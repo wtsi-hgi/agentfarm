@@ -13,7 +13,7 @@ from db.migrate import apply_migrations
 from services.auth_ldap import validate_dn_template
 from services.tls import prepare_tls_paths
 
-logger = logging.getLogger("llm_kb.api")
+logger = logging.getLogger("agentfarm.api")
 
 
 def configure_logging() -> None:

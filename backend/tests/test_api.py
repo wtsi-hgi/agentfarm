@@ -5,6 +5,20 @@ from main import app
 
 
 @pytest.mark.anyio
+async def test_openapi_metadata_identifies_agent_farm() -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/openapi.json")
+
+    assert response.status_code == 200
+    assert response.json()["info"] == {
+        "title": "Agent Farm API",
+        "description": "API for tracking LLM agent work across software products.",
+        "version": "0.1.0",
+    }
+
+
+@pytest.mark.anyio
 async def test_health_endpoint() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:

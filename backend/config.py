@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     )
 
     # API metadata
-    app_name: str = "LLM Knowledge Base API"
+    app_name: str = "Agent Farm API"
     app_version: str = "0.1.0"
-    app_description: str = "FastAPI backend for Next.js + shadcn/ui frontend"
+    app_description: str = "API for tracking LLM agent work across software products."
 
     # Server configuration
     backend_port: int = 8000
