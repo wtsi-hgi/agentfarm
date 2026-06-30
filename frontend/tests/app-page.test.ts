@@ -256,8 +256,8 @@ describe('app page BFF wiring', () => {
     expect(header?.querySelector('h1')?.textContent).toBe("alice's Agent Farm")
     expect(account?.textContent).toContain('Not signed in')
     expect(account?.textContent).toContain('Login required')
-    expect(account?.textContent).toContain('Sign in')
-    expect(account?.querySelector('a[href="/login"]')).not.toBeNull()
+    expect(account?.querySelector('a[href="/login"]')).toBeNull()
+    expect(account?.querySelector('button')).toBeNull()
     expect(header?.textContent).toContain('Items')
     expect(header?.textContent).toContain('Priority')
     expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('0')
@@ -286,7 +286,8 @@ describe('app page BFF wiring', () => {
       fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
     ).toEqual(['/api/v1/auth/context'])
     expect(account?.textContent).toContain('Not signed in')
-    expect(account?.textContent).toContain('Sign in')
+    expect(account?.querySelector('a[href="/login"]')).toBeNull()
+    expect(account?.querySelector('button')).toBeNull()
     expect(document.body.textContent).not.toContain('Something went wrong')
     expect(document.body.textContent).not.toContain(
       'Backend request failed with 401'

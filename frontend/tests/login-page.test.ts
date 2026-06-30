@@ -78,10 +78,14 @@ describe('login page', () => {
     ).toEqual(['/api/v1/auth/context'])
     expect(header?.querySelector('h1')?.textContent).toBe("alice's Agent Farm")
     expect(account?.textContent).toContain('Not signed in')
-    expect(account?.textContent).toContain('Sign in')
-    expect(account?.querySelector('a[href^="/login"]')).not.toBeNull()
+    expect(account?.textContent).toContain('Login required')
+    expect(account?.querySelector('a[href^="/login"]')).toBeNull()
+    expect(account?.querySelector('button')).toBeNull()
     expect(markup).toContain('name="username"')
     expect(markup).toContain('name="password"')
+    expect(
+      document.querySelector('form button[type="submit"]')?.textContent
+    ).toBe('Sign in')
   })
 
   it('keeps the login page reachable when a stale session is rejected', async () => {
@@ -104,6 +108,8 @@ describe('login page', () => {
       fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
     ).toEqual(['/api/v1/auth/context', '/api/v1/auth/whoami'])
     expect(account?.textContent).toContain('Not signed in')
+    expect(account?.querySelector('a[href^="/login"]')).toBeNull()
+    expect(account?.querySelector('button')).toBeNull()
     expect(markup).toContain('name="username"')
     expect(markup).toContain('name="password"')
   })
