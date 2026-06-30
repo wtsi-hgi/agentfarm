@@ -46,6 +46,8 @@ export const stateSchema = z.enum([
   'spec',
   'implement',
   'review',
+  'feedback',
+  'respond',
   'merged',
   'released',
   'done',

@@ -17,6 +17,8 @@ class State(StrEnum):
     spec = "spec"
     implement = "implement"
     review = "review"
+    feedback = "feedback"
+    respond = "respond"
     merged = "merged"
     released = "released"
     done = "done"
@@ -57,7 +59,25 @@ MODE_WEIGHT: dict[Mode, int] = {
 # States that count as "complete" (spec: '"Complete" = state in {done, abandoned}').
 COMPLETE_STATES: frozenset[State] = frozenset({State.done, State.abandoned})
 
+# States blocked on external events. They are not actionable themselves, but
+# still count as open downstream work for leverage calculations.
+EXTERNAL_WAITING_STATES: frozenset[State] = frozenset({State.feedback})
+
+# States where the next move belongs to the owner/user. These stay actionable
+# and receive a priority boost over ordinary ready work.
+USER_ACTION_STATES: frozenset[State] = frozenset({State.respond})
+
 
 def is_complete(state: State) -> bool:
     """Return whether ``state`` counts as complete (``done`` or ``abandoned``)."""
     return state in COMPLETE_STATES
+
+
+def is_external_waiting(state: State) -> bool:
+    """Return whether ``state`` is waiting on an external event/person."""
+    return state in EXTERNAL_WAITING_STATES
+
+
+def user_action_priority(state: State) -> int:
+    """Return a priority tier for states requiring owner/user action."""
+    return 1 if state in USER_ACTION_STATES else 0

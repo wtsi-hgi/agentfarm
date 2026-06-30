@@ -78,22 +78,24 @@ def _insert_priority_leaf(
     title: str,
     created_at: str,
     updated_at: str,
+    state: str = "not-started",
 ) -> None:
     """Insert a valid actionable leaf with controlled audit timestamps."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
             INSERT INTO items (
-                id, title, slug, sort_order, created_by, updated_by,
+                id, title, slug, sort_order, state, created_by, updated_by,
                 created_at, updated_at, state_changed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
                 title,
                 item_id,
                 1.0,
+                state,
                 "tester",
                 "tester",
                 created_at,
@@ -553,6 +555,47 @@ async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> 
     body = response.json()
     assert {entry["id"] for entry in body} == {w1.json()["id"]}
     assert [entry["title"] for entry in body] == ["W1"]
+
+
+@pytest.mark.anyio
+async def test_feedback_waits_externally_while_respond_is_prioritized(
+    fresh_db,
+) -> None:
+    """Feedback is not actionable; Respond surfaces ahead of ordinary work."""
+    older_time = "2026-01-01T00:00:00.000000Z"
+    newer_time = "2026-01-02T00:00:00.000000Z"
+    _insert_priority_leaf(
+        fresh_db,
+        "a-respond",
+        "Respond to feedback",
+        older_time,
+        older_time,
+        state="respond",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "b-feedback",
+        "Await requested feedback",
+        newer_time,
+        newer_time,
+        state="feedback",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "c-ready",
+        "Ready ordinary work",
+        newer_time,
+        newer_time,
+    )
+
+    async with _client() as client:
+        response = await _priority(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [entry["id"] for entry in body] == ["a-respond", "c-ready"]
+    assert [entry["rank"] for entry in body] == [1, 2]
+    assert [entry["state"] for entry in body] == ["respond", "not-started"]
 
 
 @pytest.mark.anyio

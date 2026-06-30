@@ -557,6 +557,63 @@ async def test_state_changes_are_listed_as_timestamped_activity(fresh_db) -> Non
 
 
 @pytest.mark.anyio
+async def test_feedback_and_respond_round_trip_through_state_activity(
+    fresh_db,
+) -> None:
+    """Feedback and Respond are accepted states and record normal activity."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(
+            client,
+            {"title": "Clarify acceptance criteria", "state": "feedback"},
+        )
+        item_id = created.json()["id"]
+        row_after_create = _item_row(fresh_db, item_id)
+
+        tree_before = await _tree(client)
+
+        clock.set_clock(lambda: t2)
+        updated = await _patch(client, item_id, {"state": "respond"})
+        activity = await _activity(client, item_id)
+
+    assert created.status_code == 200
+    created_body = created.json()
+    assert created_body["state"] == "feedback"
+    assert created_body["completed_at"] is None
+    assert row_after_create["state"] == "feedback"
+
+    assert tree_before.status_code == 200
+    feedback_tree_item = _tree_item(tree_before.json(), item_id)
+    assert feedback_tree_item["state"] == "feedback"
+    assert feedback_tree_item["actionable"] is False
+    assert feedback_tree_item["complete"] is False
+
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["state"] == "respond"
+    assert updated_body["completed_at"] is None
+    assert updated_body["state_changed_at"] == t2
+    assert _item_row(fresh_db, item_id)["state"] == "respond"
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert activity_body == [
+        {
+            "id": activity_body[0]["id"],
+            "item_id": item_id,
+            "kind": "state-change",
+            "actor": activity_body[0]["actor"],
+            "from_state": "feedback",
+            "to_state": "respond",
+            "created_at": t2,
+        }
+    ]
+
+
+@pytest.mark.anyio
 async def test_patch_unknown_id_returns_404(fresh_db) -> None:
     """An unknown item id yields 404 with the documented detail."""
     async with _client() as client:

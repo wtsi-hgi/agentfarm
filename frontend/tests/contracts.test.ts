@@ -19,6 +19,7 @@ import {
   markerChangeItemsSchema,
   runListSchema,
   runSchema,
+  stateSchema,
   treeSchema,
   whoamiSchema,
 } from '@/lib/contracts'
@@ -99,6 +100,27 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     expect(itemSchema.parse(validItem)).toEqual(validItem)
   })
 
+  it('parses Feedback and Respond states in shared item payloads', () => {
+    expect(stateSchema.options).toEqual([
+      'not-started',
+      'spec',
+      'implement',
+      'review',
+      'feedback',
+      'respond',
+      'merged',
+      'released',
+      'done',
+      'abandoned',
+    ])
+    expect(itemSchema.parse({ ...validItem, state: 'feedback' }).state).toBe(
+      'feedback'
+    )
+    expect(itemSchema.parse({ ...validItem, state: 'respond' }).state).toBe(
+      'respond'
+    )
+  })
+
   it('parses populated nullable fields', () => {
     const blocked = {
       ...validItem,
@@ -154,6 +176,14 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     expect(priorityResponseSchema.parse([validPriorityItem])).toEqual([
       validPriorityItem,
     ])
+  })
+
+  it('parses new state values on priority item-shaped payloads', () => {
+    const respond = { ...validPriorityItem, state: 'respond' }
+    const feedback = { ...validPriorityItem, state: 'feedback' }
+
+    expect(priorityResponseSchema.parse([respond])).toEqual([respond])
+    expect(priorityResponseSchema.parse([feedback])).toEqual([feedback])
   })
 
   it('rejects a leaked numeric score field', () => {
@@ -294,6 +324,18 @@ describe('item activity contracts', () => {
   it('parses state-change activity payloads and lists', () => {
     expect(itemActivitySchema.parse(stateChange)).toEqual(stateChange)
     expect(itemActivityListSchema.parse([stateChange])).toEqual([stateChange])
+  })
+
+  it('parses Feedback to Respond state-change activity', () => {
+    const feedbackLoopChange = {
+      ...stateChange,
+      from_state: 'feedback',
+      to_state: 'respond',
+    }
+
+    expect(itemActivitySchema.parse(feedbackLoopChange)).toEqual(
+      feedbackLoopChange
+    )
   })
 
   it('rejects activity with an out-of-set destination state', () => {

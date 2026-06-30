@@ -23,6 +23,11 @@ import {
 } from '@/components/ui/tooltip'
 import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
+import {
+  STATE_OPTIONS,
+  isExternalWaitingState,
+  itemReadiness,
+} from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export const MODE_COLOUR_MAP = {
@@ -32,17 +37,6 @@ export const MODE_COLOUR_MAP = {
   release: 'border-l-rose-500',
   spec: 'border-l-violet-500',
 } satisfies Record<Mode, string>
-
-const STATE_OPTIONS = [
-  { value: 'not-started', label: 'Not started' },
-  { value: 'spec', label: 'Spec' },
-  { value: 'implement', label: 'Implement' },
-  { value: 'review', label: 'Review' },
-  { value: 'merged', label: 'Merged' },
-  { value: 'released', label: 'Released' },
-  { value: 'done', label: 'Done' },
-  { value: 'abandoned', label: 'Abandoned' },
-] satisfies readonly { value: State; label: string }[]
 
 function selectedState(value: string): State | null {
   return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
@@ -158,7 +152,9 @@ export function OutlinerRow({
   }
 
   const checkedDone = item.state === 'done'
-  const displayDone = checkedDone || item.complete
+  const readiness = itemReadiness(item)
+  const displayDone = readiness === 'done'
+  const displayReady = readiness === 'ready'
 
   return (
     <TooltipProvider>
@@ -168,7 +164,8 @@ export function OutlinerRow({
           MODE_COLOUR_MAP[item.mode],
           selected && 'bg-accent/50',
           displayDone && 'text-muted-foreground',
-          item.blocked_external && 'text-muted-foreground'
+          (item.blocked_external || isExternalWaitingState(item.state)) &&
+            'text-muted-foreground'
         )}
         style={{ paddingLeft: `${depth * 1.25}rem` }}
         data-mode={item.mode}
@@ -371,13 +368,14 @@ export function OutlinerRow({
             <TooltipContent>Delete</TooltipContent>
           </Tooltip>
           <span
+            aria-label="Item readiness"
             className={cn(
               'border-border text-muted-foreground rounded-sm border px-2 py-0.5 text-xs',
-              item.actionable && !displayDone && 'text-foreground',
+              displayReady && 'text-foreground',
               displayDone && 'bg-muted'
             )}
           >
-            {displayDone ? 'Done' : item.actionable ? 'Ready' : 'Waiting'}
+            {displayDone ? 'Done' : displayReady ? 'Ready' : 'Waiting'}
           </span>
         </div>
       </div>

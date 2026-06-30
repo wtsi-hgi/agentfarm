@@ -8,7 +8,7 @@ An item is actionable iff ALL of:
 
 * it is a LEAF (has no children) -- containers are NEVER actionable;
 * it is NOT complete (its own state is not ``done``/``abandoned``);
-* ``blocked_external`` is false; and
+* ``blocked_external`` is false and its state is not externally waiting; and
 * EVERY dependency target attached to the item, any ancestor section, or the
   live implicit section-item chain is complete. A section-level dependency
   gates all leaves nested inside that section. Plain leaf items inside the same
@@ -20,15 +20,23 @@ Unblock leverage
 ----------------
 ``Downstream(L)`` is every open leaf whose own dependency edges, inherited
 ancestor-section dependency edges, or implicit section-item chain edges depend
-on ``L`` directly or transitively. ``blocked_external`` excludes a leaf from
-actionability, but not from downstream membership.
+on ``L`` directly or transitively. ``blocked_external`` and external-waiting
+states exclude a leaf from actionability, but not from downstream membership.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from models.enums import EFFORT_WEIGHT, MODE_WEIGHT, Effort, Mode
+from models.enums import (
+    EFFORT_WEIGHT,
+    MODE_WEIGHT,
+    Effort,
+    Mode,
+    State,
+    is_external_waiting,
+    user_action_priority,
+)
 from services import tree
 
 
@@ -118,9 +126,9 @@ def is_actionable(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether ``item_id`` is actionable right now (Core domain rules).
 
     True iff ``item_id`` is a leaf, is not itself complete, is not
-    ``blocked_external``, and every dependency target on the item or its
-    ancestor sections is complete under the recursive container-completeness
-    rule.
+    ``blocked_external`` or in an external-waiting state, and every dependency
+    target on the item or its ancestor sections is complete under the recursive
+    container-completeness rule.
     Containers are never actionable; a missing id is not actionable.
 
     Args:
@@ -141,6 +149,10 @@ def is_actionable(conn: sqlite3.Connection, item_id: str) -> bool:
 
     # The item itself must be open (a complete leaf is not work to do).
     if tree.is_complete(conn, item_id):
+        return False
+
+    state = State(row["state"])
+    if is_external_waiting(state):
         return False
 
     # An externally blocked leaf is not actionable (still counts downstream,
@@ -283,8 +295,17 @@ def priority_item_ids(conn: sqlite3.Connection) -> list[str]:
             return ("", "")
         return (row["updated_at"], row["created_at"])
 
+    def state_priority(item_id: str) -> int:
+        row = conn.execute(
+            "SELECT state FROM items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if row is None:
+            return 0
+        return user_action_priority(State(row["state"]))
+
     ordered = sorted(actionable_item_ids(conn))
     ordered.sort(key=lambda item_id: timestamps(item_id)[1], reverse=True)
     ordered.sort(key=lambda item_id: timestamps(item_id)[0], reverse=True)
     ordered.sort(key=lambda item_id: score(conn, item_id), reverse=True)
+    ordered.sort(key=state_priority, reverse=True)
     return ordered

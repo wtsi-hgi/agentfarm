@@ -29,7 +29,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { Comment, ItemActivity, State, TreeItem } from '@/lib/contracts'
+import type { Comment, ItemActivity, TreeItem } from '@/lib/contracts'
+import { STATE_LABELS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 type CommentsPanelProps = {
@@ -42,17 +43,6 @@ type DetailOverride = {
   description: string
   repo_url: string | null
 }
-
-const STATE_LABELS = {
-  'not-started': 'Not started',
-  spec: 'Spec',
-  implement: 'Implement',
-  review: 'Review',
-  merged: 'Merged',
-  released: 'Released',
-  done: 'Done',
-  abandoned: 'Abandoned',
-} satisfies Record<State, string>
 
 function formatTimestamp(timestamp: string) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(timestamp)

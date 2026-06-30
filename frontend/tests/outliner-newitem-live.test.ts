@@ -297,6 +297,16 @@ function getItemRowSurface(container: ParentNode, itemId: string) {
   return surface
 }
 
+function getItemReadinessIndicator(container: ParentNode, itemId: string) {
+  const indicator = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
+  )
+  if (!(indicator instanceof HTMLElement)) {
+    throw new Error(`Missing item readiness indicator for ${itemId}`)
+  }
+  return indicator
+}
+
 function getOutlinerItemIds(container: ParentNode) {
   return Array.from(
     container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
@@ -540,6 +550,79 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
+  it('exposes Feedback and Respond in the state selector', async () => {
+    const container = await render(React.createElement(LiveOutlinerHarness))
+
+    await submitFirstRoot(container)
+
+    const stateSelect = getItemSelect(
+      container,
+      'created-session-item',
+      'Item state'
+    )
+
+    expect(
+      Array.from(stateSelect.options).map((option) => ({
+        label: option.textContent,
+        value: option.value,
+      }))
+    ).toEqual([
+      { label: 'Not started', value: 'not-started' },
+      { label: 'Spec', value: 'spec' },
+      { label: 'Implement', value: 'implement' },
+      { label: 'Review', value: 'review' },
+      { label: 'Feedback', value: 'feedback' },
+      { label: 'Respond', value: 'respond' },
+      { label: 'Merged', value: 'merged' },
+      { label: 'Released', value: 'released' },
+      { label: 'Done', value: 'done' },
+      { label: 'Abandoned', value: 'abandoned' },
+    ])
+
+    await changeSelect(stateSelect, 'feedback')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-session-item', {
+      state: 'feedback',
+    })
+
+    await changeSelect(
+      getItemSelect(container, 'created-session-item', 'Item state'),
+      'respond'
+    )
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith(
+      'created-session-item',
+      { state: 'respond' }
+    )
+  })
+
+  it('shows Feedback as Waiting while Respond stays ready for action', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            state: 'feedback',
+            actionable: true,
+          }),
+          item({
+            id: 'respond-row',
+            title: 'Respond to user',
+            state: 'respond',
+            sort_order: 2,
+            actionable: true,
+          }),
+        ],
+      })
+    )
+
+    expect(
+      getItemReadinessIndicator(container, 'feedback-row').textContent
+    ).toBe('Waiting')
+    expect(
+      getItemReadinessIndicator(container, 'respond-row').textContent
+    ).toBe('Ready')
+  })
+
   it('renders a done checkbox for root, section, and item rows', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
 
@@ -632,6 +715,53 @@ describe('Outliner live newly added filter exemptions', () => {
     )
     expect(getItemRowSurface(container, 'review-row').className).not.toContain(
       'text-muted-foreground'
+    )
+  })
+
+  it('restores Feedback and Respond when their done checkboxes are unchecked', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            state: 'feedback',
+            actionable: false,
+          }),
+          item({
+            id: 'respond-row',
+            title: 'Respond to user',
+            state: 'respond',
+            sort_order: 2,
+          }),
+        ],
+      })
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'feedback-row'))
+    await clickCheckbox(getItemCheckbox(container, 'feedback-row'))
+    await clickCheckbox(getItemCheckbox(container, 'respond-row'))
+    await clickCheckbox(getItemCheckbox(container, 'respond-row'))
+
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(1, 'feedback-row', {
+      state: 'done',
+    })
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'feedback-row', {
+      state: 'feedback',
+    })
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(3, 'respond-row', {
+      state: 'done',
+    })
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(4, 'respond-row', {
+      state: 'respond',
+    })
+    expect(getItemCheckbox(container, 'feedback-row').checked).toBe(false)
+    expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
+      'feedback'
+    )
+    expect(getItemCheckbox(container, 'respond-row').checked).toBe(false)
+    expect(getItemSelect(container, 'respond-row', 'Item state').value).toBe(
+      'respond'
     )
   })
 

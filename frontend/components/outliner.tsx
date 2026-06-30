@@ -42,6 +42,7 @@ import {
   type RowKeyboardCommand,
   type RowMutationActions,
 } from '@/lib/outliner-mutations'
+import { isExternalWaitingState } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -335,7 +336,12 @@ function makeChildMap(
 }
 
 function collapsedByDefault(item: TreeItem): boolean {
-  return !item.actionable || item.complete || item.blocked_external
+  return (
+    !item.actionable ||
+    item.complete ||
+    item.blocked_external ||
+    isExternalWaitingState(item.state)
+  )
 }
 
 function isIdSet(collection: IdCollection): collection is ReadonlySet<string> {

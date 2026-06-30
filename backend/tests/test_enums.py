@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from models.enums import (
     EFFORT_WEIGHT,
+    EXTERNAL_WAITING_STATES,
     MODE_WEIGHT,
     Effort,
     Mode,
     State,
     is_complete,
+    is_external_waiting,
 )
 
 
@@ -24,6 +26,8 @@ def test_state_values_exact() -> None:
         "spec",
         "implement",
         "review",
+        "feedback",
+        "respond",
         "merged",
         "released",
         "done",
@@ -89,3 +93,10 @@ def test_is_complete_only_done_and_abandoned() -> None:
         if state in (State.done, State.abandoned):
             continue
         assert is_complete(state) is False
+
+
+def test_external_waiting_states_are_metadata_driven() -> None:
+    """Feedback is externally waiting; Respond remains user-actionable."""
+    assert EXTERNAL_WAITING_STATES == frozenset({State.feedback})
+    assert is_external_waiting(State.feedback) is True
+    assert is_external_waiting(State.respond) is False
