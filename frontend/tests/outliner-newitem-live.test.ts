@@ -6,7 +6,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
-import type { Mode, TreeItem } from '@/lib/contracts'
+import type {
+  ItemActivity,
+  Mode,
+  PriorityItem,
+  TreeItem,
+} from '@/lib/contracts'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -64,6 +69,8 @@ type CreateItemInput = {
 type LiveOutlinerHarnessProps = {
   initialItems?: TreeItem[]
   initialSelectedModes?: Mode[]
+  leverageSort?: boolean
+  priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hideCreatedWithCallerFilter?: boolean
 }
 
@@ -84,6 +91,8 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
 function LiveOutlinerHarness({
   initialItems = [],
   initialSelectedModes = [],
+  leverageSort = false,
+  priorityItems = [],
   hideCreatedWithCallerFilter = false,
 }: LiveOutlinerHarnessProps) {
   const [items, setItems] = React.useState<TreeItem[]>(initialItems)
@@ -116,6 +125,8 @@ function LiveOutlinerHarness({
     hiddenItemIds,
     initialSelectedModes,
     items,
+    leverageSort,
+    priorityItems,
   })
 }
 
@@ -566,7 +577,129 @@ describe('Outliner live newly added filter exemptions', () => {
     ).toContain('text-muted-foreground')
   })
 
-  it('unchecks a done row back to not-started and syncs the selector', async () => {
+  it('restores the last active state when a checkbox-created done row is unchecked', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'review-row',
+            title: 'Review row',
+            state: 'review',
+          }),
+          item({
+            id: 'ready-row',
+            title: 'Ready row',
+            sort_order: 2,
+          }),
+        ],
+        leverageSort: true,
+        priorityItems: [
+          { id: 'review-row', rank: 1 },
+          { id: 'ready-row', rank: 2 },
+        ],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
+    expect(getItemCheckbox(container, 'review-row').checked).toBe(false)
+    expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
+      'review'
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'review-row'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('review-row', {
+      state: 'done',
+    })
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
+    expect(getItemCheckbox(container, 'review-row').checked).toBe(true)
+    expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
+      'done'
+    )
+    expect(getItemRowSurface(container, 'review-row').className).toContain(
+      'text-muted-foreground'
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'review-row'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('review-row', {
+      state: 'review',
+    })
+    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
+    expect(getItemCheckbox(container, 'review-row').checked).toBe(false)
+    expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
+      'review'
+    )
+    expect(getItemRowSurface(container, 'review-row').className).not.toContain(
+      'text-muted-foreground'
+    )
+  })
+
+  it('refreshes timestamped activity for checkbox done and restore transitions', async () => {
+    let currentState: TreeItem['state'] = 'review'
+    const activity: ItemActivity[] = []
+    const timestamps = [
+      '2026-06-29T00:10:00.000000Z',
+      '2026-06-29T00:15:00.000000Z',
+    ]
+    actionMocks.fetchItemActivity.mockImplementation(async () => activity)
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) => {
+        if (patch.state) {
+          activity.push({
+            id: `activity-${activity.length + 1}`,
+            item_id: itemId,
+            kind: 'state-change',
+            actor: 'alice',
+            from_state: currentState,
+            to_state: patch.state,
+            created_at:
+              timestamps[activity.length] ?? '2026-06-29T00:20:00.000000Z',
+          })
+          currentState = patch.state
+        }
+        publishPatchedItem?.(itemId, patch)
+        return {}
+      }
+    )
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'review-row',
+            title: 'Review row',
+            state: 'review',
+          }),
+        ],
+      })
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'review-row'))
+    await clickCheckbox(getItemCheckbox(container, 'review-row'))
+
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(1, 'review-row', {
+      state: 'done',
+    })
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'review-row', {
+      state: 'review',
+    })
+    expect(container.textContent).toContain('Review -> Done')
+    expect(container.textContent).toContain('Done -> Review')
+    expect(container.textContent).toContain('2026-06-29 00:15 UTC')
+  })
+
+  it('restores a persisted pre-done state from activity when local memory is empty', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'done-row',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'review',
+        to_state: 'done',
+        created_at: '2026-06-29T00:10:00.000000Z',
+      },
+    ])
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -579,13 +712,35 @@ describe('Outliner live newly added filter exemptions', () => {
       })
     )
 
-    expect(getItemCheckbox(container, 'done-row').checked).toBe(true)
+    await clickCheckbox(getItemCheckbox(container, 'done-row'))
+
+    expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
+      state: 'review',
+    })
+    expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
     expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
-      'done'
+      'review'
+    )
+  })
+
+  it('falls back to not-started when a done row has no previous active state', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([])
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'done-row',
+            title: 'Done row',
+            state: 'done',
+          }),
+        ],
+      })
     )
 
     await clickCheckbox(getItemCheckbox(container, 'done-row'))
 
+    expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
     expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
       state: 'not-started',
     })

@@ -70,6 +70,7 @@ type OutlinerRowProps = {
   onMoveDown: (item: TreeItem) => Promise<void>
   onOpenComments: (itemId: string) => void
   onChangeState: (item: TreeItem, state: State) => Promise<void>
+  onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
   onDragEnd?: React.DragEventHandler<HTMLButtonElement>
 }
@@ -91,6 +92,7 @@ export function OutlinerRow({
   onMoveDown,
   onOpenComments,
   onChangeState,
+  onChangeDone,
   onDragStart,
   onDragEnd,
 }: OutlinerRowProps) {
@@ -132,12 +134,7 @@ export function OutlinerRow({
   }
 
   function handleDoneChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const state: State = event.currentTarget.checked ? 'done' : 'not-started'
-    if (state === item.state) {
-      return
-    }
-
-    void run(() => onChangeState(item, state))
+    void run(() => onChangeDone(item, event.currentTarget.checked))
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {

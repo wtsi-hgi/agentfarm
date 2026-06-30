@@ -8,6 +8,7 @@ import {
   createItem,
   deleteDependency,
   deleteItem,
+  fetchItemActivity,
   indentItem,
   moveItem,
   outdentItem,
@@ -24,7 +25,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ModeToggles } from '@/components/view-controls'
-import type { Mode, PriorityItem, State, TreeItem } from '@/lib/contracts'
+import type {
+  ItemActivity,
+  Mode,
+  PriorityItem,
+  State,
+  TreeItem,
+} from '@/lib/contracts'
 import {
   applyRowKeyboardCommand,
   createFirstRoot,
@@ -85,6 +92,8 @@ type FocusRequest = {
   requestId: number
   selectTitle: boolean
 }
+
+const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
 
 type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
@@ -164,6 +173,45 @@ function makePriorityRanks(
 
 function isDoneForProjection(item: TreeItem): boolean {
   return item.complete || item.state === 'done' || item.state === 'abandoned'
+}
+
+function isRestorableDoneState(state: State): boolean {
+  return state !== 'done' && state !== 'abandoned'
+}
+
+function previousDoneStateFromActivity(
+  activity: readonly ItemActivity[]
+): State | null {
+  for (let index = activity.length - 1; index >= 0; index -= 1) {
+    const entry = activity[index]
+    if (entry?.to_state !== 'done') {
+      continue
+    }
+
+    if (isRestorableDoneState(entry.from_state)) {
+      return entry.from_state
+    }
+
+    for (
+      let previousIndex = index - 1;
+      previousIndex >= 0;
+      previousIndex -= 1
+    ) {
+      const previousEntry = activity[previousIndex]
+      if (!previousEntry) {
+        continue
+      }
+      if (isRestorableDoneState(previousEntry.to_state)) {
+        return previousEntry.to_state
+      }
+      if (isRestorableDoneState(previousEntry.from_state)) {
+        return previousEntry.from_state
+      }
+    }
+    return null
+  }
+
+  return null
 }
 
 function makeChildMap(
@@ -474,6 +522,9 @@ export function Outliner({
   const [draggingItemId, setDraggingItemId] = React.useState<string | null>(
     null
   )
+  const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
+    () => new Map<string, State>()
+  )
   const activeItems = React.useMemo(
     () => items.filter((item) => !locallyDeletedItemIds.has(item.id)),
     [items, locallyDeletedItemIds]
@@ -542,6 +593,34 @@ export function Outliner({
     }
     setSelectedItemId(activeItems[0]?.id ?? null)
   }, [activeItems, itemsById, selectedItemId])
+
+  React.useEffect(() => {
+    setPreviousDoneStateById((current) => {
+      const activeItemIds = new Set(activeItems.map((item) => item.id))
+      const next = new Map<string, State>()
+      let changed = false
+
+      for (const [itemId, state] of current) {
+        if (activeItemIds.has(itemId)) {
+          next.set(itemId, state)
+        } else {
+          changed = true
+        }
+      }
+
+      for (const item of activeItems) {
+        if (
+          isRestorableDoneState(item.state) &&
+          next.get(item.id) !== item.state
+        ) {
+          next.set(item.id, item.state)
+          changed = true
+        }
+      }
+
+      return changed ? next : current
+    })
+  }, [activeItems])
 
   React.useEffect(() => {
     setLocallyDeletedItemIds((current) => {
@@ -719,9 +798,50 @@ export function Outliner({
     }
 
     await mutationActions.patchItem(item.id, { state })
+    if (state === 'done' && isRestorableDoneState(item.state)) {
+      rememberPreviousDoneState(item.id, item.state)
+    } else if (isRestorableDoneState(state)) {
+      rememberPreviousDoneState(item.id, state)
+    }
     setDetailRefreshKey((current) => current + 1)
     requestItemFocus(item.id)
     setSelectedItemId(item.id)
+  }
+
+  function rememberPreviousDoneState(itemId: string, state: State) {
+    setPreviousDoneStateById((current) => {
+      if (current.get(itemId) === state) {
+        return current
+      }
+      const next = new Map(current)
+      next.set(itemId, state)
+      return next
+    })
+  }
+
+  async function restoredStateForDoneItem(item: TreeItem): Promise<State> {
+    const rememberedState = previousDoneStateById.get(item.id)
+    if (rememberedState) {
+      return rememberedState
+    }
+
+    const activity = await fetchItemActivity(item.id)
+    return (
+      previousDoneStateFromActivity(activity) ?? DONE_RESTORE_FALLBACK_STATE
+    )
+  }
+
+  async function changeItemDone(item: TreeItem, checked: boolean) {
+    if (checked) {
+      await changeItemState(item, 'done')
+      return
+    }
+
+    if (item.state !== 'done') {
+      return
+    }
+
+    await changeItemState(item, await restoredStateForDoneItem(item))
   }
 
   async function moveDragged(
@@ -868,6 +988,7 @@ export function Outliner({
                       onMoveDown={moveDown}
                       onOpenComments={openCommentsForItem}
                       onChangeState={changeItemState}
+                      onChangeDone={changeItemDone}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move'
                         event.dataTransfer.setData('text/plain', item.id)
