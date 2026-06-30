@@ -17,6 +17,7 @@ from ..schemas import DeletedResponse, DependencyCreate, DependencyOut
 router = APIRouter()
 
 _DEPENDENCY_COLUMNS = "id, from_id, to_id, kind"
+_DEPENDENCY_ALREADY_EXISTS = "dependency already exists"
 
 
 def _row_to_dependency(row: sqlite3.Row) -> DependencyOut:
@@ -28,6 +29,24 @@ def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether an item with ``item_id`` exists."""
     row = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
     return row is not None
+
+
+def _dependency_exists(conn: sqlite3.Connection, from_id: str, to_id: str) -> bool:
+    """Return whether the dependency edge already exists."""
+    row = conn.execute(
+        "SELECT 1 FROM dependencies WHERE from_id = ? AND to_id = ?",
+        (from_id, to_id),
+    ).fetchone()
+    return row is not None
+
+
+def _is_duplicate_dependency_error(exc: sqlite3.IntegrityError) -> bool:
+    """Return whether SQLite rejected a duplicate dependency edge."""
+    return (
+        getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+        and "dependencies.from_id" in str(exc)
+        and "dependencies.to_id" in str(exc)
+    )
 
 
 def _resolve_target_id(conn: sqlite3.Connection, payload: DependencyCreate) -> str:
@@ -60,17 +79,28 @@ async def create_dependency(
 
     to_id = _resolve_target_id(conn, payload)
 
+    if _dependency_exists(conn, payload.from_id, to_id):
+        raise HTTPException(status_code=409, detail=_DEPENDENCY_ALREADY_EXISTS)
+
     if graph.would_create_cycle(conn, payload.from_id, to_id):
         raise HTTPException(status_code=409, detail="dependency cycle rejected")
 
     dependency_id = str(uuid.uuid4())
-    conn.execute(
-        f"""
-        INSERT INTO dependencies ({_DEPENDENCY_COLUMNS})
-        VALUES (?, ?, ?, 'explicit')
-        """,
-        (dependency_id, payload.from_id, to_id),
-    )
+    try:
+        conn.execute(
+            f"""
+            INSERT INTO dependencies ({_DEPENDENCY_COLUMNS})
+            VALUES (?, ?, ?, 'explicit')
+            """,
+            (dependency_id, payload.from_id, to_id),
+        )
+    except sqlite3.IntegrityError as exc:
+        if _is_duplicate_dependency_error(exc):
+            raise HTTPException(
+                status_code=409,
+                detail=_DEPENDENCY_ALREADY_EXISTS,
+            ) from exc
+        raise
 
     row = conn.execute(
         f"SELECT {_DEPENDENCY_COLUMNS} FROM dependencies WHERE id = ?",

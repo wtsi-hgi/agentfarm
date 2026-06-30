@@ -8,6 +8,7 @@ nested under that section.
 
 from __future__ import annotations
 
+import subprocess
 import uuid
 
 import pytest
@@ -79,6 +80,20 @@ def _mirror_text() -> str:
     """Return the configured markdown mirror text."""
     path = config.settings.data_dir / "mirror" / MIRROR_FILENAME
     return path.read_text(encoding="utf-8")
+
+
+def _mirror_commit_count() -> int:
+    """Return the current markdown mirror commit count."""
+    mirror_dir = config.settings.data_dir / "mirror"
+    return int(
+        subprocess.run(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=mirror_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
 
 
 def _dependency_rows(db_path) -> list[dict]:
@@ -240,6 +255,39 @@ async def test_post_dependency_accepts_target_id(fresh_db) -> None:
     assert _dependency_edges(fresh_db, kind="explicit") == {
         (ids["X"], ids["deploy_db"])
     }
+
+
+@pytest.mark.anyio
+async def test_post_dependency_duplicate_edge_returns_409_without_new_commit(
+    fresh_db,
+) -> None:
+    """D1: duplicate explicit edges get a controlled conflict response."""
+    async with _client() as client:
+        ids = await _build_cross_product_pair(client)
+
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "to_id": ids["deploy_db"]},
+        )
+        commit_count_before_duplicate = _mirror_commit_count()
+        rejected = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "to_id": ids["deploy_db"]},
+        )
+        commit_count_after_duplicate = _mirror_commit_count()
+
+    assert created.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency already exists"}
+    assert commit_count_after_duplicate == commit_count_before_duplicate
+    assert _dependency_rows(fresh_db) == [
+        {
+            "id": created.json()["id"],
+            "from_id": ids["X"],
+            "to_id": ids["deploy_db"],
+            "kind": "explicit",
+        }
+    ]
 
 
 @pytest.mark.anyio
