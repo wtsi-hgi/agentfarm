@@ -467,8 +467,9 @@ async def test_patch_blocked_fields_persist_together(fresh_db) -> None:
 async def test_patch_description_for_root_and_child_and_repo_url_for_root(
     fresh_db,
 ) -> None:
-    """A2 details: descriptions persist for all items; repo URL is root-only."""
+    """A2 details: descriptions persist for all items; root details are root-only."""
     del fresh_db
+    usage = "## Test it\n\n```bash\nmake test\n```"
     async with _client() as client:
         root = await _create(client, {"title": "Product"})
         root_id = root.json()["id"]
@@ -481,6 +482,7 @@ async def test_patch_description_for_root_and_child_and_repo_url_for_root(
             {
                 "description": "High-level product notes",
                 "repo_url": "https://github.com/example/product",
+                "usage": usage,
             },
         )
         updated_child = await _patch(
@@ -493,28 +495,39 @@ async def test_patch_description_for_root_and_child_and_repo_url_for_root(
             child_id,
             {"repo_url": "https://github.com/example/task"},
         )
+        rejected_child_usage = await _patch(
+            client,
+            child_id,
+            {"usage": "```bash\npytest\n```"},
+        )
         tree = await _tree(client)
 
     assert updated_root.status_code == 200
     assert updated_root.json()["description"] == "High-level product notes"
     assert updated_root.json()["repo_url"] == "https://github.com/example/product"
+    assert updated_root.json()["usage"] == usage
 
     assert updated_child.status_code == 200
     assert updated_child.json()["description"] == "Implementation details"
     assert updated_child.json()["repo_url"] is None
+    assert updated_child.json()["usage"] == ""
 
     assert rejected_child_repo.status_code == 422
     assert rejected_child_repo.json() == {
         "detail": "repo_url only applies to root items"
     }
+    assert rejected_child_usage.status_code == 422
+    assert rejected_child_usage.json() == {"detail": "usage only applies to root items"}
 
     assert tree.status_code == 200
     root_from_tree = _tree_item(tree.json(), root_id)
     child_from_tree = _tree_item(tree.json(), child_id)
     assert root_from_tree["description"] == "High-level product notes"
     assert root_from_tree["repo_url"] == "https://github.com/example/product"
+    assert root_from_tree["usage"] == usage
     assert child_from_tree["description"] == "Implementation details"
     assert child_from_tree["repo_url"] is None
+    assert child_from_tree["usage"] == ""
 
 
 @pytest.mark.anyio

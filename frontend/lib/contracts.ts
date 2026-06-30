@@ -84,6 +84,7 @@ export const itemSchema = z.object({
   blocked_followup_date: z.string().nullable(),
   description: z.string(),
   repo_url: z.string().nullable(),
+  usage: z.string(),
   created_by: z.string(),
   updated_by: z.string(),
   created_at: z.string(),

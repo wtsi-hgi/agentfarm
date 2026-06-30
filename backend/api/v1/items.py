@@ -42,7 +42,7 @@ router = APIRouter()
 _ITEM_COLUMNS = (
     "id, title, slug, parent_id, sort_order, state, mode, effort, "
     "blocked_external, blocked_note, blocked_followup_date, "
-    "description, repo_url, "
+    "description, repo_url, usage, "
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
 )
@@ -59,6 +59,7 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
     data["blocked_external"] = bool(data["blocked_external"])
     if data["parent_id"] is not None:
         data["repo_url"] = None
+        data["usage"] = ""
     return ItemOut(**data)
 
 
@@ -153,7 +154,7 @@ async def create_item(
         VALUES (
             :id, :title, :slug, :parent_id, :sort_order, :state, :mode, :effort,
             :blocked_external, :blocked_note, :blocked_followup_date,
-            :description, :repo_url,
+            :description, :repo_url, :usage,
             :created_by, :updated_by, :created_at, :updated_at,
             :state_changed_at, :completed_at
         )
@@ -173,6 +174,7 @@ async def create_item(
             "blocked_followup_date": None,
             "description": "",
             "repo_url": None,
+            "usage": "",
             "created_by": actor,
             "updated_by": actor,
             # One instant for all creation timestamps; completed_at stays null.
@@ -560,6 +562,12 @@ async def update_item(
                 status_code=422, detail="repo_url only applies to root items"
             )
         updates["repo_url"] = provided["repo_url"] or None
+    if "usage" in provided:
+        if existing["parent_id"] is not None:
+            raise HTTPException(
+                status_code=422, detail="usage only applies to root items"
+            )
+        updates["usage"] = provided["usage"] or ""
 
     if updates:
         # Any change updates the audit columns with one shared instant.

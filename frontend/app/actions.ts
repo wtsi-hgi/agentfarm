@@ -63,6 +63,7 @@ export type PatchItemInput = {
   blocked_followup_date?: string | null
   description?: string | null
   repo_url?: string | null
+  usage?: string | null
 }
 
 export type MoveItemInput =

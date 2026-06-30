@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS items (
   blocked_followup_date TEXT,             -- ISO date or NULL
   description     TEXT NOT NULL DEFAULT '',
   repo_url        TEXT,
+  usage           TEXT NOT NULL DEFAULT '',
   created_by      TEXT NOT NULL,
   updated_by      TEXT NOT NULL,
   created_at      TEXT NOT NULL,

@@ -1,7 +1,15 @@
 'use client'
 
 import * as React from 'react'
+import { Check, Copy } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 type MarkdownContentProps = {
@@ -255,6 +263,21 @@ function headingClass(level: HeadingBlock['level']) {
 
 export function MarkdownContent({ value, className }: MarkdownContentProps) {
   const blocks = React.useMemo(() => parseBlocks(value), [value])
+  const [copiedBlockKey, setCopiedBlockKey] = React.useState<string | null>(
+    null
+  )
+  const canCopy =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.clipboard?.writeText === 'function'
+
+  async function copyCodeBlock(text: string, key: string) {
+    if (!canCopy) {
+      return
+    }
+
+    await navigator.clipboard.writeText(text)
+    setCopiedBlockKey(key)
+  }
 
   return (
     <div className={cn('space-y-3 text-sm leading-6', className)}>
@@ -331,15 +354,42 @@ export function MarkdownContent({ value, className }: MarkdownContentProps) {
                 </table>
               </div>
             )
-          case 'code':
+          case 'code': {
+            const copied = copiedBlockKey === key
             return (
-              <pre
-                key={key}
-                className="bg-muted/70 border-border overflow-x-auto rounded-md border p-3 text-xs leading-5"
-              >
-                <code className="font-mono whitespace-pre">{block.text}</code>
-              </pre>
+              <div key={key} className="relative">
+                <pre className="bg-muted/70 border-border overflow-x-auto rounded-md border p-3 pr-12 text-xs leading-5">
+                  <code className="font-mono whitespace-pre">{block.text}</code>
+                </pre>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        disabled={!canCopy}
+                        aria-label={
+                          copied ? 'Copied code block' : 'Copy code block'
+                        }
+                        className="bg-background/80 absolute top-1.5 right-1.5 size-7"
+                        onClick={() => void copyCodeBlock(block.text, key)}
+                      >
+                        {copied ? (
+                          <Check className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <Copy className="size-3.5" aria-hidden="true" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {copied ? 'Copied code block' : 'Copy code block'}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
             )
+          }
           case 'paragraph':
             return (
               <p key={key} className="text-foreground whitespace-pre-wrap">

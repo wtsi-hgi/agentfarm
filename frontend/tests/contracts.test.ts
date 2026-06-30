@@ -91,6 +91,7 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     blocked_followup_date: null,
     description: '',
     repo_url: null,
+    usage: '',
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -133,6 +134,7 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
       blocked_followup_date: '2026-07-10',
       description: 'Blocked on staging capacity',
       repo_url: 'https://github.com/example/agentfarm',
+      usage: '```bash\nmake test\n```',
       state: 'done',
       completed_at: '2026-06-29T01:00:00.000000Z',
     }
@@ -148,6 +150,13 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     const { slug: _slug, ...withoutSlug } = validItem
     const result = itemSchema.safeParse(withoutSlug)
     expect(result.success).toBe(false)
+  })
+
+  it('requires persisted Usage in shared item payloads', () => {
+    const { usage: _usage, ...withoutUsage } = validItem
+
+    expect(itemSchema.parse(validItem).usage).toBe('')
+    expect(itemSchema.safeParse(withoutUsage).success).toBe(false)
   })
 })
 
@@ -166,6 +175,7 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     blocked_followup_date: null,
     description: '',
     repo_url: null,
+    usage: '',
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -212,6 +222,7 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     blocked_followup_date: null,
     description: '',
     repo_url: 'https://github.com/example/a',
+    usage: '## Usage\n\n```bash\nmake test\n```',
     created_by: 'alice',
     updated_by: 'alice',
     created_at: '2026-06-29T00:00:00.000000Z',
@@ -411,6 +422,7 @@ describe('marker contracts', () => {
       blocked_followup_date: null,
       description: '',
       repo_url: null,
+      usage: '',
       created_by: 'alice',
       updated_by: 'alice',
       created_at: '2026-06-29T00:00:00.000000Z',

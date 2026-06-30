@@ -40,6 +40,12 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         column="repo_url",
         definition="repo_url TEXT",
     )
+    _ensure_column(
+        conn,
+        table="items",
+        column="usage",
+        definition="usage TEXT NOT NULL DEFAULT ''",
+    )
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:

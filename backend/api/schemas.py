@@ -93,6 +93,7 @@ class ItemUpdate(BaseModel):
     blocked_followup_date: str | None = None
     description: str | None = None
     repo_url: str | None = None
+    usage: str | None = None
 
 
 class MoveRequest(BaseModel):
@@ -249,6 +250,7 @@ class ItemOut(BaseModel):
     blocked_followup_date: str | None
     description: str
     repo_url: str | None
+    usage: str
     created_by: str
     updated_by: str
     created_at: str

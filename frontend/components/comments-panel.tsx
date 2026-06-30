@@ -9,6 +9,7 @@ import {
   Pencil,
   Save,
   Send,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react'
@@ -22,6 +23,7 @@ import {
   patchItem,
 } from '@/app/actions'
 import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
+import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -43,6 +45,7 @@ type CommentsPanelProps = {
 type DetailOverride = {
   description: string
   repo_url: string | null
+  usage: string
 }
 
 function formatTimestamp(timestamp: string) {
@@ -72,6 +75,7 @@ export function CommentsPanel({
   )
   const [descriptionDraft, setDescriptionDraft] = React.useState('')
   const [repoDraft, setRepoDraft] = React.useState('')
+  const [usageDraft, setUsageDraft] = React.useState('')
   const [editingRepoUrl, setEditingRepoUrl] = React.useState(false)
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
@@ -92,17 +96,21 @@ export function CommentsPanel({
   const currentDescription =
     detailOverride?.description ?? item?.description ?? ''
   const currentRepoUrl = detailOverride?.repo_url ?? item?.repo_url ?? null
+  const currentUsage = detailOverride?.usage ?? item?.usage ?? ''
   const currentRepoValue = currentRepoUrl?.trim() || null
   const repoDraftValue = repoDraft.trim() || null
   const detailsDirty =
     descriptionDraft !== currentDescription ||
+    (isRootItem && usageDraft !== currentUsage) ||
     (isRootItem && repoDraftValue !== currentRepoValue)
   const showRepoEditor = !currentRepoValue || editingRepoUrl
+  const showUsagePreview = isRootItem && currentUsage.trim().length > 0
 
   React.useEffect(() => {
     setDescriptionDraft(currentDescription)
     setRepoDraft(currentRepoUrl ?? '')
-  }, [currentDescription, currentRepoUrl, itemId])
+    setUsageDraft(currentUsage)
+  }, [currentDescription, currentRepoUrl, currentUsage, itemId])
 
   React.useEffect(() => {
     setEditingRepoUrl(false)
@@ -183,7 +191,9 @@ export function CommentsPanel({
     try {
       const savedItem = await patchItem(requestedItemId, {
         description: descriptionDraft,
-        ...(isRootItem ? { repo_url: repoDraft.trim() || null } : {}),
+        ...(isRootItem
+          ? { repo_url: repoDraft.trim() || null, usage: usageDraft }
+          : {}),
       })
       if (currentItemId.current !== requestedItemId) {
         return
@@ -193,11 +203,13 @@ export function CommentsPanel({
         next.set(requestedItemId, {
           description: savedItem.description,
           repo_url: savedItem.repo_url,
+          usage: savedItem.usage,
         })
         return next
       })
       setDescriptionDraft(savedItem.description)
       setRepoDraft(savedItem.repo_url ?? '')
+      setUsageDraft(savedItem.usage)
       setEditingRepoUrl(false)
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
@@ -341,6 +353,31 @@ export function CommentsPanel({
               className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
             />
           </label>
+          {isRootItem ? (
+            <section className="space-y-2" aria-label="Usage">
+              <label className="text-muted-foreground block text-xs font-medium">
+                <span className="flex items-center gap-2">
+                  <Terminal className="size-4" aria-hidden="true" />
+                  Usage
+                </span>
+                <textarea
+                  value={usageDraft}
+                  onChange={(event) => setUsageDraft(event.target.value)}
+                  disabled={!item || savingDetails}
+                  aria-label="Root usage"
+                  className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-32 w-full resize-y rounded-md border px-3 py-2 font-mono text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </label>
+              {showUsagePreview ? (
+                <div
+                  className="border-border bg-muted/20 rounded-md border p-3"
+                  aria-label="Saved usage preview"
+                >
+                  <MarkdownContent value={currentUsage} />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           <div className="flex justify-end">
             <Button
               type="submit"

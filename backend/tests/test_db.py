@@ -150,14 +150,16 @@ def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None
             row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()
         }
         row = conn.execute(
-            "SELECT description, repo_url FROM items WHERE id = ?",
+            "SELECT description, repo_url, usage FROM items WHERE id = ?",
             ("old-root",),
         ).fetchone()
 
     assert "description" in columns
     assert "repo_url" in columns
+    assert "usage" in columns
     assert row["description"] == ""
     assert row["repo_url"] is None
+    assert row["usage"] == ""
 
 
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:
