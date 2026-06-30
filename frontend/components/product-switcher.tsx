@@ -108,15 +108,15 @@ export function ProductSwitcher({
   const products = React.useMemo(() => productRootOptions(items), [items])
   const searchOptions = React.useMemo(() => itemSearchOptions(items), [items])
   const suggestedOptions = React.useMemo(() => {
-    const trimmedQuery = query.trim().toLocaleLowerCase()
+    const trimmedQuery = query.trim().toLowerCase()
     if (!trimmedQuery) {
       return []
     }
 
     return searchOptions.filter(
       (item) =>
-        item.id.toLocaleLowerCase().includes(trimmedQuery) ||
-        item.title.toLocaleLowerCase().includes(trimmedQuery)
+        item.id.toLowerCase().includes(trimmedQuery) ||
+        item.title.toLowerCase().includes(trimmedQuery)
     )
   }, [query, searchOptions])
 
@@ -129,7 +129,7 @@ export function ProductSwitcher({
     const match = searchOptions.find(
       (item) =>
         item.id === trimmedQuery ||
-        item.title.toLocaleLowerCase() === trimmedQuery.toLocaleLowerCase()
+        item.title.toLowerCase() === trimmedQuery.toLowerCase()
     )
 
     if (match) {
