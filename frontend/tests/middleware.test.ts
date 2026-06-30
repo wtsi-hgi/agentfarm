@@ -2,7 +2,11 @@ import { NextRequest } from 'next/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseSessionIdentity } from '@/lib/session'
-import { isOwnerOnlyMutation, isOwnerOnlyPagePath, middleware } from '@/middleware'
+import {
+  isOwnerOnlyMutation,
+  isOwnerOnlyPagePath,
+  middleware,
+} from '@/middleware'
 
 function sessionCookie(username: string, role: 'owner' | 'viewer'): string {
   return encodeURIComponent(
@@ -114,7 +118,7 @@ describe('middleware auth helpers', () => {
       'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree'
     )
     const [url, init] = fetch.mock.calls[0]
-    expect(url.toString()).toBe('https://127.0.0.1:8000/api/v1/auth/whoami')
+    expect(url.toString()).toBe('http://127.0.0.1:8000/api/v1/auth/whoami')
     expect(new Headers(init?.headers).get('x-agentfarm-session')).toBe(
       'mallory-token'
     )

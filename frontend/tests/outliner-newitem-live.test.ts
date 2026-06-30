@@ -170,9 +170,7 @@ async function submitFirstRoot(container: ParentNode) {
   }
 
   await act(async () => {
-    form.dispatchEvent(
-      new Event('submit', { bubbles: true, cancelable: true })
-    )
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   })
   await flushReact()
 }
@@ -195,15 +193,17 @@ describe('Outliner live newly added filter exemptions', () => {
     publishCreatedItem = null
     actionMocks.addDependency.mockResolvedValue({})
     actionMocks.createComment.mockResolvedValue({})
-    actionMocks.createItem.mockImplementation(async (input: CreateItemInput) => {
-      const created = item({
-        id: 'created-session-item',
-        title: input.title,
-        mode: 'prompt-agent',
-      })
-      publishCreatedItem?.(created)
-      return created
-    })
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-session-item',
+          title: input.title,
+          mode: 'prompt-agent',
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
     actionMocks.createMarker.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})

@@ -216,8 +216,12 @@ frontend/.pnpm/
 frontend/.env.local
 frontend/.env
 frontend/build/
+frontend/playwright-report/
+frontend/test-results/
 
 logs/
+
+.tmp/
 
 # AgentFarm data dirs (default AGENTFARM_DATA_DIR=data): hold the SQLite DB and
 # the markdown mirror's own nested git repo. Must never enter the app repo.

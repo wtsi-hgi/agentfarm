@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PORT=${BACKEND_PORT:-8000}
+RELOAD=${UVICORN_RELOAD:-1}
 
 if [ -f ".venv/bin/activate" ]; then
   # shellcheck disable=SC1091
@@ -27,6 +28,12 @@ TLS_CERT="$(printf '%s\n' "${TLS_PATHS}" | sed -n '1p')"
 TLS_KEY="$(printf '%s\n' "${TLS_PATHS}" | sed -n '2p')"
 
 echo "Starting uvicorn with HTTPS on port ${PORT}"
-uvicorn main:app --host 0.0.0.0 --port "${PORT}" --reload \
-  --ssl-certfile "${TLS_CERT}" \
-  --ssl-keyfile "${TLS_KEY}"
+if [[ "${RELOAD}" == "0" || "${RELOAD}" == "false" || "${RELOAD}" == "False" ]]; then
+  uvicorn main:app --host 0.0.0.0 --port "${PORT}" \
+    --ssl-certfile "${TLS_CERT}" \
+    --ssl-keyfile "${TLS_KEY}"
+else
+  uvicorn main:app --host 0.0.0.0 --port "${PORT}" --reload \
+    --ssl-certfile "${TLS_CERT}" \
+    --ssl-keyfile "${TLS_KEY}"
+fi

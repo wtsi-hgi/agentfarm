@@ -1,21 +1,32 @@
-import { Agent } from 'undici'
+import { Agent, fetch as undiciFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici')
+  return {
+    ...actual,
+    fetch: vi.fn(),
+  }
+})
+
+const mockedUndiciFetch = vi.mocked(undiciFetch)
+
 describe('backend client TLS dispatch', () => {
   afterEach(() => {
+    vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
     vi.resetModules()
   })
 
   it('constructs a relaxed TLS dispatcher for local https backend origins', async () => {
     vi.stubEnv('BACKEND_URL', 'https://127.0.0.1:8000')
-    const fetch = vi.fn().mockResolvedValue(
+    mockedUndiciFetch.mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         headers: { 'content-type': 'application/json' },
-      })
+      }) as Awaited<ReturnType<typeof undiciFetch>>
     )
-    vi.stubGlobal('fetch', fetch)
 
     const { backendJson, createBackendDispatcher } =
       await import('@/lib/backend-client')
@@ -32,7 +43,7 @@ describe('backend client TLS dispatch', () => {
 
     await backendJson('/api/v1/health', z.object({ ok: z.boolean() }))
 
-    const [url, init] = fetch.mock.calls[0]
+    const [url, init] = mockedUndiciFetch.mock.calls[0]
     expect(url.toString()).toBe('https://127.0.0.1:8000/api/v1/health')
     expect(init?.dispatcher).toBeDefined()
     expect(init?.dispatcher).toMatchObject({
@@ -86,18 +97,17 @@ describe('backend client TLS dispatch', () => {
   it('defaults to the HTTPS dev backend origin when BACKEND_URL is absent', async () => {
     vi.stubEnv('BACKEND_URL', undefined)
     vi.stubEnv('BACKEND_PORT', '9443')
-    const fetch = vi.fn().mockResolvedValue(
+    mockedUndiciFetch.mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok' }), {
         headers: { 'content-type': 'application/json' },
-      })
+      }) as Awaited<ReturnType<typeof undiciFetch>>
     )
-    vi.stubGlobal('fetch', fetch)
 
     const { backendJson } = await import('@/lib/backend-client')
 
     await backendJson('/api/v1/health', z.object({ status: z.string() }))
 
-    const [url, init] = fetch.mock.calls[0]
+    const [url, init] = mockedUndiciFetch.mock.calls[0]
     expect(url.toString()).toBe('https://127.0.0.1:9443/api/v1/health')
     expect(init?.dispatcher).toBeDefined()
     expect(init?.dispatcher).toMatchObject({

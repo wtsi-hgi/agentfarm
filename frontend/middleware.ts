@@ -55,7 +55,9 @@ export function isOwnerOnlyPagePath(pathname: string): boolean {
   return pathname === '/owner' || pathname.startsWith('/owner/')
 }
 
-async function verifySessionToken(sessionToken: string): Promise<WhoAmI | null> {
+async function verifySessionToken(
+  sessionToken: string
+): Promise<WhoAmI | null> {
   try {
     return await backendJson('/api/v1/auth/whoami', whoamiSchema, {
       headers: {

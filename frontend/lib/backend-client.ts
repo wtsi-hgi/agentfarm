@@ -1,4 +1,4 @@
-import { Agent, type Dispatcher } from 'undici'
+import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici'
 import { type ZodSchema } from 'zod'
 
 import { errorResponseSchema } from './contracts'
@@ -20,7 +20,9 @@ function isLoopbackIpv4(hostname: string): boolean {
   const values = octets.map((octet) =>
     /^\d+$/.test(octet) ? Number(octet) : Number.NaN
   )
-  return values[0] === 127 && values.every((value) => value >= 0 && value <= 255)
+  return (
+    values[0] === 127 && values.every((value) => value >= 0 && value <= 255)
+  )
 }
 
 function isLocalBackendOrigin(origin: URL): boolean {
@@ -107,7 +109,9 @@ export async function backendJson<T>(
     requestInit.dispatcher = backendDispatcher
   }
 
-  const response = await fetch(url, requestInit)
+  const response = (await (requestInit.dispatcher
+    ? undiciFetch(url, requestInit)
+    : fetch(url, requestInit))) as Response
 
   const contentType = response.headers.get('content-type') ?? ''
   const isJson = contentType.includes('application/json')
