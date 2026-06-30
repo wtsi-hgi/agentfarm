@@ -170,8 +170,8 @@ async def create_item(
         },
     )
 
-    # Clean any legacy generated edges for this sibling group; creation itself
-    # does not derive dependencies from order.
+    # Clean any legacy generated edges for this sibling group. The current
+    # section-item chain is derived live from sort order rather than stored.
     graph.regenerate_group(conn, payload.parent_id)
 
     row = conn.execute(
@@ -200,8 +200,9 @@ async def delete_item(
     is hand-deleted.
 
     Because the deleted item's incident dependency edges were cascade-removed,
-    the captured sibling group only needs legacy implicit-edge cleanup. Sibling
-    order does not create replacement dependencies. An unknown id is 404.
+    the captured sibling group only needs legacy implicit-edge cleanup. Any
+    replacement section-item chain is derived live from the remaining sort
+    order, not written as dependency rows. An unknown id is 404.
     """
     existing = conn.execute(
         "SELECT parent_id FROM items WHERE id = ?", (item_id,)
@@ -338,8 +339,9 @@ async def move_item(
     2. **422** ``cannot move into own descendant`` if ``new_parent_id`` is the
        item itself or any descendant of it -- such a move would detach a cycle of
        items from the tree.
-    3. Moving/reordering does not create dependency edges, so dependency-cycle
-       rejection is only needed when adding explicit dependency edges.
+    3. Moving/reordering plain leaves inside a section changes the live
+       implicit section chain, so moves that would create an effective
+       dependency cycle are rejected.
 
     G2 (merge) and G3 (split) are built from this endpoint plus create/delete and
     need no separate routes (spec: G2, G3).
@@ -367,9 +369,13 @@ async def move_item(
     ):
         raise HTTPException(status_code=422, detail="cannot move into own descendant")
 
-    # Kept as a compatibility seam; with order-independent siblings this is
-    # always false because moves do not add dependency edges.
-    if graph.move_would_create_cycle(conn, item_id, new_parent_id, after_id=after_id):
+    if graph.move_would_create_cycle(
+        conn,
+        item_id,
+        new_parent_id,
+        after_id=after_id,
+        as_first_child=place_first,
+    ):
         raise HTTPException(status_code=409, detail="dependency cycle rejected")
 
     tree.reparent_item(

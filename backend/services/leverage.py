@@ -9,17 +9,19 @@ An item is actionable iff ALL of:
 * it is a LEAF (has no children) -- containers are NEVER actionable;
 * it is NOT complete (its own state is not ``done``/``abandoned``);
 * ``blocked_external`` is false; and
-* EVERY dependency target attached to the item OR any ancestor section is
-  complete. A section-level dependency gates all leaves nested inside that
-  section. A dependency on a container is satisfied only when the whole
-  container is done, using :func:`services.tree.is_complete`.
+* EVERY dependency target attached to the item, any ancestor section, or the
+  live implicit section-item chain is complete. A section-level dependency
+  gates all leaves nested inside that section. Plain leaf items inside the same
+  non-root section also depend on the previous plain leaf by current sibling
+  order. A dependency on a container is satisfied only when the whole container
+  is done, using :func:`services.tree.is_complete`.
 
 Unblock leverage
 ----------------
-``Downstream(L)`` is every open leaf whose own dependency edges, or inherited
-ancestor-section dependency edges, depend on ``L`` directly or transitively.
-``blocked_external`` excludes a leaf from actionability, but not from downstream
-membership.
+``Downstream(L)`` is every open leaf whose own dependency edges, inherited
+ancestor-section dependency edges, or implicit section-item chain edges depend
+on ``L`` directly or transitively. ``blocked_external`` excludes a leaf from
+actionability, but not from downstream membership.
 """
 
 from __future__ import annotations
@@ -47,22 +49,69 @@ def _self_and_ancestor_ids(conn: sqlite3.Connection, item_id: str) -> list[str]:
     return ids
 
 
+def _is_leaf(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Return whether ``item_id`` has no children."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM items WHERE parent_id = ? LIMIT 1", (item_id,)
+        ).fetchone()
+        is None
+    )
+
+
+def _section_leaf_sibling_ids_in_order(
+    conn: sqlite3.Connection, parent_id: str
+) -> list[str]:
+    """Return plain leaf children of ``parent_id`` in visual sibling order."""
+    rows = conn.execute(
+        "SELECT id FROM items WHERE parent_id = ? ORDER BY sort_order, id",
+        (parent_id,),
+    ).fetchall()
+    return [row["id"] for row in rows if _is_leaf(conn, row["id"])]
+
+
+def _implicit_previous_section_leaf_id(
+    conn: sqlite3.Connection, item_id: str
+) -> str | None:
+    """Return the previous plain leaf this section item implicitly depends on."""
+    row = conn.execute(
+        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if row is None or row["parent_id"] is None or not _is_leaf(conn, item_id):
+        return None
+
+    sibling_ids = _section_leaf_sibling_ids_in_order(conn, row["parent_id"])
+    try:
+        index = sibling_ids.index(item_id)
+    except ValueError:
+        return None
+    return sibling_ids[index - 1] if index > 0 else None
+
+
 def _dependency_target_ids(conn: sqlite3.Connection, item_id: str) -> list[str]:
-    """Return dependency targets for ``item_id`` and ancestor sections.
+    """Return effective dependency targets for ``item_id``.
 
     Dependencies attached to a container/root section apply to every descendant
     leaf, so actionability checks the item's own edges plus each ancestor's
-    edges.
+    edges. Plain leaf children inside one non-root section also inherit the live
+    chain target: the previous plain leaf by current sibling order.
     """
     scope_ids = _self_and_ancestor_ids(conn, item_id)
+    target_ids: list[str] = []
     if not scope_ids:
-        return []
+        return target_ids
+
     placeholders = ",".join("?" for _ in scope_ids)
     rows = conn.execute(
         f"SELECT DISTINCT to_id FROM dependencies WHERE from_id IN ({placeholders})",
         tuple(scope_ids),
     ).fetchall()
-    return [row["to_id"] for row in rows]
+    target_ids.extend(row["to_id"] for row in rows)
+
+    implicit_target_id = _implicit_previous_section_leaf_id(conn, item_id)
+    if implicit_target_id is not None and implicit_target_id not in target_ids:
+        target_ids.append(implicit_target_id)
+    return target_ids
 
 
 def is_actionable(conn: sqlite3.Connection, item_id: str) -> bool:
@@ -119,16 +168,6 @@ def actionable_item_ids(conn: sqlite3.Connection) -> set[str]:
     """
     rows = conn.execute("SELECT id FROM items").fetchall()
     return {row["id"] for row in rows if is_actionable(conn, row["id"])}
-
-
-def _is_leaf(conn: sqlite3.Connection, item_id: str) -> bool:
-    """Return whether ``item_id`` has no children."""
-    return (
-        conn.execute(
-            "SELECT 1 FROM items WHERE parent_id = ? LIMIT 1", (item_id,)
-        ).fetchone()
-        is None
-    )
 
 
 def _open_leaf_ids(conn: sqlite3.Connection) -> list[str]:
@@ -190,7 +229,8 @@ def depends_on(conn: sqlite3.Connection, item_id: str, target_id: str) -> bool:
     """Return whether ``item_id`` effectively depends on ``target_id``.
 
     The effective dependency set is the item's own explicit ``>needs:`` edges
-    plus dependency edges inherited from all ancestor sections.
+    plus dependency edges inherited from all ancestor sections and any live
+    implicit previous-leaf edge in its section.
     """
     return any(
         _dependency_path_reaches(conn, dependency_id, target_id, set())

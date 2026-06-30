@@ -1,9 +1,9 @@
 """Acceptance tests for dependency behavior.
 
-The corrected v1 dependency model treats the tree as structure, not sequencing:
-siblings at root and inside sections are independent by default. Dependencies
-are explicit edges, and an edge attached to a container section gates all leaves
-nested under that section.
+The v1 dependency model keeps tree structure separate from stored dependency
+rows: explicit edges are persisted, while the default leaf-item chain inside a
+section is derived live from current sibling order. Roots, sections, and
+subsections stay independent siblings unless the user records explicit edges.
 """
 
 from __future__ import annotations
@@ -135,6 +135,18 @@ def _actionable(db_path) -> set[str]:
         return set(leverage.actionable_item_ids(conn))
 
 
+def _depends_on(db_path, item_id: str, target_id: str) -> bool:
+    """Return effective dependency reachability through the service boundary."""
+    with get_connection(db_path) as conn:
+        return leverage.depends_on(conn, item_id, target_id)
+
+
+def _downstream(db_path, item_id: str) -> set[str]:
+    """Return downstream leaf ids through the service boundary."""
+    with get_connection(db_path) as conn:
+        return leverage.downstream_item_ids(conn, item_id)
+
+
 async def _build_outline(client: AsyncClient) -> dict[str, str]:
     """Create the outline ``A; B(B1,B2); C`` and return name -> id."""
     a = await _create(client, {"title": "A"})
@@ -168,11 +180,75 @@ async def _build_cross_product_pair(client: AsyncClient) -> dict[str, str]:
 
 @pytest.mark.anyio
 async def test_siblings_do_not_gain_implicit_dependencies(fresh_db) -> None:
-    """Sibling order at root and within a section creates no dependency rows."""
+    """Sibling order is derived live and still creates no dependency rows."""
     async with _client() as client:
         await _build_outline(client)
 
     assert _dependency_edges(fresh_db) == set()
+
+
+@pytest.mark.anyio
+async def test_section_leaf_siblings_chain_by_current_sort_order(fresh_db) -> None:
+    """Plain leaf items inside one section wait on their previous leaf."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        first = await _create(
+            client, {"title": "first", "parent_id": section.json()["id"]}
+        )
+        second = await _create(
+            client, {"title": "second", "parent_id": section.json()["id"]}
+        )
+        third = await _create(
+            client, {"title": "third", "parent_id": section.json()["id"]}
+        )
+        tree = await _tree(client)
+
+    section_id = section.json()["id"]
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+    third_id = third.json()["id"]
+
+    assert _dependency_edges(fresh_db) == set()
+    assert _actionable(fresh_db) == {first_id}
+    assert _depends_on(fresh_db, second_id, first_id) is True
+    assert _depends_on(fresh_db, third_id, second_id) is True
+    assert _depends_on(fresh_db, third_id, first_id) is True
+    assert _downstream(fresh_db, first_id) == {second_id, third_id}
+
+    payload = tree.json()
+    assert _tree_item(payload, section_id)["actionable"] is False
+    assert _tree_item(payload, first_id)["actionable"] is True
+    assert _tree_item(payload, second_id)["actionable"] is False
+    assert _tree_item(payload, third_id)["actionable"] is False
+
+
+@pytest.mark.anyio
+async def test_section_leaf_chain_skips_subsection_siblings(fresh_db) -> None:
+    """Containers do not become implicit links in a section's leaf chain."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        first = await _create(
+            client, {"title": "first", "parent_id": section.json()["id"]}
+        )
+        subsection = await _create(
+            client, {"title": "Subsection", "parent_id": section.json()["id"]}
+        )
+        nested = await _create(
+            client, {"title": "nested", "parent_id": subsection.json()["id"]}
+        )
+        second = await _create(
+            client, {"title": "second", "parent_id": section.json()["id"]}
+        )
+
+    first_id = first.json()["id"]
+    subsection_id = subsection.json()["id"]
+    nested_id = nested.json()["id"]
+    second_id = second.json()["id"]
+
+    assert _actionable(fresh_db) == {first_id, nested_id}
+    assert _depends_on(fresh_db, second_id, first_id) is True
+    assert _depends_on(fresh_db, second_id, subsection_id) is False
+    assert _depends_on(fresh_db, second_id, nested_id) is False
 
 
 @pytest.mark.anyio
@@ -448,10 +524,34 @@ async def test_post_dependency_rejects_cycle_through_container_target(
 
 
 @pytest.mark.anyio
+async def test_post_dependency_rejects_cycle_through_section_leaf_chain(
+    fresh_db,
+) -> None:
+    """D2: explicit edges cannot point back through a section's implicit chain."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        first = await _create(
+            client, {"title": "first", "parent_id": section.json()["id"]}
+        )
+        second = await _create(
+            client, {"title": "second", "parent_id": section.json()["id"]}
+        )
+
+        rejected = await _post_dependency(
+            client,
+            {"from_id": first.json()["id"], "to_id": second.json()["id"]},
+        )
+
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _dependency_edges(fresh_db) == set()
+
+
+@pytest.mark.anyio
 async def test_delete_dependency_restores_section_leaf_actionability(
     fresh_db,
 ) -> None:
-    """D3: deleting an explicit edge lets the depending section run independently."""
+    """D3: deleting an explicit edge leaves only the section's own leaf chain."""
     async with _client() as client:
         ids = await _build_outline(client)
         created = await _post_dependency(
@@ -468,7 +568,7 @@ async def test_delete_dependency_restores_section_leaf_actionability(
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted": True, "id": edge_id}
     assert _dependency_rows(fresh_db) == []
-    assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["B2"], ids["C"]}
+    assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["C"]}
 
 
 @pytest.mark.anyio
@@ -544,12 +644,25 @@ async def test_delete_dependency_unknown_id_returns_404(fresh_db) -> None:
 
 
 @pytest.mark.anyio
-async def test_independent_sibling_leaves_are_actionable_together(fresh_db) -> None:
-    """With no explicit edges, every open leaf is actionable at once."""
+async def test_root_sibling_leaves_are_actionable_together(fresh_db) -> None:
+    """Root siblings are independent unless explicit edges link them."""
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        c = await _create(client, {"title": "C"})
+
+    assert _actionable(fresh_db) == {a.json()["id"], b.json()["id"], c.json()["id"]}
+
+
+@pytest.mark.anyio
+async def test_outline_leaf_children_chain_but_root_siblings_stay_independent(
+    fresh_db,
+) -> None:
+    """Only the first open plain item in a section is actionable by default."""
     async with _client() as client:
         ids = await _build_outline(client)
 
-    assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["B2"], ids["C"]}
+    assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["C"]}
 
 
 @pytest.mark.anyio
@@ -581,7 +694,7 @@ async def test_section_dependency_is_inherited_by_descendant_leaves(fresh_db) ->
         done = await _patch(client, ids["A"], {"state": "done"})
         assert done.status_code == 200
 
-    assert _actionable(fresh_db) == {ids["B1"], ids["B2"], ids["C"]}
+    assert _actionable(fresh_db) == {ids["B1"], ids["C"]}
 
 
 @pytest.mark.anyio
@@ -592,7 +705,7 @@ async def test_dependency_on_container_waits_for_whole_section(fresh_db) -> None
 
         _insert_explicit_edge(fresh_db, ids["C"], ids["B"])
 
-        assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["B2"]}
+        assert _actionable(fresh_db) == {ids["A"], ids["B1"]}
 
         done_b1 = await _patch(client, ids["B1"], {"state": "done"})
         assert done_b1.status_code == 200

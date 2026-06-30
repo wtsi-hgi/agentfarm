@@ -150,6 +150,39 @@ describe('Outliner', () => {
     expect(items).toEqual(before)
   })
 
+  it('keeps a section leaf chain in sort order during priority projection', () => {
+    const items = [
+      item({
+        id: 'section',
+        title: 'Section',
+        actionable: false,
+      }),
+      item({
+        id: 'first',
+        title: 'First',
+        parent_id: 'section',
+        sort_order: 1,
+        complete: true,
+        state: 'done',
+        actionable: false,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['section']), {
+        leverageSort: true,
+        priorityItems: [{ id: 'second', rank: 1 }],
+      }).map((row) => row.item.id)
+    ).toEqual(['section', 'first', 'second'])
+  })
+
   it('keeps collapsed child data available for expansion', () => {
     const items = [
       item({

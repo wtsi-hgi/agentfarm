@@ -35,6 +35,10 @@ async def _post_dependency(client: AsyncClient, body: dict):
     return await client.post("/api/v1/dependencies", json=body)
 
 
+async def _move(client: AsyncClient, item_id: str, body: dict):
+    return await client.post(f"/api/v1/items/{item_id}/move", json=body)
+
+
 async def _priority(client: AsyncClient):
     return await client.get("/api/v1/priority")
 
@@ -252,6 +256,66 @@ async def test_priority_order_does_not_mutate_tree_order_or_edges_h3(
     assert child_titles(ids["Beta"]) == ["B1", "B2", "B3"]
     assert child_titles(ids["Gamma"]) == ["G1", "G2"]
     assert _dependency_edges(fresh_db) == before_edges
+
+
+@pytest.mark.anyio
+async def test_priority_uses_section_leaf_chain_and_reorder_updates_it(
+    fresh_db,
+) -> None:
+    """Plain section items are prioritized in current visual chain order."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        first = await _create(
+            client,
+            {
+                "title": "first",
+                "parent_id": section.json()["id"],
+                "effort": "quick",
+            },
+        )
+        second = await _create(
+            client,
+            {
+                "title": "second",
+                "parent_id": section.json()["id"],
+                "effort": "medium",
+            },
+        )
+        third = await _create(
+            client,
+            {
+                "title": "third",
+                "parent_id": section.json()["id"],
+                "effort": "long",
+                "mode": "prompt-agent",
+            },
+        )
+
+        initial_priority = await _priority(client)
+        first_id = first.json()["id"]
+        second_id = second.json()["id"]
+        third_id = third.json()["id"]
+        initial_downstream = _downstream(fresh_db, first_id)
+        initial_score = _score(fresh_db, first_id)
+        moved = await _move(
+            client,
+            third_id,
+            {"new_parent_id": section.json()["id"], "position": "first"},
+        )
+        reordered_priority = await _priority(client)
+        reordered_downstream = _downstream(fresh_db, third_id)
+        reordered_score = _score(fresh_db, third_id)
+
+    assert initial_priority.status_code == 200
+    assert [entry["id"] for entry in initial_priority.json()] == [first_id]
+    assert initial_downstream == {second_id, third_id}
+    assert initial_score == 22
+
+    assert moved.status_code == 200
+    assert reordered_priority.status_code == 200
+    assert [entry["id"] for entry in reordered_priority.json()] == [third_id]
+    assert reordered_downstream == {first_id, second_id}
+    assert reordered_score == 1.0
 
 
 @pytest.mark.anyio

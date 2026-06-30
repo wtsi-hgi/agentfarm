@@ -1,15 +1,17 @@
 """Dependency graph helpers and the shared cycle-rejection predicate.
 
 A dependency edge ``from_id -> to_id`` means "``from_id`` depends on (needs)
-``to_id``". Tree structure is organisational only in the corrected v1 model:
-sibling order does not create dependency edges. Root items and subsections are
-therefore independent until the user records an explicit ``>needs:`` edge.
+``to_id``". Explicit user edges are stored in ``dependencies``. Plain leaf
+items inside the same non-root section also form a live implicit chain by
+current sibling order, but that chain is derived when evaluating graph
+semantics rather than persisted as rows. Root items and container siblings stay
+independent unless the user records an explicit ``>needs:`` edge.
 
 The ``dependencies.kind`` discriminator is retained for compatibility with the
 phase-1 schema and earlier phase work, but v1 creates user-authored
 ``explicit`` edges only. Structural mutations call :func:`regenerate_group` to
 discard any stale ``implicit`` rows left by older code paths; the function
-deliberately does not derive new edges from sibling order.
+deliberately does not write new edges from sibling order.
 """
 
 from __future__ import annotations
@@ -34,6 +36,36 @@ def _child_ids_in_order(conn: sqlite3.Connection, parent_id: str | None) -> list
             (parent_id,),
         ).fetchall()
     return [row["id"] for row in rows]
+
+
+def _is_leaf(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Return whether ``item_id`` has no children."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM items WHERE parent_id = ? LIMIT 1", (item_id,)
+        ).fetchone()
+        is None
+    )
+
+
+def _implicit_previous_leaf_id(conn: sqlite3.Connection, item_id: str) -> str | None:
+    """Return the previous plain leaf in ``item_id``'s section, if any."""
+    row = conn.execute(
+        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if row is None or row["parent_id"] is None or not _is_leaf(conn, item_id):
+        return None
+
+    leaf_ids = [
+        child_id
+        for child_id in _child_ids_in_order(conn, row["parent_id"])
+        if _is_leaf(conn, child_id)
+    ]
+    try:
+        index = leaf_ids.index(item_id)
+    except ValueError:
+        return None
+    return leaf_ids[index - 1] if index > 0 else None
 
 
 def _delete_group_implicit_edges(
@@ -124,6 +156,10 @@ def _reachable_successor_ids(conn: sqlite3.Connection, item_id: str) -> set[str]
         successors.add(target_id)
         successors.update(_descendant_ids(conn, target_id))
 
+    implicit_target_id = _implicit_previous_leaf_id(conn, item_id)
+    if implicit_target_id is not None:
+        successors.add(implicit_target_id)
+
     return successors
 
 
@@ -159,14 +195,124 @@ def move_would_create_cycle(
     new_parent_id: str | None,
     *,
     after_id: str | None = None,
+    as_first_child: bool = False,
 ) -> bool:
     """Return whether moving ``item_id`` would create a dependency cycle.
 
-    Moving or reordering items no longer creates dependency edges. Dependency
-    cycles are introduced only by dependency-edge insertion, guarded by
-    :func:`would_create_cycle`, while tree parent cycles are guarded by
-    :func:`services.tree.is_self_or_descendant`.
+    The move is evaluated against the effective graph that would exist after
+    the structural change. Explicit dependency rows are preserved, inherited
+    section dependencies are recomputed through the prospective parent chain,
+    and plain leaf siblings inside non-root sections get prospective implicit
+    predecessor links from their new sibling order. No rows are written here.
     """
+    rows = {
+        row["id"]: dict(row)
+        for row in conn.execute(
+            "SELECT id, parent_id, sort_order FROM items ORDER BY sort_order, id"
+        ).fetchall()
+    }
+    if item_id not in rows:
+        return False
+
+    def current_children(parent_id: str | None) -> list[str]:
+        return [
+            candidate_id
+            for candidate_id, row in sorted(
+                rows.items(),
+                key=lambda entry: (entry[1]["sort_order"], entry[0]),
+            )
+            if row["parent_id"] == parent_id and candidate_id != item_id
+        ]
+
+    parent_ids = {None, new_parent_id}
+    parent_ids.update(row["parent_id"] for row in rows.values())
+    parent_ids.update(rows)
+
+    children_after: dict[str | None, list[str]] = {}
+    for parent_id in parent_ids:
+        ordered = current_children(parent_id)
+        if parent_id == new_parent_id:
+            if as_first_child:
+                insertion_index = 0
+            elif after_id is not None and after_id in ordered:
+                insertion_index = ordered.index(after_id) + 1
+            else:
+                insertion_index = len(ordered)
+            ordered.insert(insertion_index, item_id)
+        children_after[parent_id] = ordered
+
+    parent_after = {
+        candidate_id: row["parent_id"] for candidate_id, row in rows.items()
+    }
+    parent_after[item_id] = new_parent_id
+
+    def descendants_after(root_id: str) -> set[str]:
+        descendants: set[str] = set()
+        frontier = list(children_after.get(root_id, []))
+        while frontier:
+            current = frontier.pop()
+            if current in descendants:
+                continue
+            descendants.add(current)
+            frontier.extend(children_after.get(current, []))
+        return descendants
+
+    def self_and_ancestors_after(candidate_id: str) -> list[str]:
+        ids: list[str] = []
+        current: str | None = candidate_id
+        visited: set[str] = set()
+        while current is not None and current not in visited and current in rows:
+            visited.add(current)
+            ids.append(current)
+            current = parent_after.get(current)
+        return ids
+
+    def is_leaf_after(candidate_id: str) -> bool:
+        return len(children_after.get(candidate_id, [])) == 0
+
+    implicit_targets_after: dict[str, set[str]] = {}
+    for parent_id, child_ids in children_after.items():
+        if parent_id is None:
+            continue
+        leaf_ids = [child_id for child_id in child_ids if is_leaf_after(child_id)]
+        for previous_id, dependent_id in zip(leaf_ids, leaf_ids[1:]):
+            targets = implicit_targets_after.setdefault(dependent_id, set())
+            targets.add(previous_id)
+
+    def dependency_targets(item_ids: list[str]) -> set[str]:
+        if not item_ids:
+            return set()
+        placeholders = ",".join("?" for _ in item_ids)
+        dependency_rows = conn.execute(
+            f"""
+            SELECT DISTINCT to_id
+            FROM dependencies
+            WHERE from_id IN ({placeholders})
+            """,
+            tuple(item_ids),
+        ).fetchall()
+        return {row["to_id"] for row in dependency_rows}
+
+    def successor_ids(candidate_id: str) -> set[str]:
+        successors = descendants_after(candidate_id)
+        for target_id in dependency_targets(self_and_ancestors_after(candidate_id)):
+            successors.add(target_id)
+            successors.update(descendants_after(target_id))
+        successors.update(implicit_targets_after.get(candidate_id, set()))
+        return successors
+
+    for start_id in rows:
+        visited: set[str] = set()
+        frontier = list(successor_ids(start_id))
+        while frontier:
+            current = frontier.pop()
+            if current == start_id:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+            frontier.extend(successor_ids(current) - visited)
+
     return False
 
 

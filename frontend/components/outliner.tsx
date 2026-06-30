@@ -189,17 +189,64 @@ function makeChildMap(
     return rank
   }
 
-  for (const siblings of children.values()) {
-    siblings.sort((a, b) => {
-      if (order.leverageSort) {
-        const priorityOrder = bestPriorityRank(a) - bestPriorityRank(b)
-        if (priorityOrder !== 0) {
-          return priorityOrder
-        }
+  function treeOrder(a: TreeItem, b: TreeItem) {
+    return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
+  }
+
+  function priorityOrder(a: TreeItem, b: TreeItem) {
+    const rankOrder = bestPriorityRank(a) - bestPriorityRank(b)
+    return rankOrder !== 0 ? rankOrder : treeOrder(a, b)
+  }
+
+  function hasChildItems(item: TreeItem) {
+    return (children.get(item.id) ?? []).length > 0
+  }
+
+  function unitPriorityRank(unit: readonly TreeItem[]) {
+    return Math.min(...unit.map((item) => bestPriorityRank(item)))
+  }
+
+  function unitTreeOrder(unit: readonly TreeItem[]) {
+    return unit[0] ?? null
+  }
+
+  function sortSectionUnits(units: TreeItem[][]) {
+    units.sort((a, b) => {
+      const rankOrder = unitPriorityRank(a) - unitPriorityRank(b)
+      if (rankOrder !== 0) {
+        return rankOrder
       }
 
-      return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
+      const firstA = unitTreeOrder(a)
+      const firstB = unitTreeOrder(b)
+      if (!firstA || !firstB) {
+        return 0
+      }
+      return treeOrder(firstA, firstB)
     })
+    return units.flat()
+  }
+
+  for (const [parentId, siblings] of children.entries()) {
+    if (!order.leverageSort) {
+      siblings.sort(treeOrder)
+      continue
+    }
+
+    if (parentId === null) {
+      siblings.sort(priorityOrder)
+      continue
+    }
+
+    const treeOrderedSiblings = [...siblings].sort(treeOrder)
+    const leafChain = treeOrderedSiblings.filter((item) => !hasChildItems(item))
+    const sectionUnits = [
+      ...(leafChain.length > 0 ? [leafChain] : []),
+      ...treeOrderedSiblings
+        .filter((item) => hasChildItems(item))
+        .map((item) => [item]),
+    ]
+    siblings.splice(0, siblings.length, ...sortSectionUnits(sectionUnits))
   }
 
   return children

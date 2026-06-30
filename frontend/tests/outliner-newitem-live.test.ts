@@ -120,6 +120,35 @@ function SiblingCreationHarness() {
   return React.createElement(Outliner, { items })
 }
 
+function ChildSiblingCreationHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({
+      id: 'root',
+      title: 'Root',
+      actionable: false,
+      sort_order: 1,
+    }),
+    item({
+      id: 'current-child',
+      title: 'Item 1',
+      parent_id: 'root',
+      sort_order: 1,
+    }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, { items })
+}
+
 async function flushReact() {
   await act(async () => {
     await Promise.resolve()
@@ -165,6 +194,12 @@ function getItemInput(container: ParentNode, itemId: string) {
     throw new Error(`Missing item input: ${itemId}`)
   }
   return input
+}
+
+function getOutlinerItemIds(container: ParentNode) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  ).map((element) => element.dataset.outlinerItemId)
 }
 
 function getSelect(container: ParentNode, ariaLabel: string) {
@@ -406,5 +441,47 @@ describe('Outliner live newly added filter exemptions', () => {
     await typeThroughCurrentSelection(createdInput, 'Write docs')
 
     expect(createdInput.value).toBe('Write docs')
+  })
+
+  it('creates an Enter-created child sibling below the current child and selects it', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-child-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 2,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(
+      React.createElement(ChildSiblingCreationHarness)
+    )
+
+    await click(getButton(container, 'Expand item'))
+    const currentInput = getItemInput(container, 'current-child')
+    currentInput.setSelectionRange(
+      currentInput.value.length,
+      currentInput.value.length
+    )
+    await keyDown(currentInput, 'Enter')
+
+    const createdInput = getItemInput(container, 'created-child-sibling')
+
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: 'root',
+      after_id: 'current-child',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'root',
+      'current-child',
+      'created-child-sibling',
+    ])
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 })

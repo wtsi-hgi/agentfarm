@@ -50,6 +50,18 @@ const baseItem = {
   complete: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
+type MoveInput =
+  | {
+      new_parent_id?: string | null
+      position: 'first'
+      after_id?: never
+    }
+  | {
+      new_parent_id?: string | null
+      position?: 'after'
+      after_id?: string | null
+    }
+
 let roots: Root[] = []
 
 function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
@@ -66,18 +78,22 @@ async function flushReact() {
   })
 }
 
-async function render(items: TreeItem[]) {
+async function renderElement(element: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   roots.push(root)
 
   await act(async () => {
-    root.render(React.createElement(Outliner, { items }))
+    root.render(element)
   })
   await flushReact()
 
   return container
+}
+
+async function render(items: TreeItem[]) {
+  return renderElement(React.createElement(Outliner, { items }))
 }
 
 function outlinerItem(container: ParentNode, itemId: string) {
@@ -94,6 +110,79 @@ function button(element: ParentNode, ariaLabel: string) {
     throw new Error(`Missing button: ${ariaLabel}`)
   }
   return candidate
+}
+
+function renderedItemIds(container: ParentNode) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  ).map((element) => element.dataset.outlinerItemId)
+}
+
+function reorderItems(
+  currentItems: readonly TreeItem[],
+  itemId: string,
+  input: MoveInput
+): TreeItem[] {
+  const movedItem = currentItems.find((candidate) => candidate.id === itemId)
+  if (!movedItem) {
+    return [...currentItems]
+  }
+
+  const nextParentId = input.new_parent_id ?? movedItem.parent_id
+  const movedInDestination = {
+    ...movedItem,
+    parent_id: nextParentId,
+  }
+  const remainingItems = currentItems.filter(
+    (candidate) => candidate.id !== itemId
+  )
+  const destinationSiblings = remainingItems
+    .filter((candidate) => candidate.parent_id === nextParentId)
+    .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))
+
+  const insertionIndex =
+    input.position === 'first'
+      ? 0
+      : input.after_id
+        ? destinationSiblings.findIndex(
+            (candidate) => candidate.id === input.after_id
+          ) + 1 || destinationSiblings.length
+        : destinationSiblings.length
+
+  const reorderedDestination = [
+    ...destinationSiblings.slice(0, insertionIndex),
+    movedInDestination,
+    ...destinationSiblings.slice(insertionIndex),
+  ].map((candidate, index) => ({
+    ...candidate,
+    sort_order: index + 1,
+  }))
+  const rewrittenDestinationItems = new Map(
+    reorderedDestination.map((candidate) => [candidate.id, candidate])
+  )
+
+  return currentItems.map(
+    (candidate) => rewrittenDestinationItems.get(candidate.id) ?? candidate
+  )
+}
+
+function LocalReorderHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({ id: 'first', title: 'First', sort_order: 1 }),
+    item({ id: 'second', title: 'Second', sort_order: 2 }),
+    item({ id: 'third', title: 'Third', sort_order: 3 }),
+  ])
+
+  React.useEffect(() => {
+    actionMocks.moveItem.mockImplementation(
+      async (itemId: string, input: MoveInput) => {
+        setItems((current) => reorderItems(current, itemId, input))
+        return {}
+      }
+    )
+  }, [])
+
+  return React.createElement(Outliner, { items })
 }
 
 async function click(target: HTMLButtonElement) {
@@ -204,5 +293,34 @@ describe('Outliner reorder controls', () => {
       position: 'after',
       after_id: 'first',
     })
+  })
+
+  it('updates visible order and move controls after clicking an available move button', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+    expect(
+      button(outlinerItem(container, 'first'), 'Move item up').disabled
+    ).toBe(true)
+    expect(
+      button(outlinerItem(container, 'first'), 'Move item down').disabled
+    ).toBe(false)
+
+    await click(button(outlinerItem(container, 'first'), 'Move item down'))
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
+      new_parent_id: null,
+      position: 'after',
+      after_id: 'second',
+    })
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+    expect(
+      button(outlinerItem(container, 'second'), 'Move item up').disabled
+    ).toBe(true)
+    expect(
+      button(outlinerItem(container, 'first'), 'Move item up').disabled
+    ).toBe(false)
   })
 })
