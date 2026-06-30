@@ -63,8 +63,12 @@ type LiveOutlinerHarnessProps = {
   hideCreatedWithCallerFilter?: boolean
 }
 
+type LivePatch = Partial<Pick<TreeItem, 'effort' | 'mode' | 'state' | 'title'>>
+
 let roots: Root[] = []
 let publishCreatedItem: ((created: TreeItem) => void) | null = null
+let publishPatchedItem: ((itemId: string, patch: LivePatch) => void) | null =
+  null
 
 function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
   return {
@@ -89,9 +93,17 @@ function LiveOutlinerHarness({
         setHiddenItemIds([created.id])
       }
     }
+    publishPatchedItem = (itemId, patch) => {
+      setItems((current) =>
+        current.map((existing) =>
+          existing.id === itemId ? { ...existing, ...patch } : existing
+        )
+      )
+    }
 
     return () => {
       publishCreatedItem = null
+      publishPatchedItem = null
     }
   }, [hideCreatedWithCallerFilter])
 
@@ -196,6 +208,20 @@ function getItemInput(container: ParentNode, itemId: string) {
   return input
 }
 
+function getItemSelect(
+  container: ParentNode,
+  itemId: string,
+  ariaLabel: string
+) {
+  const select = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] select[aria-label="${ariaLabel}"]`
+  )
+  if (!(select instanceof HTMLSelectElement)) {
+    throw new Error(`Missing ${ariaLabel} select for ${itemId}`)
+  }
+  return select
+}
+
 function getOutlinerItemIds(container: ParentNode) {
   return Array.from(
     container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
@@ -294,6 +320,7 @@ describe('Outliner live newly added filter exemptions', () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true
     publishCreatedItem = null
+    publishPatchedItem = null
     actionMocks.addDependency.mockResolvedValue({})
     actionMocks.createComment.mockResolvedValue({})
     actionMocks.createItem.mockImplementation(
@@ -324,7 +351,12 @@ describe('Outliner live newly added filter exemptions', () => {
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
     actionMocks.outdentItem.mockResolvedValue({})
-    actionMocks.patchItem.mockResolvedValue({})
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) => {
+        publishPatchedItem?.(itemId, patch)
+        return {}
+      }
+    )
     window.requestAnimationFrame = (callback) => {
       callback(0)
       return 1
@@ -394,6 +426,32 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(hasOutlinerItem(container, 'created-session-item')).toBe(false)
     expect(hasFilterNotice(container)).toBe(false)
+  })
+
+  it('changes a created item state through a visible row control', async () => {
+    const container = await render(React.createElement(LiveOutlinerHarness))
+
+    await submitFirstRoot(container)
+
+    const stateSelect = getItemSelect(
+      container,
+      'created-session-item',
+      'Item state'
+    )
+    expect(stateSelect.value).toBe('not-started')
+
+    await changeSelect(stateSelect, 'review')
+
+    const updatedStateSelect = getItemSelect(
+      container,
+      'created-session-item',
+      'Item state'
+    )
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-session-item', {
+      state: 'review',
+    })
+    expect(updatedStateSelect.value).toBe('review')
+    expect(updatedStateSelect.selectedOptions[0]?.textContent).toBe('Review')
   })
 
   it('preserves caller-supplied newly added ids when local filters change', async () => {

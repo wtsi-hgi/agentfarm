@@ -24,7 +24,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ModeToggles } from '@/components/view-controls'
-import type { Mode, PriorityItem, TreeItem } from '@/lib/contracts'
+import type { Mode, PriorityItem, State, TreeItem } from '@/lib/contracts'
 import {
   applyRowKeyboardCommand,
   createFirstRoot,
@@ -668,6 +668,16 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
+  async function changeItemState(item: TreeItem, state: State) {
+    if (state === item.state) {
+      return
+    }
+
+    await mutationActions.patchItem(item.id, { state })
+    requestItemFocus(item.id)
+    setSelectedItemId(item.id)
+  }
+
   async function moveDraggedAfter(draggedItemId: string, targetItemId: string) {
     if (draggedItemId === targetItemId) {
       return
@@ -786,6 +796,7 @@ export function Outliner({
                       onMoveUp={moveUp}
                       onMoveDown={moveDown}
                       onOpenComments={openCommentsForItem}
+                      onChangeState={changeItemState}
                     />
                     {filteredOutNewlyAdded ? (
                       <div

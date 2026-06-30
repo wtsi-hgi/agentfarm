@@ -22,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { Mode, TreeItem } from '@/lib/contracts'
+import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import { cn } from '@/lib/utils'
 
@@ -33,6 +33,21 @@ export const MODE_COLOUR_MAP = {
   release: 'border-l-rose-500',
   spec: 'border-l-violet-500',
 } satisfies Record<Mode, string>
+
+const STATE_OPTIONS = [
+  { value: 'not-started', label: 'Not started' },
+  { value: 'spec', label: 'Spec' },
+  { value: 'implement', label: 'Implement' },
+  { value: 'review', label: 'Review' },
+  { value: 'merged', label: 'Merged' },
+  { value: 'released', label: 'Released' },
+  { value: 'done', label: 'Done' },
+  { value: 'abandoned', label: 'Abandoned' },
+] satisfies readonly { value: State; label: string }[]
+
+function selectedState(value: string): State | null {
+  return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
+}
 
 type OutlinerRowProps = {
   item: TreeItem
@@ -54,6 +69,7 @@ type OutlinerRowProps = {
   onMoveUp: (item: TreeItem) => Promise<void>
   onMoveDown: (item: TreeItem) => Promise<void>
   onOpenComments: (itemId: string) => void
+  onChangeState: (item: TreeItem, state: State) => Promise<void>
 }
 
 export function OutlinerRow({
@@ -72,6 +88,7 @@ export function OutlinerRow({
   onMoveUp,
   onMoveDown,
   onOpenComments,
+  onChangeState,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
@@ -99,6 +116,15 @@ export function OutlinerRow({
 
   function runKeyboardCommand(command: RowKeyboardCommand) {
     void run(() => onKeyboardCommand(item, draft, command))
+  }
+
+  function handleStateChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const state = selectedState(event.currentTarget.value)
+    if (!state || state === item.state) {
+      return
+    }
+
+    void run(() => onChangeState(item, state))
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -209,7 +235,23 @@ export function OutlinerRow({
           ) : null}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <select
+            aria-label="Item state"
+            className={cn(
+              'border-border bg-background text-foreground focus-visible:ring-ring h-8 w-32 rounded-md border px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
+              item.complete && 'bg-muted text-muted-foreground'
+            )}
+            value={item.state}
+            disabled={pending}
+            onChange={handleStateChange}
+          >
+            {STATE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
