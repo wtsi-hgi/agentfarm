@@ -92,9 +92,19 @@ export const priorityResponseSchema = z.array(priorityItemSchema)
 
 export type PriorityItem = z.infer<typeof priorityItemSchema>
 
+export const treeDependencyEdgeSchema = z
+  .object({
+    id: z.string(),
+    slug: z.string(),
+  })
+  .strict()
+
+export type TreeDependencyEdge = z.infer<typeof treeDependencyEdgeSchema>
+
 export const treeItemSchema = itemSchema
   .extend({
     needs: z.array(z.string()),
+    needs_edges: z.array(treeDependencyEdgeSchema),
     actionable: z.boolean(),
     complete: z.boolean(),
   })

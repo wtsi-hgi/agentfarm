@@ -6,6 +6,7 @@ import { Plus } from 'lucide-react'
 import {
   addDependency,
   createItem,
+  deleteDependency,
   deleteItem,
   indentItem,
   moveItem,
@@ -346,6 +347,7 @@ export function Outliner({
     () => ({
       patchItem,
       createDependency: addDependency,
+      deleteDependency,
       createItem,
       indentItem,
       outdentItem,

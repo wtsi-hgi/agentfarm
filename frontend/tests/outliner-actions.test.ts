@@ -422,6 +422,7 @@ describe('outliner mutation Server Actions', () => {
     const treeItem = {
       ...baseItem,
       needs: [],
+      needs_edges: [],
       actionable: true,
       complete: false,
     }

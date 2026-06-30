@@ -223,13 +223,40 @@ def is_self_or_descendant(
     return False
 
 
+def explicit_needs_edges(
+    conn: sqlite3.Connection, from_id: str
+) -> list[dict[str, str]]:
+    """Return explicit dependency edge ids with their current target slugs.
+
+    Only ``kind='explicit'`` edges are considered; legacy implicit rows are not
+    shown as ``>needs:`` labels. Each target id (``to_id``) is resolved to its
+    current slug, so the labels track renames. The result is sorted by current
+    slug and edge id for a stable, deterministic order.
+
+    Args:
+        conn: Open connection (within the caller's transaction).
+        from_id: The depending item whose explicit ``>needs:`` targets are read.
+    """
+    rows = conn.execute(
+        """
+        SELECT dep.id AS id, target.slug AS slug
+        FROM dependencies AS dep
+        JOIN items AS target ON target.id = dep.to_id
+        WHERE dep.from_id = ? AND dep.kind = 'explicit'
+        ORDER BY target.slug, dep.id
+        """,
+        (from_id,),
+    ).fetchall()
+    return [{"id": row["id"], "slug": row["slug"]} for row in rows]
+
+
 def explicit_needs_slugs(conn: sqlite3.Connection, from_id: str) -> list[str]:
     """Return the current slugs of ``from_id``'s explicit dependency targets.
 
     Only ``kind='explicit'`` edges are considered; legacy implicit rows are not
     shown as ``>needs:`` labels. Each target id (``to_id``) is resolved to its
     current slug, so the labels track renames. The result is sorted by current
-    slug for a stable, deterministic order.
+    slug and edge id for a stable, deterministic order.
 
     Reusable by the markdown mirror (L1), which renders the same
     ``(needs: slug, ...)`` suffix from these live slugs.
@@ -238,16 +265,7 @@ def explicit_needs_slugs(conn: sqlite3.Connection, from_id: str) -> list[str]:
         conn: Open connection (within the caller's transaction).
         from_id: The depending item whose explicit ``>needs:`` targets are read.
     """
-    rows = conn.execute(
-        """
-        SELECT target.slug AS slug
-        FROM dependencies AS dep
-        JOIN items AS target ON target.id = dep.to_id
-        WHERE dep.from_id = ? AND dep.kind = 'explicit'
-        """,
-        (from_id,),
-    ).fetchall()
-    return sorted(row["slug"] for row in rows)
+    return [edge["slug"] for edge in explicit_needs_edges(conn, from_id)]
 
 
 def _sibling_sort_orders(

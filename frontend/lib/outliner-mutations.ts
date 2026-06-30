@@ -50,6 +50,7 @@ export type RowKeyboardCommand = {
 export type RowMutationActions = {
   patchItem: (itemId: string, patch: PatchPayload) => Promise<unknown>
   createDependency: (input: DependencyPayload) => Promise<unknown>
+  deleteDependency: (dependencyId: string) => Promise<unknown>
   createItem: (input: CreateItemPayload) => Promise<{ id: string }>
   indentItem: (itemId: string) => Promise<unknown>
   outdentItem: (itemId: string) => Promise<unknown>
@@ -66,7 +67,10 @@ export type RowKeyboardResult = {
 export async function submitRowText(
   item: TreeItem,
   text: string,
-  actions: Pick<RowMutationActions, 'patchItem' | 'createDependency'>
+  actions: Pick<
+    RowMutationActions,
+    'patchItem' | 'createDependency' | 'deleteDependency'
+  >
 ): Promise<void> {
   const parsed = parseRow(text)
   if (!parsed.ok) {
@@ -100,6 +104,12 @@ export async function submitRowText(
         from_id: item.id,
         needs_slug: needsSlug,
       })
+    }
+  }
+
+  for (const edge of item.needs_edges) {
+    if (existingNeeds.has(edge.slug) && !requestedNeeds.has(edge.slug)) {
+      await actions.deleteDependency(edge.id)
     }
   }
 }

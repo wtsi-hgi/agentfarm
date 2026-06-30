@@ -30,6 +30,7 @@ const baseItem = {
   state_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
+  needs_edges: [],
   actionable: true,
   complete: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
@@ -45,6 +46,7 @@ function mutationActions() {
   return {
     patchItem: vi.fn(async () => undefined),
     createDependency: vi.fn(async () => undefined),
+    deleteDependency: vi.fn(async () => undefined),
     createItem: vi.fn(async () => ({ id: 'created' })),
     indentItem: vi.fn(async () => undefined),
     outdentItem: vi.fn(async () => undefined),
@@ -59,6 +61,7 @@ describe('editable outliner behaviours', () => {
       id: 'current',
       title: 'Ship login',
       needs: ['existing-api'],
+      needs_edges: [{ id: 'dep-existing', slug: 'existing-api' }],
     })
     const actions = mutationActions()
 
@@ -79,6 +82,66 @@ describe('editable outliner behaviours', () => {
       from_id: 'current',
       needs_slug: 'deploy-db',
     })
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
+  })
+
+  it('deletes a known explicit dependency when its token is removed', async () => {
+    const current = item({
+      id: 'current',
+      title: 'Ship login',
+      needs: ['deploy-db'],
+      needs_edges: [{ id: 'dep-deploy-db', slug: 'deploy-db' }],
+    })
+    const actions = mutationActions()
+
+    await submitRowText(current, 'Ship login', actions)
+
+    expect(actions.patchItem).not.toHaveBeenCalled()
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).toHaveBeenCalledTimes(1)
+    expect(actions.deleteDependency).toHaveBeenCalledWith('dep-deploy-db')
+  })
+
+  it('reconciles mixed dependency additions and removals by slug', async () => {
+    const current = item({
+      id: 'current',
+      title: 'Ship login',
+      needs: ['kept-api', 'old-api'],
+      needs_edges: [
+        { id: 'dep-kept', slug: 'kept-api' },
+        { id: 'dep-old', slug: 'old-api' },
+      ],
+    })
+    const actions = mutationActions()
+
+    await submitRowText(
+      current,
+      'Ship login >needs:kept-api >needs:new-api',
+      actions
+    )
+
+    expect(actions.createDependency).toHaveBeenCalledTimes(1)
+    expect(actions.createDependency).toHaveBeenCalledWith({
+      from_id: 'current',
+      needs_slug: 'new-api',
+    })
+    expect(actions.deleteDependency).toHaveBeenCalledTimes(1)
+    expect(actions.deleteDependency).toHaveBeenCalledWith('dep-old')
+  })
+
+  it('does not delete a removed slug when no explicit edge id is available', async () => {
+    const current = item({
+      id: 'current',
+      title: 'Ship login',
+      needs: ['legacy-api'],
+      needs_edges: [],
+    })
+    const actions = mutationActions()
+
+    await submitRowText(current, 'Ship login', actions)
+
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
   })
 
   it('wires Enter, Tab, Shift-Tab, and delete keyboard commands to Server Action adapters', async () => {

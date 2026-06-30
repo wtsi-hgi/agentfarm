@@ -416,11 +416,12 @@ async def get_tree(
     result: list[TreeItemOut] = []
     for item_id in tree.items_in_tree_order(conn):
         item = _row_to_item(rows[item_id])
-        needs = tree.explicit_needs_slugs(conn, item_id)
+        needs_edges = tree.explicit_needs_edges(conn, item_id)
         result.append(
             TreeItemOut(
                 **item.model_dump(),
-                needs=needs,
+                needs=[edge["slug"] for edge in needs_edges],
+                needs_edges=needs_edges,
                 actionable=leverage.is_actionable(conn, item_id),
                 complete=tree.is_complete(conn, item_id),
             )

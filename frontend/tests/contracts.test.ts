@@ -163,11 +163,12 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     state_changed_at: '2026-06-29T00:00:00.000000Z',
     completed_at: null,
     needs: ['build-api'],
+    needs_edges: [{ id: 'dep-1', slug: 'build-api' }],
     actionable: true,
     complete: false,
   }
 
-  it('parses tree items with needs and work-now flags', () => {
+  it('parses tree items with needs, edge ids, and work-now flags', () => {
     expect(treeSchema.parse([validTreeItem])).toEqual([validTreeItem])
   })
 
@@ -175,6 +176,14 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     const { actionable: _actionable, ...withoutActionable } = validTreeItem
 
     const result = treeSchema.safeParse([withoutActionable])
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects tree items missing dependency edge identities', () => {
+    const { needs_edges: _needsEdges, ...withoutNeedsEdges } = validTreeItem
+
+    const result = treeSchema.safeParse([withoutNeedsEdges])
 
     expect(result.success).toBe(false)
   })

@@ -235,6 +235,13 @@ class DeletedResponse(BaseModel):
     id: str
 
 
+class TreeDependencyEdgeOut(BaseModel):
+    """Dependency identity exposed with a tree row's typed ``>needs:`` label."""
+
+    id: str
+    slug: str
+
+
 class TreeItemOut(ItemOut):
     """A single item as returned by GET ``/tree`` (spec: A3, extended by H1).
 
@@ -242,7 +249,9 @@ class TreeItemOut(ItemOut):
     this item's EXPLICIT (``>needs:``) dependency targets, resolved live from
     each edge's ``to_id`` so a renamed target's label updates automatically
     (Core domain rules / A3). Implicit (tree-derived) edges are not surfaced as
-    needs labels.
+    needs labels. ``needs_edges`` carries the matching explicit dependency edge
+    ids so clients that parse row text can reconcile removals through the
+    supported delete endpoint without guessing.
 
     ``actionable`` is the current work-now predicate from
     :func:`services.leverage.is_actionable`; ``complete`` is the recursive
@@ -251,5 +260,6 @@ class TreeItemOut(ItemOut):
     """
 
     needs: list[str]
+    needs_edges: list[TreeDependencyEdgeOut]
     actionable: bool
     complete: bool

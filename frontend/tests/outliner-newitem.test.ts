@@ -22,6 +22,7 @@ const baseItem = {
   state_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
+  needs_edges: [],
   actionable: true,
   complete: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>

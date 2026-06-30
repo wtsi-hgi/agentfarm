@@ -17,6 +17,7 @@ import config
 from db.connection import get_connection
 from db.migrate import apply_migrations
 from services import leverage
+from services.mirror import MIRROR_FILENAME
 
 
 @pytest.fixture
@@ -61,6 +62,23 @@ async def _post_dependency(client: AsyncClient, body: dict):
 
 async def _delete_dependency(client: AsyncClient, dependency_id: str):
     return await client.delete(f"/api/v1/dependencies/{dependency_id}")
+
+
+async def _tree(client: AsyncClient):
+    return await client.get("/api/v1/tree")
+
+
+def _tree_item(payload: list[dict], item_id: str) -> dict:
+    """Return one item from a GET ``/tree`` payload."""
+    matches = [entry for entry in payload if entry["id"] == item_id]
+    assert matches, f"item {item_id} missing from /tree payload"
+    return matches[0]
+
+
+def _mirror_text() -> str:
+    """Return the configured markdown mirror text."""
+    path = config.settings.data_dir / "mirror" / MIRROR_FILENAME
+    return path.read_text(encoding="utf-8")
 
 
 def _dependency_rows(db_path) -> list[dict]:
@@ -166,6 +184,41 @@ async def test_post_dependency_by_slug_stores_explicit_edge_by_target_id(
             "to_id": ids["deploy_db"],
             "kind": "explicit",
         }
+    ]
+
+
+@pytest.mark.anyio
+async def test_tree_exposes_explicit_dependency_edge_ids(fresh_db) -> None:
+    """GET /tree returns enough identity to remove typed ``>needs:`` edges."""
+    async with _client() as client:
+        ids = await _build_cross_product_pair(client)
+        created = await _post_dependency(
+            client,
+            {"from_id": ids["X"], "needs_slug": "deploy-db"},
+        )
+
+        tree_before_rename = await _tree(client)
+        renamed = await _patch(
+            client,
+            ids["deploy_db"],
+            {"title": "Deploy Database"},
+        )
+        tree_after_rename = await _tree(client)
+
+    assert created.status_code == 200
+    assert renamed.status_code == 200
+    assert tree_before_rename.status_code == 200
+    before_entry = _tree_item(tree_before_rename.json(), ids["X"])
+    assert before_entry["needs"] == ["deploy-db"]
+    assert before_entry["needs_edges"] == [
+        {"id": created.json()["id"], "slug": "deploy-db"}
+    ]
+
+    assert tree_after_rename.status_code == 200
+    after_entry = _tree_item(tree_after_rename.json(), ids["X"])
+    assert after_entry["needs"] == ["deploy-database"]
+    assert after_entry["needs_edges"] == [
+        {"id": created.json()["id"], "slug": "deploy-database"}
     ]
 
 
@@ -368,6 +421,42 @@ async def test_delete_dependency_restores_section_leaf_actionability(
     assert deleted.json() == {"deleted": True, "id": edge_id}
     assert _dependency_rows(fresh_db) == []
     assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["B2"], ids["C"]}
+
+
+@pytest.mark.anyio
+async def test_delete_dependency_reconciles_tree_and_mirror_needs(
+    fresh_db,
+) -> None:
+    """D3: deleting one explicit edge updates tree identities and mirror labels."""
+    async with _client() as client:
+        dependent = await _create(client, {"title": "Dependent"})
+        first = await _create(client, {"title": "Target One"})
+        second = await _create(client, {"title": "Target Two"})
+        dependent_id = dependent.json()["id"]
+
+        first_edge = await _post_dependency(
+            client,
+            {"from_id": dependent_id, "to_id": first.json()["id"]},
+        )
+        second_edge = await _post_dependency(
+            client,
+            {"from_id": dependent_id, "to_id": second.json()["id"]},
+        )
+        deleted = await _delete_dependency(client, first_edge.json()["id"])
+        tree_after_delete = await _tree(client)
+
+    assert first_edge.status_code == 200
+    assert second_edge.status_code == 200
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": first_edge.json()["id"]}
+    assert tree_after_delete.status_code == 200
+
+    entry = _tree_item(tree_after_delete.json(), dependent_id)
+    assert entry["needs"] == ["target-two"]
+    assert entry["needs_edges"] == [
+        {"id": second_edge.json()["id"], "slug": "target-two"}
+    ]
+    assert _mirror_text().splitlines()[0] == "- [ ] Dependent (needs: target-two)"
 
 
 @pytest.mark.anyio

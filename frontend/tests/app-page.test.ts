@@ -38,6 +38,7 @@ const baseItem = {
 const baseTreeItem = {
   ...baseItem,
   needs: [],
+  needs_edges: [],
   actionable: true,
   complete: false,
 } satisfies TreeItem
