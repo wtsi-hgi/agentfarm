@@ -34,7 +34,6 @@ import { cn } from '@/lib/utils'
 
 type CommentsPanelProps = {
   item: TreeItem | null
-  focusRequest?: number | null
   activityRefreshKey?: number
   className?: string
 }
@@ -72,7 +71,6 @@ function stateChangeLabel(activity: ItemActivity) {
 
 export function CommentsPanel({
   item,
-  focusRequest = null,
   activityRefreshKey = 0,
   className,
 }: CommentsPanelProps) {
@@ -91,8 +89,6 @@ export function CommentsPanel({
   const [loadingActivity, setLoadingActivity] = React.useState(false)
   const [savingDetails, setSavingDetails] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const panelRef = React.useRef<HTMLElement>(null)
-  const draftInputRef = React.useRef<HTMLInputElement>(null)
 
   const itemId = item?.id ?? null
   const isRootItem = item?.parent_id === null
@@ -180,23 +176,6 @@ export function CommentsPanel({
   React.useEffect(() => {
     void loadActivity()
   }, [activityRefreshKey, loadActivity])
-
-  React.useEffect(() => {
-    if (focusRequest === null) {
-      return
-    }
-
-    const animationFrame = window.requestAnimationFrame(() => {
-      panelRef.current?.scrollIntoView({
-        block: 'nearest',
-        inline: 'nearest',
-        behavior: 'smooth',
-      })
-      draftInputRef.current?.focus({ preventScroll: true })
-    })
-
-    return () => window.cancelAnimationFrame(animationFrame)
-  }, [focusRequest])
 
   async function saveDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -289,7 +268,6 @@ export function CommentsPanel({
 
   return (
     <aside
-      ref={panelRef}
       className={cn(
         'border-border focus-within:ring-ring/30 flex min-h-0 scroll-mt-4 flex-col rounded-sm border-l pl-4 focus-within:ring-2 focus-within:ring-offset-2',
         className
@@ -519,7 +497,6 @@ export function CommentsPanel({
         onSubmit={addCurrentComment}
       >
         <Input
-          ref={draftInputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           disabled={!item}

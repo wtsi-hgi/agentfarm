@@ -9,7 +9,6 @@ import {
   GripVertical,
   IndentDecrease,
   IndentIncrease,
-  MessageSquare,
   Save,
   Trash2,
 } from 'lucide-react'
@@ -68,7 +67,6 @@ type OutlinerRowProps = {
   onDelete: (item: TreeItem) => Promise<void>
   onMoveUp: (item: TreeItem) => Promise<void>
   onMoveDown: (item: TreeItem) => Promise<void>
-  onOpenComments: (itemId: string) => void
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
@@ -90,7 +88,6 @@ export function OutlinerRow({
   onDelete,
   onMoveUp,
   onMoveDown,
-  onOpenComments,
   onChangeState,
   onChangeDone,
   onDragStart,
@@ -356,21 +353,6 @@ export function OutlinerRow({
               </Button>
             </TooltipTrigger>
             <TooltipContent>Move down</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Open comments"
-                onClick={() => onOpenComments(item.id)}
-              >
-                <MessageSquare className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Comments</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>

@@ -103,6 +103,38 @@ function getItemButton(
   return button
 }
 
+function getOptionalItemButton(
+  container: ParentNode,
+  itemId: string,
+  ariaLabel: string
+) {
+  const button = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label="${ariaLabel}"]`
+  )
+  if (button !== null && !(button instanceof HTMLButtonElement)) {
+    throw new Error(`Expected ${ariaLabel} button for ${itemId}`)
+  }
+  return button
+}
+
+function getItemRow(container: ParentNode, itemId: string) {
+  const row = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] > div`
+  )
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Missing row for ${itemId}`)
+  }
+  return row
+}
+
+function getDetailsPanel(container: ParentNode) {
+  const panel = container.querySelector('aside[aria-label="Item details"]')
+  if (!(panel instanceof HTMLElement)) {
+    throw new Error('Missing item details panel')
+  }
+  return panel
+}
+
 function getInput(container: ParentNode, ariaLabel: string) {
   const input = container.querySelector(`input[aria-label="${ariaLabel}"]`)
   if (!(input instanceof HTMLInputElement)) {
@@ -175,9 +207,9 @@ function getItemSelect(
   return select
 }
 
-async function click(button: HTMLButtonElement) {
+async function click(element: HTMLElement) {
   await act(async () => {
-    button.click()
+    element.click()
   })
   await flushReact()
 }
@@ -304,7 +336,7 @@ describe('Outliner comment target lifecycle', () => {
       })
     )
 
-    await click(getItemButton(container, 'child', 'Open comments'))
+    await click(getItemRow(container, 'child'))
     await click(getItemButton(container, 'root', 'Delete item'))
     await rejectPendingChildCommentLoads()
 
@@ -316,7 +348,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(getInput(container, 'New comment').disabled).toBe(true)
   })
 
-  it('opens a row comment target ready for new comment entry', async () => {
+  it('selecting a row updates Details without exposing a row comments action', async () => {
     const container = await render(
       React.createElement(Outliner, {
         items: [
@@ -334,13 +366,30 @@ describe('Outliner comment target lifecycle', () => {
       })
     )
 
-    await click(getItemButton(container, 'second', 'Open comments'))
+    expect(
+      getOptionalItemButton(container, 'first', 'Open comments')
+    ).toBeNull()
+    expect(
+      getOptionalItemButton(container, 'second', 'Open comments')
+    ).toBeNull()
+    expect(getDetailsPanel(container).textContent).toContain('First task')
 
-    const newCommentInput = getInput(container, 'New comment')
+    await click(getItemRow(container, 'second'))
 
-    expect(container.textContent).toContain('Second task')
+    const detailsPanel = getDetailsPanel(container)
+    const newCommentInput = getInput(detailsPanel, 'New comment')
+
+    expect(detailsPanel.textContent).toContain('Second task')
     expect(newCommentInput.disabled).toBe(false)
-    expect(document.activeElement).toBe(newCommentInput)
+    expect(document.activeElement).not.toBe(newCommentInput)
+
+    await changeInput(newCommentInput, 'Ready for review')
+    await click(getButton(detailsPanel, 'Add comment'))
+
+    expect(actionMocks.createComment).toHaveBeenCalledWith('second', {
+      body: 'Ready for review',
+    })
+    expect(newCommentInput.value).toBe('')
   })
 
   it('shows a saved root repository URL as a safe accessible link', async () => {
@@ -595,16 +644,16 @@ describe('Outliner comment target lifecycle', () => {
 
     expect(saveButton.disabled).toBe(false)
 
-    await click(getItemButton(container, 'child', 'Open comments'))
+    await click(getItemRow(container, 'child'))
 
-    expect(container.textContent).toContain('Child task')
+    expect(getDetailsPanel(container).textContent).toContain('Child task')
     expect(getTextarea(container, 'Item description').value).toBe('Child plan')
     expect(saveButton.disabled).toBe(true)
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
 
-    await click(getItemButton(container, 'root', 'Open comments'))
+    await click(getItemRow(container, 'root'))
 
-    expect(container.textContent).toContain('Root project')
+    expect(getDetailsPanel(container).textContent).toContain('Root project')
     expect(getTextarea(container, 'Item description').value).toBe('Root plan')
     expect(saveButton.disabled).toBe(true)
     expect(getLink(container, 'Open repository URL').textContent).toBe(
@@ -635,9 +684,9 @@ describe('Outliner comment target lifecycle', () => {
     expect(getOptionalButton(container, 'Edit repository URL')).not.toBeNull()
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
 
-    await click(getItemButton(container, 'child', 'Open comments'))
+    await click(getItemRow(container, 'child'))
 
-    expect(container.textContent).toContain('Child task')
+    expect(getDetailsPanel(container).textContent).toContain('Child task')
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
     expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
     expect(getOptionalButton(container, 'Edit repository URL')).toBeNull()

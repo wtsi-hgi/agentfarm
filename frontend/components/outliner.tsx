@@ -504,9 +504,6 @@ export function Outliner({
   const [selectedItemId, setSelectedItemId] = React.useState<string | null>(
     () => items[0]?.id ?? null
   )
-  const [commentFocusRequestId, setCommentFocusRequestId] = React.useState<
-    number | null
-  >(null)
   const [detailRefreshKey, setDetailRefreshKey] = React.useState(0)
   const [selectedModes, setSelectedModes] = React.useState<Set<Mode>>(
     () => new Set(initialSelectedModes)
@@ -704,12 +701,6 @@ export function Outliner({
     setExpandedIds(jumpState.expandedIds)
     requestItemFocus(jumpState.focusedItemId)
     setSelectedItemId(jumpState.focusedItemId)
-  }
-
-  function openCommentsForItem(itemId: string) {
-    setFocusedItemId(itemId)
-    setSelectedItemId(itemId)
-    setCommentFocusRequestId((current) => (current ?? 0) + 1)
   }
 
   function markItemSubtreeDeleted(item: TreeItem) {
@@ -986,7 +977,6 @@ export function Outliner({
                       onDelete={removeItem}
                       onMoveUp={moveUp}
                       onMoveDown={moveDown}
-                      onOpenComments={openCommentsForItem}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
                       onDragStart={(event) => {
@@ -1014,7 +1004,6 @@ export function Outliner({
         </div>
         <CommentsPanel
           item={selectedItem}
-          focusRequest={commentFocusRequestId}
           activityRefreshKey={detailRefreshKey}
         />
       </div>

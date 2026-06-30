@@ -226,7 +226,7 @@ describe('editable outliner behaviours', () => {
     expect(markup).toContain('aria-label="Create root"')
   })
 
-  it('renders editable row, comment, move, delete, and marker controls from the primary surface', () => {
+  it('renders editable row, move, delete, marker, and details controls from the primary surface', () => {
     const items = [
       item({ id: 'first', title: 'First', parent_id: null, sort_order: 1 }),
       item({ id: 'second', title: 'Second', parent_id: null, sort_order: 2 }),
@@ -240,7 +240,8 @@ describe('editable outliner behaviours', () => {
     expect(markup).toContain('aria-label="Save row"')
     expect(markup).toContain('aria-label="Delete item"')
     expect(markup).toContain('aria-label="Move item down"')
-    expect(markup).toContain('aria-label="Open comments"')
+    expect(markup).not.toContain('aria-label="Open comments"')
+    expect(markup).toContain('aria-label="Item details"')
     expect(markup).toContain('Comments')
     expect(markup).toContain('aria-label="Marker name"')
     expect(markup).toContain('aria-label="Apply marker filter"')
