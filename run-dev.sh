@@ -28,6 +28,7 @@ FRONTEND_PORT=3000
 BACKEND_PORT=8000
 FRONT_PID=""
 BACK_PID=""
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 cleanup() {
   echo "Stopping services..."
@@ -70,6 +71,15 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 FRONTEND_BACKEND_URL="${BACKEND_URL:-https://127.0.0.1:${BACKEND_PORT}}"
+if [[ -n "${AGENTFARM_DATA_DIR:-}" ]]; then
+  if [[ "${AGENTFARM_DATA_DIR}" = /* ]]; then
+    BACKEND_DATA_DIR="${AGENTFARM_DATA_DIR}"
+  else
+    BACKEND_DATA_DIR="${SCRIPT_DIR}/${AGENTFARM_DATA_DIR}"
+  fi
+else
+  BACKEND_DATA_DIR="${SCRIPT_DIR}/data"
+fi
 
 echo "Running frontend format and lint check on changed files..."
 
@@ -173,8 +183,9 @@ fi
 mkdir -p logs
 
 echo "Starting backend on port ${BACKEND_PORT} (logs: logs/backend.log)"
+echo "Backend data dir: ${BACKEND_DATA_DIR}"
 # Use setsid so the command runs in its own session/process-group; we'll kill the group on exit.
-setsid bash -lc "cd backend && BACKEND_PORT=${BACKEND_PORT} ./run_uvicorn.sh" > logs/backend.log 2>&1 &
+setsid env AGENTFARM_DATA_DIR="${BACKEND_DATA_DIR}" BACKEND_PORT="${BACKEND_PORT}" bash -lc "cd backend && ./run_uvicorn.sh" > logs/backend.log 2>&1 &
 BACK_PID=$!
 
 echo "Starting frontend on port ${FRONTEND_PORT} (logs: logs/frontend.log)"

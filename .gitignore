@@ -219,10 +219,11 @@ frontend/build/
 
 logs/
 
-# AgentFarm data dir (default AGENTFARM_DATA_DIR=data): holds the SQLite DB and
+# AgentFarm data dirs (default AGENTFARM_DATA_DIR=data): hold the SQLite DB and
 # the markdown mirror's own nested git repo. Must never enter the app repo.
-# Anchored, no trailing slash so it matches before the directory is created.
+# Anchored, no trailing slash so they match before the directories are created.
 /data
+/backend/data
 
 # OS / editor
 .DS_Store
