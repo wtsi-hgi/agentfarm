@@ -28,6 +28,7 @@ import {
   applyRowKeyboardCommand,
   createFirstRoot,
   moveRowAfter,
+  moveRowToFirst,
   NEW_ITEM_TITLE,
   submitRowText,
   type RowKeyboardCommand,
@@ -64,6 +65,17 @@ type OutlinerProps = {
 }
 
 type ChildMap = Map<string | null, TreeItem[]>
+
+type FirstMoveTarget = {
+  position: 'first'
+}
+
+type AfterMoveTarget = {
+  position: 'after'
+  afterId: string
+}
+
+type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
 type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
@@ -207,7 +219,7 @@ function orderedSiblings(items: TreeItem[], parentId: string | null) {
 function moveTargets(
   items: TreeItem[],
   item: TreeItem
-): { upAfterId?: string; downAfterId?: string } {
+): { upTarget?: MoveTarget; downTarget?: AfterMoveTarget } {
   const siblings = orderedSiblings(items, item.parent_id)
   const index = siblings.findIndex((sibling) => sibling.id === item.id)
   if (index < 0) {
@@ -215,9 +227,16 @@ function moveTargets(
   }
 
   return {
-    upAfterId: index > 1 ? siblings[index - 2]?.id : undefined,
-    downAfterId:
-      index < siblings.length - 1 ? siblings[index + 1]?.id : undefined,
+    upTarget:
+      index === 1
+        ? { position: 'first' }
+        : index > 1 && siblings[index - 2]
+          ? { position: 'after', afterId: siblings[index - 2].id }
+          : undefined,
+    downTarget:
+      index < siblings.length - 1 && siblings[index + 1]
+        ? { position: 'after', afterId: siblings[index + 1].id }
+        : undefined,
   }
 }
 
@@ -464,21 +483,25 @@ export function Outliner({
   }
 
   async function moveUp(item: TreeItem) {
-    const target = moveTargets(items, item).upAfterId
+    const target = moveTargets(items, item).upTarget
     if (!target) {
       return
     }
-    await moveRowAfter(item, target, mutationActions)
+    if (target.position === 'first') {
+      await moveRowToFirst(item, mutationActions)
+    } else {
+      await moveRowAfter(item, target.afterId, mutationActions)
+    }
     setFocusedItemId(item.id)
     setSelectedItemId(item.id)
   }
 
   async function moveDown(item: TreeItem) {
-    const target = moveTargets(items, item).downAfterId
+    const target = moveTargets(items, item).downTarget
     if (!target) {
       return
     }
-    await moveRowAfter(item, target, mutationActions)
+    await moveRowAfter(item, target.afterId, mutationActions)
     setFocusedItemId(item.id)
     setSelectedItemId(item.id)
   }
@@ -496,6 +519,7 @@ export function Outliner({
 
     await mutationActions.moveItem(draggedItem.id, {
       new_parent_id: targetItem.parent_id,
+      position: 'after',
       after_id: targetItem.id,
     })
     const targetParentId = targetItem.parent_id
@@ -588,8 +612,8 @@ export function Outliner({
                       hasChildren={hasChildren}
                       collapsed={collapsed}
                       selected={selectedItemId === item.id}
-                      canMoveUp={Boolean(targets.upAfterId)}
-                      canMoveDown={Boolean(targets.downAfterId)}
+                      canMoveUp={Boolean(targets.upTarget)}
+                      canMoveDown={Boolean(targets.downTarget)}
                       onToggle={toggle}
                       onSelect={(itemId) => setSelectedItemId(itemId)}
                       onSubmitText={submitText}

@@ -1162,6 +1162,79 @@ async def test_move_promote_to_root_keeps_explicit_edge(fresh_db) -> None:
 
 
 @pytest.mark.anyio
+async def test_move_second_root_to_first_without_dependency_edges(fresh_db) -> None:
+    """Explicit first-position moves can reorder a root item to the top.
+
+    This covers the formerly-missing path for moving the second sibling before
+    the first sibling. Reordering remains structural only: it does not derive a
+    dependency on neighbouring roots.
+    """
+    async with _client() as client:
+        first = await _create(client, {"title": "first"})
+        second = await _create(client, {"title": "second"})
+        third = await _create(client, {"title": "third"})
+        first_id = first.json()["id"]
+        second_id = second.json()["id"]
+        third_id = third.json()["id"]
+
+        response = await _move(
+            client,
+            second_id,
+            {"new_parent_id": None, "position": "first"},
+        )
+        tree = await _tree(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == second_id
+    assert body["parent_id"] is None
+    assert (
+        _item_row(fresh_db, second_id)["sort_order"]
+        < _item_row(fresh_db, first_id)["sort_order"]
+    )
+    assert [entry["id"] for entry in tree.json() if entry["parent_id"] is None] == [
+        second_id,
+        first_id,
+        third_id,
+    ]
+    assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_move_second_child_to_first_keeps_siblings_independent(
+    fresh_db,
+) -> None:
+    """The first-position contract works inside child sibling groups too."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "Parent"})
+        parent_id = parent.json()["id"]
+        first = await _create(client, {"title": "first", "parent_id": parent_id})
+        second = await _create(client, {"title": "second", "parent_id": parent_id})
+        third = await _create(client, {"title": "third", "parent_id": parent_id})
+        first_id = first.json()["id"]
+        second_id = second.json()["id"]
+        third_id = third.json()["id"]
+
+        response = await _move(
+            client,
+            second_id,
+            {"new_parent_id": parent_id, "position": "first"},
+        )
+        tree = await _tree(client)
+
+    assert response.status_code == 200
+    assert response.json()["parent_id"] == parent_id
+    assert [
+        entry["id"] for entry in tree.json() if entry["parent_id"] == parent_id
+    ] == [
+        second_id,
+        first_id,
+        third_id,
+    ]
+    assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
 async def test_move_into_own_descendant_is_rejected(fresh_db) -> None:
     """G1 test 3: moving container ``C`` into its own descendant ``d`` is a 422
     and nothing moves.

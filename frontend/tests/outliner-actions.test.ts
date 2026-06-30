@@ -233,6 +233,37 @@ describe('outliner mutation Server Actions', () => {
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
 
+  it('passes the explicit first-position move contract through to the backend', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'POST' && pathname === '/api/v1/items/current/move') {
+        return jsonResponse(item({ id: 'current', parent_id: 'parent' }))
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await moveItem('current', { new_parent_id: 'parent', position: 'first' })
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      {
+        method: 'POST',
+        path: '/api/v1/items/current/move',
+        body: { new_parent_id: 'parent', position: 'first' },
+      },
+    ])
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+  })
+
   it('calls explicit dependency endpoints without deriving them from moves', async () => {
     const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const pathname = new URL(url.toString()).pathname

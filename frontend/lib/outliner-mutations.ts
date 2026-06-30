@@ -28,10 +28,17 @@ type CreateItemPayload = {
   after_id?: string | null
 }
 
-type MovePayload = {
-  new_parent_id?: string | null
-  after_id?: string | null
-}
+type MovePayload =
+  | {
+      new_parent_id?: string | null
+      position: 'first'
+      after_id?: never
+    }
+  | {
+      new_parent_id?: string | null
+      position?: 'after'
+      after_id?: string | null
+    }
 
 export type RowKeyboardCommand = {
   key: string
@@ -160,6 +167,17 @@ export async function moveRowAfter(
 ): Promise<void> {
   await actions.moveItem(item.id, {
     new_parent_id: item.parent_id,
+    position: 'after',
     after_id: afterId,
+  })
+}
+
+export async function moveRowToFirst(
+  item: TreeItem,
+  actions: Pick<RowMutationActions, 'moveItem'>
+): Promise<void> {
+  await actions.moveItem(item.id, {
+    new_parent_id: item.parent_id,
+    position: 'first',
   })
 }

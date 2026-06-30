@@ -53,10 +53,17 @@ export type PatchItemInput = {
   blocked_followup_date?: string | null
 }
 
-export type MoveItemInput = {
-  new_parent_id?: string | null
-  after_id?: string | null
-}
+export type MoveItemInput =
+  | {
+      new_parent_id?: string | null
+      position: 'first'
+      after_id?: never
+    }
+  | {
+      new_parent_id?: string | null
+      position?: 'after'
+      after_id?: string | null
+    }
 
 export type DependencyInput =
   | {

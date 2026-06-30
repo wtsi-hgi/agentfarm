@@ -320,11 +320,13 @@ async def move_item(
     """Reparent and/or reorder an item (and its whole subtree) (G1).
 
     Moves ``item_id`` under ``new_parent_id`` (``None`` promotes it to a
-    root/product) and positions it immediately after ``after_id`` in the
-    destination group, appending at the end when ``after_id`` is omitted.
-    Cross-product moves are allowed. Identity is preserved (same ``id``;
-    explicit edges and comments, stored by id, are untouched). Both the source
-    and destination sibling groups run legacy implicit-edge cleanup via
+    root/product). ``position="first"`` places it at the start of the
+    destination group. The default ``position="after"`` preserves legacy
+    callers: it positions the item immediately after ``after_id`` when supplied,
+    or appends at the end when ``after_id`` is omitted/null. Cross-product moves
+    are allowed. Identity is preserved (same ``id``; explicit edges and
+    comments, stored by id, are untouched). Both the source and destination
+    sibling groups run legacy implicit-edge cleanup via
     :func:`services.tree.reparent_item`.
 
     Validation runs BEFORE any mutation, in this order:
@@ -347,6 +349,7 @@ async def move_item(
 
     new_parent_id = payload.new_parent_id
     after_id = payload.after_id
+    place_first = payload.position == "first"
 
     # A referenced destination parent or anchor sibling must exist (404 policy).
     if new_parent_id is not None and not _item_exists(conn, new_parent_id):
@@ -369,7 +372,13 @@ async def move_item(
     if graph.move_would_create_cycle(conn, item_id, new_parent_id, after_id=after_id):
         raise HTTPException(status_code=409, detail="dependency cycle rejected")
 
-    tree.reparent_item(conn, item_id, new_parent_id, after_id=after_id)
+    tree.reparent_item(
+        conn,
+        item_id,
+        new_parent_id,
+        after_id=after_id,
+        as_first_child=place_first,
+    )
 
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)

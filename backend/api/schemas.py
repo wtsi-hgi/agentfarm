@@ -92,13 +92,23 @@ class MoveRequest(BaseModel):
 
     Both fields are optional and nullable. ``new_parent_id`` is the destination
     parent; ``None`` (sent explicitly or simply omitted) promotes the item to a
-    root/product. Cross-product moves are allowed. ``after_id`` positions the
-    moved item immediately after that sibling in the destination group, or
-    appends it at the end of the group when omitted/null.
+    root/product. Cross-product moves are allowed. ``position="first"`` places
+    the moved item at the start of the destination sibling group. The default
+    ``position="after"`` preserves the legacy contract: ``after_id`` positions
+    the moved item immediately after that sibling, or appends it at the end of
+    the group when omitted/null.
     """
 
     new_parent_id: str | None = None
     after_id: str | None = None
+    position: Literal["first", "after"] = "after"
+
+    @model_validator(mode="after")
+    def first_position_has_no_anchor(self) -> Self:
+        """Keep first-position moves unambiguous."""
+        if self.position == "first" and self.after_id is not None:
+            raise ValueError("after_id cannot be used with position='first'")
+        return self
 
 
 class MarkerCreate(BaseModel):

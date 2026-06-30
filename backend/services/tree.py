@@ -349,7 +349,8 @@ def reparent_item(
     Placement of the moved item within the destination sibling group:
 
     * ``as_first_child=True`` -> first in the group (lowest ``sort_order``); used
-      by indent. ``after_id`` is ignored in this mode.
+      by indent and explicit first-position moves. ``after_id`` is ignored in
+      this mode.
     * otherwise -> immediately after ``after_id`` (used by outdent and move), or
       appended at the end of the group when ``after_id`` is ``None``.
 

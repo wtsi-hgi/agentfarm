@@ -8,6 +8,7 @@ import {
   applyRowKeyboardCommand,
   createFirstRoot,
   moveRowAfter,
+  moveRowToFirst,
   submitRowText,
 } from '@/lib/outliner-mutations'
 import type { TreeItem } from '@/lib/contracts'
@@ -118,7 +119,21 @@ describe('editable outliner behaviours', () => {
 
     expect(actions.moveItem).toHaveBeenCalledWith('current', {
       new_parent_id: 'parent',
+      position: 'after',
       after_id: 'target',
+    })
+    expect(actions.createDependency).not.toHaveBeenCalled()
+  })
+
+  it('moves a row to the first sibling position without mutating dependency edges', async () => {
+    const current = item({ id: 'current', title: 'Current' })
+    const actions = mutationActions()
+
+    await moveRowToFirst(current, actions)
+
+    expect(actions.moveItem).toHaveBeenCalledWith('current', {
+      new_parent_id: 'parent',
+      position: 'first',
     })
     expect(actions.createDependency).not.toHaveBeenCalled()
   })
