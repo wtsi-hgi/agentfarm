@@ -22,10 +22,10 @@ export default function Loading() {
         <Card className="shadow-lg">
           <CardHeader>
             <CardTitle>
-              <div className="bg-muted h-6 w-40 animate-pulse rounded" />
+              <span className="bg-muted block h-6 w-40 animate-pulse rounded" />
             </CardTitle>
             <CardDescription>
-              <div className="bg-muted h-4 w-64 animate-pulse rounded" />
+              <span className="bg-muted block h-4 w-64 animate-pulse rounded" />
             </CardDescription>
           </CardHeader>
           <CardContent>
