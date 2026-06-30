@@ -78,6 +78,8 @@ type AfterMoveTarget = {
 
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
+type DropPosition = 'before' | 'after'
+
 type FocusRequest = {
   itemId: string
   requestId: number
@@ -310,6 +312,15 @@ function precedingSiblingId(items: TreeItem[], item: TreeItem): string | null {
   const siblings = orderedSiblings(items, item.parent_id)
   const index = siblings.findIndex((sibling) => sibling.id === item.id)
   return index > 0 ? (siblings[index - 1]?.id ?? null) : null
+}
+
+function dropPosition(event: React.DragEvent<HTMLElement>): DropPosition {
+  const rect = event.currentTarget.getBoundingClientRect()
+  if (rect.height <= 0) {
+    return 'after'
+  }
+
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
 }
 
 function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
@@ -681,7 +692,11 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
-  async function moveDraggedAfter(draggedItemId: string, targetItemId: string) {
+  async function moveDragged(
+    draggedItemId: string,
+    targetItemId: string,
+    position: DropPosition
+  ) {
     if (draggedItemId === targetItemId) {
       return
     }
@@ -692,12 +707,39 @@ export function Outliner({
       return
     }
 
-    await mutationActions.moveItem(draggedItem.id, {
-      new_parent_id: targetItem.parent_id,
-      position: 'after',
-      after_id: targetItem.id,
-    })
     const targetParentId = targetItem.parent_id
+    if (position === 'before') {
+      const siblings = orderedSiblings(activeItems, targetParentId).filter(
+        (sibling) => sibling.id !== draggedItem.id
+      )
+      const targetIndex = siblings.findIndex(
+        (sibling) => sibling.id === targetItem.id
+      )
+      const previousSibling = targetIndex > 0 ? siblings[targetIndex - 1] : null
+
+      if (targetIndex < 0) {
+        return
+      }
+
+      if (previousSibling) {
+        await mutationActions.moveItem(draggedItem.id, {
+          new_parent_id: targetParentId,
+          position: 'after',
+          after_id: previousSibling.id,
+        })
+      } else {
+        await mutationActions.moveItem(draggedItem.id, {
+          new_parent_id: targetParentId,
+          position: 'first',
+        })
+      }
+    } else {
+      await mutationActions.moveItem(draggedItem.id, {
+        new_parent_id: targetParentId,
+        position: 'after',
+        after_id: targetItem.id,
+      })
+    }
     if (targetParentId) {
       setExpandedIds((current) => new Set(current).add(targetParentId))
     }
@@ -750,13 +792,6 @@ export function Outliner({
                     key={item.id}
                     data-outliner-item-id={item.id}
                     tabIndex={-1}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData('text/plain', item.id)
-                      setDraggingItemId(item.id)
-                    }}
-                    onDragEnd={() => setDraggingItemId(null)}
                     onDragOver={(event) => {
                       const draggedId =
                         draggingItemId ||
@@ -772,9 +807,10 @@ export function Outliner({
                         draggingItemId ||
                         event.dataTransfer.getData('text/plain') ||
                         null
+                      const position = dropPosition(event)
                       setDraggingItemId(null)
                       if (draggedId) {
-                        void moveDraggedAfter(draggedId, item.id)
+                        void moveDragged(draggedId, item.id, position)
                       }
                     }}
                     className={cn(
@@ -800,6 +836,12 @@ export function Outliner({
                       onMoveDown={moveDown}
                       onOpenComments={openCommentsForItem}
                       onChangeState={changeItemState}
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move'
+                        event.dataTransfer.setData('text/plain', item.id)
+                        setDraggingItemId(item.id)
+                      }}
+                      onDragEnd={() => setDraggingItemId(null)}
                     />
                     {filteredOutNewlyAdded ? (
                       <div

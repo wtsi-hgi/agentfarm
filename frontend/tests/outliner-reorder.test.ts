@@ -115,10 +115,26 @@ function button(element: ParentNode, ariaLabel: string) {
   return candidate
 }
 
+function dragHandle(element: ParentNode) {
+  return button(element, 'Drag item')
+}
+
 function renderedItemIds(container: ParentNode) {
   return Array.from(
     container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
   ).map((element) => element.dataset.outlinerItemId)
+}
+
+function invalidDomNestingMessages(
+  calls: readonly (readonly unknown[])[]
+): string[] {
+  return calls
+    .map((call) => call.map(String).join(' '))
+    .filter((message) =>
+      /cannot (?:be a descendant of|contain a nested)|hydration error/i.test(
+        message
+      )
+    )
 }
 
 function reorderItems(
@@ -209,14 +225,35 @@ function dataTransfer() {
 async function dispatchDrag(
   target: HTMLElement,
   type: string,
-  transfer: ReturnType<typeof dataTransfer>
+  transfer: ReturnType<typeof dataTransfer>,
+  init: { clientY?: number } = {}
 ) {
   await act(async () => {
     const event = new Event(type, { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'dataTransfer', { value: transfer })
+    Object.defineProperty(event, 'clientY', { value: init.clientY ?? 0 })
     target.dispatchEvent(event)
   })
   await flushReact()
+}
+
+function stubRect(element: HTMLElement, top: number, bottom: number) {
+  const rect = {
+    x: 0,
+    y: top,
+    top,
+    bottom,
+    left: 0,
+    right: 320,
+    width: 320,
+    height: bottom - top,
+    toJSON: () => ({}),
+  } satisfies DOMRect
+
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => rect,
+  })
 }
 
 describe('Outliner reorder controls', () => {
@@ -286,17 +323,62 @@ describe('Outliner reorder controls', () => {
       item({ id: 'first', title: 'First', sort_order: 1 }),
       item({ id: 'second', title: 'Second', sort_order: 2 }),
     ])
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
     const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
 
-    await dispatchDrag(outlinerItem(container, 'second'), 'dragstart', transfer)
-    await dispatchDrag(outlinerItem(container, 'first'), 'dragover', transfer)
-    await dispatchDrag(outlinerItem(container, 'first'), 'drop', transfer)
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 135 })
+    await dispatchDrag(firstRow, 'drop', transfer, { clientY: 135 })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
       new_parent_id: null,
       position: 'after',
       after_id: 'first',
     })
+  })
+
+  it('reorders upward from the visible drag handle and persists the first-position move', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+    await dispatchDrag(firstRow, 'drop', transfer, { clientY: 105 })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
+      new_parent_id: null,
+      position: 'first',
+    })
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+  })
+
+  it('renders the outliner and details surface without invalid DOM nesting warnings', async () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined)
+
+    try {
+      await render([
+        item({ id: 'root', title: 'Root', sort_order: 1 }),
+        item({
+          id: 'child',
+          title: 'Child',
+          parent_id: 'root',
+          sort_order: 1,
+        }),
+      ])
+
+      expect(invalidDomNestingMessages(consoleError.mock.calls)).toEqual([])
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it('updates visible order and move controls after clicking an available move button', async () => {

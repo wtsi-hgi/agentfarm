@@ -70,6 +70,8 @@ type OutlinerRowProps = {
   onMoveDown: (item: TreeItem) => Promise<void>
   onOpenComments: (itemId: string) => void
   onChangeState: (item: TreeItem, state: State) => Promise<void>
+  onDragStart?: React.DragEventHandler<HTMLButtonElement>
+  onDragEnd?: React.DragEventHandler<HTMLButtonElement>
 }
 
 export function OutlinerRow({
@@ -89,6 +91,8 @@ export function OutlinerRow({
   onMoveDown,
   onOpenComments,
   onChangeState,
+  onDragStart,
+  onDragEnd,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
@@ -164,9 +168,23 @@ export function OutlinerRow({
         data-mode={item.mode}
         onClick={() => onSelect(item.id)}
       >
-        <div className="text-muted-foreground flex size-7 items-center justify-center">
-          <GripVertical className="size-3.5" aria-hidden="true" />
-        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
+              aria-label="Drag item"
+              draggable
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+            >
+              <GripVertical className="size-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Drag</TooltipContent>
+        </Tooltip>
         <div className="flex size-8 items-center justify-center">
           {hasChildren ? (
             <Tooltip>
