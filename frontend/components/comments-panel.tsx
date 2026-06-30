@@ -48,6 +48,8 @@ type DetailOverride = {
   usage: string
 }
 
+type DetailField = 'description' | 'repo_url' | 'usage'
+
 function formatTimestamp(timestamp: string) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(timestamp)
   if (!match) {
@@ -76,9 +78,15 @@ export function CommentsPanel({
   const [descriptionDraft, setDescriptionDraft] = React.useState('')
   const [repoDraft, setRepoDraft] = React.useState('')
   const [usageDraft, setUsageDraft] = React.useState('')
-  const [editingRepoUrl, setEditingRepoUrl] = React.useState(false)
-  const [editingDescription, setEditingDescription] = React.useState(false)
-  const [editingUsage, setEditingUsage] = React.useState(false)
+  const [editingRepoUrl, setEditingRepoUrl] = React.useState(() =>
+    Boolean(item && item.parent_id === null && !item.repo_url?.trim())
+  )
+  const [editingDescription, setEditingDescription] = React.useState(
+    () => Boolean(item) && (item?.description ?? '').trim().length === 0
+  )
+  const [editingUsage, setEditingUsage] = React.useState(() =>
+    Boolean(item && item.parent_id === null && item.usage.trim().length === 0)
+  )
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
@@ -86,12 +94,16 @@ export function CommentsPanel({
     React.useState<Comment | null>(null)
   const [loadingComments, setLoadingComments] = React.useState(false)
   const [loadingActivity, setLoadingActivity] = React.useState(false)
-  const [savingDetails, setSavingDetails] = React.useState(false)
+  const [savingDetailField, setSavingDetailField] =
+    React.useState<DetailField | null>(null)
   const [error, setError] = React.useState<string | null>(null)
 
   const itemId = item?.id ?? null
   const isRootItem = item?.parent_id === null
   const currentItemId = React.useRef<string | null>(itemId)
+  const previousDetailItemId = React.useRef<string | null | undefined>(
+    undefined
+  )
   currentItemId.current = itemId
 
   const detailOverride = itemId ? detailOverrides.get(itemId) : undefined
@@ -101,28 +113,44 @@ export function CommentsPanel({
   const currentUsage = detailOverride?.usage ?? item?.usage ?? ''
   const currentRepoValue = currentRepoUrl?.trim() || null
   const repoDraftValue = repoDraft.trim() || null
-  const detailsDirty =
-    descriptionDraft !== currentDescription ||
-    (isRootItem && usageDraft !== currentUsage) ||
-    (isRootItem && repoDraftValue !== currentRepoValue)
-  const showRepoEditor = !currentRepoValue || editingRepoUrl
-  const showDescriptionEditor =
-    currentDescription.trim().length === 0 || editingDescription
-  const showUsageEditor =
-    isRootItem && (currentUsage.trim().length === 0 || editingUsage)
+  const descriptionDirty = descriptionDraft !== currentDescription
+  const repoDirty = isRootItem && repoDraftValue !== currentRepoValue
+  const usageDirty = isRootItem && usageDraft !== currentUsage
+  const savingAnyDetail = savingDetailField !== null
+  const showRepoEditor = isRootItem && editingRepoUrl
+  const showDescriptionEditor = editingDescription
+  const showUsageEditor = isRootItem && editingUsage
 
   React.useEffect(() => {
+    if (previousDetailItemId.current === itemId) {
+      return
+    }
+
+    previousDetailItemId.current = itemId
+    const hasSelectedItem = Boolean(item)
     setDescriptionDraft(currentDescription)
     setRepoDraft(currentRepoUrl ?? '')
     setUsageDraft(currentUsage)
-  }, [currentDescription, currentRepoUrl, currentUsage, itemId])
-
-  React.useEffect(() => {
-    setEditingRepoUrl(false)
-    setEditingDescription(false)
-    setEditingUsage(false)
+    setEditingRepoUrl(
+      Boolean(hasSelectedItem && isRootItem && !currentRepoValue)
+    )
+    setEditingDescription(
+      hasSelectedItem && currentDescription.trim().length === 0
+    )
+    setEditingUsage(
+      Boolean(hasSelectedItem && isRootItem && currentUsage.trim().length === 0)
+    )
+    setSavingDetailField(null)
     setPendingDeleteComment(null)
-  }, [itemId])
+  }, [
+    currentDescription,
+    currentRepoUrl,
+    currentRepoValue,
+    currentUsage,
+    isRootItem,
+    item,
+    itemId,
+  ])
 
   const loadComments = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -186,22 +214,78 @@ export function CommentsPanel({
     void loadActivity()
   }, [activityRefreshKey, loadActivity])
 
-  async function saveDetails(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!itemId || !item || !detailsDirty) {
+  function beginDetailEdit(field: DetailField) {
+    if (!item) {
       return
     }
 
+    if (field === 'description') {
+      setDescriptionDraft(currentDescription)
+      setEditingDescription(true)
+      return
+    }
+
+    if (field === 'repo_url' && isRootItem) {
+      setRepoDraft(currentRepoUrl ?? '')
+      setEditingRepoUrl(true)
+      return
+    }
+
+    if (field === 'usage' && isRootItem) {
+      setUsageDraft(currentUsage)
+      setEditingUsage(true)
+    }
+  }
+
+  function cancelDetailEdit(field: DetailField) {
+    if (field === 'description') {
+      setDescriptionDraft(currentDescription)
+      setEditingDescription(false)
+      return
+    }
+
+    if (field === 'repo_url') {
+      setRepoDraft(currentRepoUrl ?? '')
+      setEditingRepoUrl(false)
+      return
+    }
+
+    setUsageDraft(currentUsage)
+    setEditingUsage(false)
+  }
+
+  function isDetailFieldDirty(field: DetailField) {
+    if (field === 'description') {
+      return descriptionDirty
+    }
+
+    if (field === 'repo_url') {
+      return repoDirty
+    }
+
+    return usageDirty
+  }
+
+  async function saveDetailField(field: DetailField) {
+    if (!itemId || !item || !isDetailFieldDirty(field)) {
+      return
+    }
+
+    if ((field === 'repo_url' || field === 'usage') && !isRootItem) {
+      return
+    }
+
+    const patch =
+      field === 'description'
+        ? { description: descriptionDraft }
+        : field === 'repo_url'
+          ? { repo_url: repoDraftValue }
+          : { usage: usageDraft }
     const requestedItemId = itemId
-    setSavingDetails(true)
+    setSavingDetailField(field)
     setError(null)
     try {
-      const savedItem = await patchItem(requestedItemId, {
-        description: descriptionDraft,
-        ...(isRootItem
-          ? { repo_url: repoDraft.trim() || null, usage: usageDraft }
-          : {}),
-      })
+      const savedItem = await patchItem(requestedItemId, patch)
       if (currentItemId.current !== requestedItemId) {
         return
       }
@@ -214,19 +298,24 @@ export function CommentsPanel({
         })
         return next
       })
-      setDescriptionDraft(savedItem.description)
-      setRepoDraft(savedItem.repo_url ?? '')
-      setUsageDraft(savedItem.usage)
-      setEditingRepoUrl(false)
-      setEditingDescription(false)
-      setEditingUsage(false)
+
+      if (field === 'description') {
+        setDescriptionDraft(savedItem.description)
+        setEditingDescription(false)
+      } else if (field === 'repo_url') {
+        setRepoDraft(savedItem.repo_url ?? '')
+        setEditingRepoUrl(false)
+      } else {
+        setUsageDraft(savedItem.usage)
+        setEditingUsage(false)
+      }
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
         setError(caught instanceof Error ? caught.message : 'Unable to save')
       }
     } finally {
       if (currentItemId.current === requestedItemId) {
-        setSavingDetails(false)
+        setSavingDetailField(null)
       }
     }
   }
@@ -277,6 +366,81 @@ export function CommentsPanel({
 
   const loading = loadingComments || loadingActivity
 
+  function renderDetailControlButton({
+    label,
+    disabled,
+    onClick,
+    children,
+  }: {
+    label: string
+    disabled: boolean
+    onClick: () => void
+    children: React.ReactNode
+  }) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              disabled={disabled}
+              aria-label={label}
+              className="size-8 shrink-0"
+              onClick={onClick}
+            >
+              {children}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+
+  function renderDetailControls({
+    field,
+    editing,
+    dirty,
+    editLabel,
+    saveLabel,
+    cancelLabel,
+  }: {
+    field: DetailField
+    editing: boolean
+    dirty: boolean
+    editLabel: string
+    saveLabel: string
+    cancelLabel: string
+  }) {
+    if (editing) {
+      return (
+        <div className="flex shrink-0 items-center gap-1">
+          {renderDetailControlButton({
+            label: saveLabel,
+            disabled: !item || savingAnyDetail || !dirty,
+            onClick: () => void saveDetailField(field),
+            children: <Save className="size-3.5" aria-hidden="true" />,
+          })}
+          {renderDetailControlButton({
+            label: cancelLabel,
+            disabled: !item || savingAnyDetail,
+            onClick: () => cancelDetailEdit(field),
+            children: <X className="size-3.5" aria-hidden="true" />,
+          })}
+        </div>
+      )
+    }
+
+    return renderDetailControlButton({
+      label: editLabel,
+      disabled: !item || savingAnyDetail,
+      onClick: () => beginDetailEdit(field),
+      children: <Pencil className="size-3.5" aria-hidden="true" />,
+    })
+  }
+
   return (
     <aside
       className={cn(
@@ -301,157 +465,123 @@ export function CommentsPanel({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-        <form className="space-y-2" onSubmit={saveDetails}>
+        <div className="space-y-3">
           {isRootItem ? (
-            <div className="text-muted-foreground block text-xs font-medium">
-              <div>Repository</div>
-              <div className="mt-1 flex items-center gap-2">
-                <Link
-                  className="text-muted-foreground size-4"
-                  aria-hidden="true"
-                />
-                {showRepoEditor ? (
-                  <Input
-                    value={repoDraft}
-                    onChange={(event) => setRepoDraft(event.target.value)}
-                    disabled={!item || savingDetails}
-                    aria-label="Repository URL"
-                    className="h-8 min-w-0 flex-1"
-                  />
-                ) : (
-                  <>
-                    <a
-                      href={currentRepoValue}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label="Open repository URL"
-                      className="text-primary focus-visible:ring-ring min-w-0 flex-1 truncate rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-offset-2"
-                    >
-                      {currentRepoValue}
-                    </a>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            disabled={!item || savingDetails}
-                            aria-label="Edit repository URL"
-                            className="size-8 shrink-0"
-                            onClick={() => setEditingRepoUrl(true)}
-                          >
-                            <Pencil className="size-3.5" aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Edit repository URL</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </>
-                )}
+            <section className="space-y-2" aria-label="Repository">
+              <div className="flex min-h-8 items-center justify-between gap-2">
+                <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-xs font-medium">
+                  <Link className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">Repository</span>
+                </div>
+                {renderDetailControls({
+                  field: 'repo_url',
+                  editing: showRepoEditor,
+                  dirty: repoDirty,
+                  editLabel: 'Edit repository URL',
+                  saveLabel: 'Save repository URL',
+                  cancelLabel: 'Cancel repository URL',
+                })}
               </div>
-            </div>
+              {showRepoEditor ? (
+                <Input
+                  value={repoDraft}
+                  onChange={(event) => setRepoDraft(event.target.value)}
+                  disabled={!item || savingAnyDetail}
+                  aria-label="Repository URL"
+                  className="h-8 min-w-0"
+                />
+              ) : currentRepoValue ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <a
+                    href={currentRepoValue}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Open repository URL"
+                    className="text-primary focus-visible:ring-ring min-w-0 truncate rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-offset-2"
+                  >
+                    {currentRepoValue}
+                  </a>
+                </div>
+              ) : (
+                <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
+                  No repository URL
+                </div>
+              )}
+            </section>
           ) : null}
           <section className="space-y-2" aria-label="Description">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-muted-foreground text-xs font-medium">
+            <div className="flex min-h-8 items-center justify-between gap-2">
+              <div className="text-muted-foreground min-w-0 truncate text-xs font-medium">
                 Description
               </div>
-              {!showDescriptionEditor ? (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        disabled={!item || savingDetails}
-                        aria-label="Edit description"
-                        className="size-8 shrink-0"
-                        onClick={() => setEditingDescription(true)}
-                      >
-                        <Pencil className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Edit description</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              ) : null}
+              {renderDetailControls({
+                field: 'description',
+                editing: showDescriptionEditor,
+                dirty: descriptionDirty,
+                editLabel: 'Edit description',
+                saveLabel: 'Save description',
+                cancelLabel: 'Cancel description',
+              })}
             </div>
             {showDescriptionEditor ? (
               <textarea
                 value={descriptionDraft}
                 onChange={(event) => setDescriptionDraft(event.target.value)}
-                disabled={!item || savingDetails}
+                disabled={!item || savingAnyDetail}
                 aria-label="Item description"
                 placeholder="Add a description"
                 className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
               />
-            ) : (
+            ) : currentDescription.trim().length > 0 ? (
               <div className="border-border bg-muted/20 rounded-md border p-3">
                 <MarkdownContent value={currentDescription} />
+              </div>
+            ) : (
+              <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
+                No description
               </div>
             )}
           </section>
           {isRootItem ? (
             <section className="space-y-2" aria-label="Usage">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
-                  <Terminal className="size-4" aria-hidden="true" />
-                  Usage
+              <div className="flex min-h-8 items-center justify-between gap-2">
+                <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-xs font-medium">
+                  <Terminal className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">Usage</span>
                 </div>
-                {!showUsageEditor ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          disabled={!item || savingDetails}
-                          aria-label="Edit usage"
-                          className="size-8 shrink-0"
-                          onClick={() => setEditingUsage(true)}
-                        >
-                          <Pencil className="size-3.5" aria-hidden="true" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Edit usage</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : null}
+                {renderDetailControls({
+                  field: 'usage',
+                  editing: showUsageEditor,
+                  dirty: usageDirty,
+                  editLabel: 'Edit usage',
+                  saveLabel: 'Save usage',
+                  cancelLabel: 'Cancel usage',
+                })}
               </div>
               {showUsageEditor ? (
                 <textarea
                   value={usageDraft}
                   onChange={(event) => setUsageDraft(event.target.value)}
-                  disabled={!item || savingDetails}
+                  disabled={!item || savingAnyDetail}
                   aria-label="Root usage"
                   placeholder="Add usage notes, commands, or code blocks"
                   className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 w-full resize-y rounded-md border px-3 py-2 font-mono text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
                 />
-              ) : (
+              ) : currentUsage.trim().length > 0 ? (
                 <div
                   className="border-border bg-muted/20 rounded-md border p-3"
                   aria-label="Saved usage preview"
                 >
                   <MarkdownContent value={currentUsage} />
                 </div>
+              ) : (
+                <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
+                  No usage notes
+                </div>
               )}
             </section>
           ) : null}
-          <div className="flex justify-end">
-            <Button
-              type="submit"
-              size="sm"
-              disabled={!item || savingDetails || !detailsDirty}
-              aria-label="Save details"
-            >
-              <Save className="size-3.5" aria-hidden="true" />
-              Save
-            </Button>
-          </div>
-        </form>
+        </div>
 
         <section className="space-y-2" aria-label="Activity">
           <div className="text-foreground flex items-center gap-2 text-sm font-semibold">
