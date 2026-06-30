@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p ${FRONTEND_PORT:-3000}",
+    "dev": "test -n \"$FRONTEND_TLS_CERT\" && test -n \"$FRONTEND_TLS_KEY\" || { echo \"FRONTEND_TLS_CERT and FRONTEND_TLS_KEY are required; use make run or run-dev.sh.\"; exit 1; }; next dev --experimental-https --experimental-https-key \"$FRONTEND_TLS_KEY\" --experimental-https-cert \"$FRONTEND_TLS_CERT\" -H ${FRONTEND_HOST:-0.0.0.0} -p ${FRONTEND_PORT:-3000}",
     "build": "next build",
-    "start": "next start -H 0.0.0.0 -p ${FRONTEND_PORT:-3000}",
+    "start": "next start -H ${FRONTEND_HOST:-0.0.0.0} -p ${FRONTEND_PORT:-3000}",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

@@ -4,11 +4,12 @@ set -euo pipefail
 
 usage() {
   cat <<-EOF
-Usage: $0 [--frontend-port PORT] [--backend-port PORT]
+Usage: $0 [--frontend-host HOST] [--frontend-port PORT] [--backend-port PORT]
 
 Starts frontend and backend in development mode.
 
 Options:
+      --frontend-host HOST   Host for frontend dev server (default: 0.0.0.0)
   -f, --frontend-port PORT   Port for frontend dev server (default: 3000)
   -b, --backend-port PORT    Port for backend uvicorn server (default: 8000)
   -h, --help                 Show this help
@@ -20,11 +21,19 @@ Examples:
   # custom ports
   $0 --frontend-port 4000 --backend-port 9000
 
+  # bind frontend to localhost only
+  $0 --frontend-host 127.0.0.1
+
+When the frontend binds to 0.0.0.0, open https://localhost:PORT on this machine
+or use this machine's hostname/LAN IP from another device. The frontend dev
+server uses HTTPS for credential entry.
+
 Logs are written to ./logs/frontend.log and ./logs/backend.log
 EOF
 }
 
 FRONTEND_PORT=3000
+FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 BACKEND_PORT=8000
 FRONT_PID=""
 BACK_PID=""
@@ -50,6 +59,10 @@ trap 'cleanup; exit' INT TERM EXIT
 
 while [[ ${#} -gt 0 ]]; do
   case "$1" in
+    --frontend-host)
+      FRONTEND_HOST=${2:-}
+      shift 2
+      ;;
     -f|--frontend-port)
       FRONTEND_PORT=${2:-}
       shift 2
@@ -70,6 +83,62 @@ while [[ ${#} -gt 0 ]]; do
   esac
 done
 
+FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+
+frontend_access_url() {
+  local host="$1"
+  local port="$2"
+
+  if [[ "$host" == "0.0.0.0" || "$host" == "::" ]]; then
+    host="localhost"
+  elif [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    host="[${host}]"
+  fi
+
+  printf 'https://%s:%s' "$host" "$port"
+}
+
+frontend_hostname_url() {
+  local bind_host="$1"
+  local port="$2"
+  local host
+
+  if [[ "$bind_host" != "0.0.0.0" && "$bind_host" != "::" ]]; then
+    return 0
+  fi
+
+  host="$(hostname 2>/dev/null || true)"
+  if [[ -z "$host" || "$host" == "localhost" || "$host" == "0.0.0.0" || "$host" == "::" ]]; then
+    return 0
+  fi
+
+  frontend_access_url "$host" "$port"
+}
+
+resolve_tls_paths() {
+  local python_bin="${PYTHON:-python3}"
+
+  (
+    cd "${SCRIPT_DIR}/backend"
+    if [ -f ".venv/bin/activate" ]; then
+      # shellcheck disable=SC1091
+      . .venv/bin/activate
+    fi
+    AGENTFARM_DATA_DIR="${BACKEND_DATA_DIR}" "${python_bin}" - <<'PY'
+from config import settings
+from services.tls import prepare_tls_paths
+
+paths = prepare_tls_paths(
+    data_dir=settings.data_dir,
+    configured_cert=settings.tls_cert,
+    configured_key=settings.tls_key,
+)
+print(paths.cert.resolve())
+print(paths.key.resolve())
+PY
+  )
+}
+
 FRONTEND_BACKEND_URL="${BACKEND_URL:-https://127.0.0.1:${BACKEND_PORT}}"
 if [[ -n "${AGENTFARM_DATA_DIR:-}" ]]; then
   if [[ "${AGENTFARM_DATA_DIR}" = /* ]]; then
@@ -80,6 +149,11 @@ if [[ -n "${AGENTFARM_DATA_DIR:-}" ]]; then
 else
   BACKEND_DATA_DIR="${SCRIPT_DIR}/data"
 fi
+FRONTEND_URL="$(frontend_access_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
+FRONTEND_HOSTNAME_URL="$(frontend_hostname_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
+TLS_PATHS="$(resolve_tls_paths)"
+FRONTEND_TLS_CERT="$(printf '%s\n' "${TLS_PATHS}" | sed -n '1p')"
+FRONTEND_TLS_KEY="$(printf '%s\n' "${TLS_PATHS}" | sed -n '2p')"
 
 echo "Running frontend format and lint check on changed files..."
 
@@ -188,8 +262,18 @@ echo "Backend data dir: ${BACKEND_DATA_DIR}"
 setsid env AGENTFARM_DATA_DIR="${BACKEND_DATA_DIR}" BACKEND_PORT="${BACKEND_PORT}" bash -lc "cd backend && ./run_uvicorn.sh" > logs/backend.log 2>&1 &
 BACK_PID=$!
 
-echo "Starting frontend on port ${FRONTEND_PORT} (logs: logs/frontend.log)"
-setsid env FRONTEND_PORT="${FRONTEND_PORT}" BACKEND_PORT="${BACKEND_PORT}" BACKEND_URL="${FRONTEND_BACKEND_URL}" bash -lc "cd frontend && pnpm dev" > logs/frontend.log 2>&1 &
+echo "Starting frontend on ${FRONTEND_HOST}:${FRONTEND_PORT} (logs: logs/frontend.log)"
+echo "Frontend bind host: ${FRONTEND_HOST}"
+echo "Frontend URL: ${FRONTEND_URL}"
+if [[ -n "${FRONTEND_HOSTNAME_URL}" ]]; then
+  echo "Frontend hostname URL: ${FRONTEND_HOSTNAME_URL}"
+fi
+if [[ "${FRONTEND_HOST}" == "0.0.0.0" || "${FRONTEND_HOST}" == "::" ]]; then
+  echo "0.0.0.0 is the bind address, not a browser URL."
+  echo "For access from another device, use this machine's hostname or LAN IP with port ${FRONTEND_PORT}."
+fi
+echo "Frontend TLS certificate: ${FRONTEND_TLS_CERT}"
+setsid env FRONTEND_HOST="${FRONTEND_HOST}" FRONTEND_PORT="${FRONTEND_PORT}" FRONTEND_TLS_CERT="${FRONTEND_TLS_CERT}" FRONTEND_TLS_KEY="${FRONTEND_TLS_KEY}" BACKEND_PORT="${BACKEND_PORT}" BACKEND_URL="${FRONTEND_BACKEND_URL}" bash -lc "cd frontend && pnpm dev" > logs/frontend.log 2>&1 &
 FRONT_PID=$!
 
 echo "Frontend PID: ${FRONT_PID}, Backend PID: ${BACK_PID}"
@@ -228,9 +312,9 @@ if command -v curl >/dev/null; then
     }
 
     wait_for_url "https://localhost:${BACKEND_PORT}/api/v1/health" "Backend" "${BACK_PID}" "-k"
-    wait_for_url "http://localhost:${FRONTEND_PORT}/api/health" "Frontend" "${FRONT_PID}"
+    wait_for_url "https://localhost:${FRONTEND_PORT}/api/health" "Frontend" "${FRONT_PID}" "-k"
     # Warm up a public frontend page so unauthenticated auth redirects do not fail startup.
-    wait_for_url "http://localhost:${FRONTEND_PORT}/login" "Frontend (Warmup)" "${FRONT_PID}"
+    wait_for_url "https://localhost:${FRONTEND_PORT}/login" "Frontend (Warmup)" "${FRONT_PID}" "-k"
 else
     echo "curl not found, skipping health checks."
 fi

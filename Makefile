@@ -6,6 +6,7 @@ export $(shell sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env)
 endif
 
 FRONTEND_PORT ?= 3000
+FRONTEND_HOST ?= 0.0.0.0
 BACKEND_PORT ?= 8000
 BACKEND_VENV_BIN := backend/.venv/bin
 PYTHON := $(BACKEND_VENV_BIN)/python
@@ -36,7 +37,7 @@ test: backend-test frontend-test shell-test
 	$(MAKE) frontend-e2e-test
 
 run:
-	./run-dev.sh --frontend-port $(FRONTEND_PORT) --backend-port $(BACKEND_PORT)
+	./run-dev.sh --frontend-host "$(FRONTEND_HOST)" --frontend-port "$(FRONTEND_PORT)" --backend-port "$(BACKEND_PORT)"
 
 shell-test:
 	bash tests/run-dev.test.sh

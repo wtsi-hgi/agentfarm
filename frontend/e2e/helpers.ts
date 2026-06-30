@@ -11,7 +11,7 @@ const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 const frontendBaseUrl =
   process.env.PLAYWRIGHT_FRONTEND_URL ??
-  `http://127.0.0.1:${process.env.PLAYWRIGHT_FRONTEND_PORT ?? '3100'}`
+  `https://127.0.0.1:${process.env.PLAYWRIGHT_FRONTEND_PORT ?? '3100'}`
 const dataDir =
   process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR ??
   path.resolve(

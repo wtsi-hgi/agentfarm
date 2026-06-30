@@ -56,7 +56,8 @@ Start both dev services:
 make run
 ```
 
-Then open `http://localhost:3000`. Logs are written to:
+Then open the `Frontend URL` printed by `run-dev.sh`, usually
+`https://localhost:3000`. Logs are written to:
 
 ```bash
 tail -F logs/frontend.log logs/backend.log
@@ -100,7 +101,7 @@ out of your shell profile.
 `make run` is a wrapper around:
 
 ```bash
-./run-dev.sh --frontend-port 3000 --backend-port 8000
+./run-dev.sh --frontend-host 0.0.0.0 --frontend-port 3000 --backend-port 8000
 ```
 
 Custom ports:
@@ -109,10 +110,25 @@ Custom ports:
 make run FRONTEND_PORT=4000 BACKEND_PORT=9000
 ```
 
+Custom frontend bind host:
+
+```bash
+make run FRONTEND_HOST=127.0.0.1
+```
+
+To listen on every interface, set `FRONTEND_HOST=0.0.0.0`. Keep using
+`https://localhost:3000` on the same machine, or replace `localhost` with the
+machine's hostname or LAN IP from another device. `0.0.0.0` is the bind address,
+not the browser URL. The URL uses a local self-signed certificate; use
+`AGENTFARM_TLS_CERT` and `AGENTFARM_TLS_KEY` if you need a certificate that
+already chains to a trusted local CA or matches a custom hostname.
+
 Important runtime notes:
 
-- The backend serves HTTPS locally with a generated self-signed certificate.
+- The frontend dev server and backend both serve HTTPS locally with a generated
+  self-signed certificate.
 - The frontend talks to the backend through server-side BFF calls.
+- The frontend binds to `FRONTEND_HOST` (default `0.0.0.0`).
 - `run-dev.sh` passes `BACKEND_URL=https://127.0.0.1:${BACKEND_PORT}` to the
   frontend process.
 - Backend runtime state defaults to repo-root `data/`, which is ignored by git.
@@ -141,6 +157,7 @@ middleware, Server Actions, backend auth, SQLite, and the rendered UI.
 
 Common local settings:
 
+- `FRONTEND_HOST` (default `0.0.0.0`)
 - `FRONTEND_PORT` (default `3000`)
 - `BACKEND_PORT` (default `8000`)
 - `BACKEND_URL` (frontend server-side backend URL)
@@ -156,6 +173,7 @@ Common local settings:
 Example `.env`:
 
 ```bash
+FRONTEND_HOST=0.0.0.0
 FRONTEND_PORT=4000
 BACKEND_PORT=9000
 BACKEND_URL=https://127.0.0.1:9000

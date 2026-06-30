@@ -13,7 +13,9 @@ const htmlReportDir = path.join(scratchDir, 'playwright-report')
 const frontendPort = Number(process.env.PLAYWRIGHT_FRONTEND_PORT ?? 3100)
 const backendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT ?? 8100)
 const backendUrl = `https://127.0.0.1:${backendPort}`
-const frontendUrl = `http://127.0.0.1:${frontendPort}`
+const frontendUrl = `https://127.0.0.1:${frontendPort}`
+const tlsCert = path.join(dataDir, 'tls', 'agentfarm-self-signed.crt')
+const tlsKey = path.join(dataDir, 'tls', 'agentfarm-self-signed.key')
 const chromiumExecutablePath = resolveChromiumExecutablePath()
 
 process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR = dataDir
@@ -61,7 +63,7 @@ export default defineConfig({
       url: `${backendUrl}/api/v1/health`,
     },
     {
-      command: `pnpm --dir frontend exec next dev -H 0.0.0.0 -p ${frontendPort}`,
+      command: `pnpm --dir frontend exec next dev --experimental-https --experimental-https-key ${tlsKey} --experimental-https-cert ${tlsCert} -H 0.0.0.0 -p ${frontendPort}`,
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -70,6 +72,7 @@ export default defineConfig({
         FRONTEND_PORT: String(frontendPort),
         NEXT_TELEMETRY_DISABLED: '1',
       },
+      ignoreHTTPSErrors: true,
       reuseExistingServer: false,
       timeout: 180_000,
       url: `${frontendUrl}/login`,
