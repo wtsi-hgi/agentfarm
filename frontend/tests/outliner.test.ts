@@ -447,6 +447,49 @@ describe('Outliner', () => {
     ).toEqual(['active', 'new-done', 'legacy-done'])
   })
 
+  it('uses the replacement marker timestamp for the default tree cutoff', () => {
+    const items = [
+      item({
+        id: 'active',
+        title: 'Active work',
+      }),
+      item({
+        id: 'done-after-original-before-replacement',
+        title: 'Done after original marker before replacement',
+        sort_order: 2,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-29T12:00:00.000000Z',
+      }),
+      item({
+        id: 'done-after-replacement',
+        title: 'Done after replacement marker',
+        sort_order: 3,
+        actionable: false,
+        complete: true,
+        state: 'done',
+        completed_at: '2026-06-30T12:00:00.000000Z',
+      }),
+    ]
+
+    expect(
+      renderedItemIds(
+        React.createElement(Outliner, {
+          items,
+          markers: [
+            marker({
+              id: 'daily-replacement',
+              name: 'daily',
+              at: '2026-06-30T00:00:00.000000Z',
+              created_at: '2026-06-30T00:00:00.000000Z',
+            }),
+          ],
+        })
+      )
+    ).toEqual(['active', 'done-after-replacement'])
+  })
+
   it('shows all rows when there is no marker cutoff', () => {
     const items = [
       item({

@@ -326,6 +326,20 @@ function getSelect(container: ParentNode, ariaLabel: string) {
   return select
 }
 
+function selectOptions(select: HTMLSelectElement) {
+  return Array.from(select.options).map((option) => ({
+    label: option.textContent ?? '',
+    value: option.value,
+  }))
+}
+
+function expectedLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 async function click(button: HTMLButtonElement) {
   await act(async () => {
     button.click()
@@ -1103,6 +1117,58 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(hasOutlinerItem(container, 'caller-added')).toBe(true)
     expect(hasFilterNotice(container)).toBe(true)
+  })
+
+  it("fills the marker name with today's local date from the calendar button", async () => {
+    const container = await render(React.createElement(Outliner, { items: [] }))
+    const markerName = getInput(container, 'Marker name')
+    const beforeClick = expectedLocalDate(new Date())
+
+    await click(getButton(container, 'Use today as marker name'))
+
+    expect([beforeClick, expectedLocalDate(new Date())]).toContain(
+      markerName.value
+    )
+  })
+
+  it('replaces a same-name marker in the open marker controls and keeps it last', async () => {
+    actionMocks.fetchMarkers.mockResolvedValue([
+      {
+        id: 'marker-before',
+        name: 'Before',
+        at: '2026-06-29T00:00:00.000000Z',
+        created_at: '2026-06-29T00:00:00.000000Z',
+      },
+      {
+        id: 'marker-other',
+        name: 'Other',
+        at: '2026-06-29T12:00:00.000000Z',
+        created_at: '2026-06-29T12:00:00.000000Z',
+      },
+    ])
+    actionMocks.createMarker.mockResolvedValue({
+      id: 'marker-replacement',
+      name: 'Before',
+      at: '2026-06-30T00:00:00.000000Z',
+      created_at: '2026-06-30T00:00:00.000000Z',
+    })
+    const container = await render(React.createElement(Outliner, { items: [] }))
+
+    await changeSelect(getSelect(container, 'Until marker'), 'marker-before')
+    await typeThroughCurrentSelection(
+      getInput(container, 'Marker name'),
+      'Before'
+    )
+    await click(getButton(container, 'Create marker'))
+
+    const sinceMarker = getSelect(container, 'Since marker')
+    expect(selectOptions(sinceMarker)).toEqual([
+      { label: 'Since', value: '' },
+      { label: 'Other', value: 'marker-other' },
+      { label: 'Before', value: 'marker-replacement' },
+    ])
+    expect(sinceMarker.value).toBe('marker-replacement')
+    expect(getSelect(container, 'Until marker').value).toBe('')
   })
 
   it('selects the default title for an Enter-created sibling so immediate typing replaces it', async () => {

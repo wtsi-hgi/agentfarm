@@ -1,11 +1,17 @@
 'use client'
 
 import * as React from 'react'
-import { Flag, Filter, X } from 'lucide-react'
+import { Calendar, Flag, Filter, X } from 'lucide-react'
 
 import { createMarker, fetchChanges, fetchMarkers } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { Marker, MarkerChangeField } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
@@ -20,6 +26,13 @@ const CHANGE_FIELDS = [
   { value: 'created', label: 'Created' },
   { value: 'completed', label: 'Completed' },
 ] satisfies readonly { value: MarkerChangeField; label: string }[]
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export function MarkerControls({
   initialMarkers = [],
@@ -60,8 +73,17 @@ export function MarkerControls({
     try {
       const marker = await createMarker({ name: name.trim() })
       setName('')
-      setMarkers((current) => [...current, marker])
+      const replacedMarkerIds = new Set(
+        markers
+          .filter((existing) => existing.name === marker.name)
+          .map((existing) => existing.id)
+      )
+      setMarkers((current) => [
+        ...current.filter((existing) => existing.name !== marker.name),
+        marker,
+      ])
       setSinceId(marker.id)
+      setUntilId((current) => (replacedMarkerIds.has(current) ? '' : current))
       setStatus(`${marker.name} marked`)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to mark')
@@ -105,6 +127,23 @@ export function MarkerControls({
           placeholder="Marker"
           className="h-8 w-32"
         />
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="size-8"
+                aria-label="Use today as marker name"
+                onClick={() => setName(formatLocalDate(new Date()))}
+              >
+                <Calendar className="size-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Use today</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <Button
           type="submit"
           size="icon"

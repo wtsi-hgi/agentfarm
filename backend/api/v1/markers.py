@@ -65,6 +65,7 @@ async def create_marker(
     marker_id = str(uuid.uuid4())
     marker_at = payload.at if payload.at is not None else timestamp
 
+    conn.execute("DELETE FROM markers WHERE name = ?", (payload.name,))
     conn.execute(
         """
         INSERT INTO markers (id, name, at, created_at)

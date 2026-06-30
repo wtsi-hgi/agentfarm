@@ -87,6 +87,40 @@ async def test_create_marker_defaults_at_to_now_and_lists_by_marker_time(
 
 
 @pytest.mark.anyio
+async def test_recreating_same_named_marker_replaces_old_marker_at_latest_order(
+    fresh_db,
+) -> None:
+    """POST /markers deletes an existing same-name marker before adding the new one."""
+    async with _client() as client:
+        original = await _create_marker(
+            client,
+            "daily",
+            at="2026-06-29T00:00:00.000000Z",
+        )
+        other = await _create_marker(
+            client,
+            "other",
+            at="2026-06-29T12:00:00.000000Z",
+        )
+
+        clock.set_clock(lambda: "2026-06-30T00:00:00.000000Z")
+        replacement = await _create_marker(client, "daily")
+
+        markers_response = await client.get("/api/v1/markers")
+        old_window_response = await client.get(
+            f"/api/v1/changes?since={original['id']}"
+        )
+
+    assert markers_response.status_code == 200
+    markers = markers_response.json()
+    assert [marker["name"] for marker in markers] == ["other", "daily"]
+    assert [marker["id"] for marker in markers] == [other["id"], replacement["id"]]
+    assert replacement["id"] != original["id"]
+    assert replacement["at"] == "2026-06-30T00:00:00.000000Z"
+    assert old_window_response.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_changes_since_marker_changed_field_includes_only_later_changed_item(
     fresh_db,
 ) -> None:
