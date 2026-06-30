@@ -12,6 +12,7 @@ from db.connection import get_connection
 from db.migrate import apply_migrations
 from main import app
 from services.auth_ldap import (
+    Ldap3Binder,
     LdapAuthenticator,
     LdapBindError,
     LdapBindSettings,
@@ -31,6 +32,56 @@ class StubBinder:
         self.calls.append((server_uri, bind_dn, password))
         if not self.succeeds:
             raise LdapBindError("stub rejected credentials")
+
+
+def test_ldap3_binder_imports_declared_runtime_package(monkeypatch) -> None:
+    """The production LDAP binder can import ldap3 without making a network call."""
+
+    import ldap3
+
+    calls: dict[str, object] = {}
+
+    class FakeServer:
+        def __init__(self, server_uri: str) -> None:
+            calls["server_uri"] = server_uri
+
+    class FakeConnection:
+        bound = True
+
+        def __init__(
+            self,
+            server: FakeServer,
+            *,
+            user: str,
+            password: str,
+            auto_bind: bool,
+        ) -> None:
+            calls["server"] = server
+            calls["user"] = user
+            calls["password"] = password
+            calls["auto_bind"] = auto_bind
+
+        def unbind(self) -> None:
+            calls["unbound"] = True
+
+    monkeypatch.setattr(ldap3, "Server", FakeServer)
+    monkeypatch.setattr(ldap3, "Connection", FakeConnection)
+
+    Ldap3Binder().bind(
+        server_uri="ldap://directory.example",
+        bind_dn="uid=alice,ou=people,dc=example,dc=com",
+        password="correct horse",
+    )
+
+    server = calls.pop("server")
+    assert isinstance(server, FakeServer)
+    assert calls == {
+        "server_uri": "ldap://directory.example",
+        "user": "uid=alice,ou=people,dc=example,dc=com",
+        "password": "correct horse",
+        "auto_bind": True,
+        "unbound": True,
+    }
 
 
 @pytest.fixture
