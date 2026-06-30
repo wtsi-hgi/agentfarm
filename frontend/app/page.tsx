@@ -13,9 +13,6 @@ export default async function Home() {
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
         <header className="border-border flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
-            <p className="text-muted-foreground text-xs font-medium tracking-[0.22em] uppercase">
-              Unified Tree
-            </p>
             <h1 className="text-foreground text-2xl font-semibold tracking-tight">
               Agent Farm
             </h1>

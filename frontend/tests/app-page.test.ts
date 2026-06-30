@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -103,16 +104,27 @@ describe('app page BFF wiring', () => {
     ).toEqual(['signed-viewer-token', 'signed-viewer-token'])
   })
 
-  it('renders the unified outliner from the real tree endpoint data', async () => {
+  it('renders the Agent Farm page chrome and outliner without the redundant tree label', async () => {
     const fetch = stubBackend()
 
     const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+    const header = document.querySelector('header')
 
     expect(
       fetch.mock.calls.map(([url]) => new URL(url.toString()).pathname)
     ).toEqual(['/api/v1/tree', '/api/v1/priority'])
-    expect(markup).toContain('Alpha')
-    expect(markup).toContain('Jump to product')
-    expect(markup).not.toContain('Full-stack starter')
+    expect(header?.querySelector('h1')?.textContent).toBe('Agent Farm')
+    expect(header?.textContent).toContain('Items')
+    expect(header?.textContent).toContain('Priority')
+    expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('1')
+    expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('1')
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.textContent).toContain('Product')
+    expect(
+      document.querySelector('select[aria-label="Jump to product"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Unified Tree')
+    expect(document.body.textContent).not.toContain('Full-stack starter')
   })
 })
