@@ -103,6 +103,16 @@ function getItemButton(
   return button
 }
 
+function getItemInput(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input for ${itemId}`)
+  }
+  return input
+}
+
 function getOptionalItemButton(
   container: ParentNode,
   itemId: string,
@@ -193,6 +203,27 @@ function getButton(container: ParentNode, ariaLabel: string) {
   return button
 }
 
+function getDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error('Missing confirmation dialog')
+  }
+  return dialog
+}
+
+function queryDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  return dialog instanceof HTMLElement ? dialog : null
+}
+
+function getDialogButton(ariaLabel: string) {
+  return getButton(getDialog(), ariaLabel)
+}
+
 function getOptionalButton(container: ParentNode, ariaLabel: string) {
   const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (button !== null && !(button instanceof HTMLButtonElement)) {
@@ -266,6 +297,24 @@ async function changeSelect(select: HTMLSelectElement, value: string) {
   await flushReact()
 }
 
+async function keyDown(
+  input: HTMLInputElement,
+  key: string,
+  options: KeyboardEventInit = {}
+) {
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+        ...options,
+      })
+    )
+  })
+  await flushReact()
+}
+
 async function rejectPendingChildCommentLoads() {
   const pendingRejectors = childCommentRejectors
   childCommentRejectors = []
@@ -327,6 +376,172 @@ describe('Outliner comment target lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('requires confirmation before deleting an item from the row action', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await click(getItemButton(container, 'root', 'Delete item'))
+
+    expect(getDialog().textContent).toContain('Delete item')
+    expect(actionMocks.deleteItem).not.toHaveBeenCalled()
+
+    await click(getDialogButton('Cancel deletion'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteItem).not.toHaveBeenCalled()
+    expect(getItemInput(container, 'root').value).toBe('Root project')
+
+    await click(getItemButton(container, 'root', 'Delete item'))
+    await click(getDialogButton('Confirm deletion'))
+
+    expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
+    expect(container.querySelector('[data-outliner-item-id="root"]')).toBeNull()
+  })
+
+  it('requires confirmation before deleting an item from the keyboard command', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await keyDown(getItemInput(container, 'root'), 'Delete', { ctrlKey: true })
+
+    expect(getDialog().textContent).toContain('Delete item')
+    expect(actionMocks.deleteItem).not.toHaveBeenCalled()
+
+    await click(getDialogButton('Cancel deletion'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteItem).not.toHaveBeenCalled()
+    expect(getItemInput(container, 'root').value).toBe('Root project')
+
+    await keyDown(getItemInput(container, 'root'), 'Delete', { ctrlKey: true })
+    await click(getDialogButton('Confirm deletion'))
+
+    expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
+  })
+
+  it('cancels dependency removal from row text without mutating the item', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            needs: ['deploy-db'],
+            needs_edges: [{ id: 'dep-deploy-db', slug: 'deploy-db' }],
+          }),
+        ],
+      })
+    )
+    const input = getItemInput(container, 'root')
+
+    await changeInput(input, 'Renamed root')
+    await click(getItemButton(container, 'root', 'Save row'))
+
+    expect(getDialog().textContent).toContain('Remove dependency')
+    expect(getDialog().textContent).toContain('deploy-db')
+    expect(actionMocks.patchItem).not.toHaveBeenCalled()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+
+    await click(getDialogButton('Cancel deletion'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.patchItem).not.toHaveBeenCalled()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(getItemInput(container, 'root').value).toBe('Root project')
+    expect(container.textContent).toContain('>deploy-db')
+  })
+
+  it('confirms dependency removal from row text before saving the item', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            needs: ['deploy-db'],
+            needs_edges: [{ id: 'dep-deploy-db', slug: 'deploy-db' }],
+          }),
+        ],
+      })
+    )
+    const input = getItemInput(container, 'root')
+
+    await changeInput(input, 'Renamed root')
+    await click(getItemButton(container, 'root', 'Save row'))
+    await click(getDialogButton('Confirm deletion'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      title: 'Renamed root',
+    })
+    expect(actionMocks.deleteDependency).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteDependency).toHaveBeenCalledWith('dep-deploy-db')
+    expect(queryDialog()).toBeNull()
+    expect(getItemInput(container, 'root').value).toBe('Renamed root')
+  })
+
+  it('requires confirmation before deleting a comment', async () => {
+    actionMocks.fetchComments.mockResolvedValue([
+      {
+        id: 'comment-1',
+        item_id: 'root',
+        author: 'alice',
+        body: 'Looks ready',
+        created_at: '2026-06-29T00:05:00.000000Z',
+        updated_at: '2026-06-29T00:05:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+
+    expect(detailsPanel.textContent).toContain('Looks ready')
+
+    await click(getButton(detailsPanel, 'Delete comment'))
+
+    expect(getDialog().textContent).toContain('Delete comment')
+    expect(actionMocks.deleteComment).not.toHaveBeenCalled()
+
+    await click(getDialogButton('Cancel deletion'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteComment).not.toHaveBeenCalled()
+    expect(detailsPanel.textContent).toContain('Looks ready')
+
+    await click(getButton(detailsPanel, 'Delete comment'))
+    await click(getDialogButton('Confirm deletion'))
+
+    expect(actionMocks.deleteComment).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteComment).toHaveBeenCalledWith('comment-1')
+  })
+
   it('does not surface 404s from a deleted root subtree in the add-comment UI', async () => {
     const container = await render(
       React.createElement(Outliner, {
@@ -346,6 +561,7 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getItemRow(container, 'child'))
     await click(getItemButton(container, 'root', 'Delete item'))
+    await click(getDialogButton('Confirm deletion'))
     await rejectPendingChildCommentLoads()
 
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')

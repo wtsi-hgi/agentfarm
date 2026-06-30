@@ -21,6 +21,7 @@ import {
   fetchItemActivity,
   patchItem,
 } from '@/app/actions'
+import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -75,6 +76,8 @@ export function CommentsPanel({
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
+  const [pendingDeleteComment, setPendingDeleteComment] =
+    React.useState<Comment | null>(null)
   const [loadingComments, setLoadingComments] = React.useState(false)
   const [loadingActivity, setLoadingActivity] = React.useState(false)
   const [savingDetails, setSavingDetails] = React.useState(false)
@@ -103,6 +106,7 @@ export function CommentsPanel({
 
   React.useEffect(() => {
     setEditingRepoUrl(false)
+    setPendingDeleteComment(null)
   }, [itemId])
 
   const loadComments = React.useCallback(async () => {
@@ -246,12 +250,8 @@ export function CommentsPanel({
 
   async function removeComment(commentId: string) {
     setError(null)
-    try {
-      await deleteComment(commentId)
-      await loadComments()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to delete')
-    }
+    await deleteComment(commentId)
+    await loadComments()
   }
 
   const loading = loadingComments || loadingActivity
@@ -452,7 +452,7 @@ export function CommentsPanel({
                         variant="ghost"
                         className="size-7"
                         aria-label="Delete comment"
-                        onClick={() => void removeComment(comment.id)}
+                        onClick={() => setPendingDeleteComment(comment)}
                       >
                         <Trash2 className="size-3.5" aria-hidden="true" />
                       </Button>
@@ -509,6 +509,27 @@ export function CommentsPanel({
           {error}
         </div>
       ) : null}
+      <DestructiveConfirmationDialog
+        open={Boolean(pendingDeleteComment)}
+        title="Delete comment"
+        description={
+          <>
+            This removes the comment from{' '}
+            <span className="text-foreground font-medium">
+              {pendingDeleteComment?.author ?? 'this author'}
+            </span>
+            . This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete comment"
+        confirmingLabel="Deleting comment"
+        onCancel={() => setPendingDeleteComment(null)}
+        onConfirm={async () => {
+          if (pendingDeleteComment) {
+            await removeComment(pendingDeleteComment.id)
+          }
+        }}
+      />
     </aside>
   )
 }

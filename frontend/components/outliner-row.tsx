@@ -65,6 +65,7 @@ type OutlinerRowProps = {
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
   onDragEnd?: React.DragEventHandler<HTMLButtonElement>
+  draftResetRequest?: { requestId: number; text: string } | null
 }
 
 export function OutlinerRow({
@@ -86,14 +87,24 @@ export function OutlinerRow({
   onChangeDone,
   onDragStart,
   onDragEnd,
+  draftResetRequest,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const draftResetRequestId = draftResetRequest?.requestId
+  const draftResetText = draftResetRequest?.text
 
   React.useEffect(() => {
     setDraft(item.title)
   }, [item.title])
+
+  React.useEffect(() => {
+    if (draftResetRequestId === undefined || draftResetText === undefined) {
+      return
+    }
+    setDraft(draftResetText)
+  }, [draftResetRequestId, draftResetText])
 
   async function run(operation: () => Promise<void>) {
     setPending(true)

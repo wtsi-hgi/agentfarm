@@ -47,6 +47,33 @@ export type RowKeyboardCommand = {
   metaKey?: boolean
 }
 
+export type RemovedDependency = {
+  id: string
+  slug: string
+}
+
+export type SubmitRowTextOptions = {
+  destructiveDependencyRemoval?: 'confirmed'
+}
+
+export class DependencyRemovalConfirmationRequiredError extends Error {
+  readonly dependencies: RemovedDependency[]
+
+  constructor(dependencies: RemovedDependency[]) {
+    super(
+      dependencies.length === 1
+        ? `Removing dependency ${dependencies[0]?.slug ?? ''} requires confirmation`
+        : 'Removing dependencies requires confirmation'
+    )
+    this.name = 'DependencyRemovalConfirmationRequiredError'
+    this.dependencies = dependencies
+    Object.setPrototypeOf(
+      this,
+      DependencyRemovalConfirmationRequiredError.prototype
+    )
+  }
+}
+
 export type RowMutationActions = {
   patchItem: (itemId: string, patch: PatchPayload) => Promise<unknown>
   createDependency: (input: DependencyPayload) => Promise<unknown>
@@ -64,13 +91,24 @@ export type RowKeyboardResult = {
   deletedItemId?: string
 }
 
+function removedDependencies(
+  item: TreeItem,
+  requestedNeeds: ReadonlySet<string>
+): RemovedDependency[] {
+  const existingNeeds = new Set(item.needs)
+  return item.needs_edges.filter(
+    (edge) => existingNeeds.has(edge.slug) && !requestedNeeds.has(edge.slug)
+  )
+}
+
 export async function submitRowText(
   item: TreeItem,
   text: string,
   actions: Pick<
     RowMutationActions,
     'patchItem' | 'createDependency' | 'deleteDependency'
-  >
+  >,
+  options: SubmitRowTextOptions = {}
 ): Promise<void> {
   const parsed = parseRow(text)
   if (!parsed.ok) {
@@ -92,12 +130,20 @@ export async function submitRowText(
     patch.state = parsed.row.state
   }
 
+  const existingNeeds = new Set(item.needs)
+  const requestedNeeds = new Set(parsed.row.needs)
+  const dependenciesToRemove = removedDependencies(item, requestedNeeds)
+  if (
+    dependenciesToRemove.length > 0 &&
+    options.destructiveDependencyRemoval !== 'confirmed'
+  ) {
+    throw new DependencyRemovalConfirmationRequiredError(dependenciesToRemove)
+  }
+
   if (Object.keys(patch).length > 0) {
     await actions.patchItem(item.id, patch)
   }
 
-  const existingNeeds = new Set(item.needs)
-  const requestedNeeds = new Set(parsed.row.needs)
   for (const needsSlug of requestedNeeds) {
     if (!existingNeeds.has(needsSlug)) {
       await actions.createDependency({
@@ -107,10 +153,8 @@ export async function submitRowText(
     }
   }
 
-  for (const edge of item.needs_edges) {
-    if (existingNeeds.has(edge.slug) && !requestedNeeds.has(edge.slug)) {
-      await actions.deleteDependency(edge.id)
-    }
+  for (const edge of dependenciesToRemove) {
+    await actions.deleteDependency(edge.id)
   }
 }
 
@@ -144,16 +188,17 @@ export async function applyRowKeyboardCommand(
   item: TreeItem,
   text: string,
   command: RowKeyboardCommand,
-  actions: RowMutationActions
+  actions: RowMutationActions,
+  options: SubmitRowTextOptions = {}
 ): Promise<RowKeyboardResult> {
   if (command.key === 'Enter') {
-    await submitRowText(item, text, actions)
+    await submitRowText(item, text, actions, options)
     const created = await createNextSibling(item, actions)
     return { handled: true, createdItemId: created.id }
   }
 
   if (command.key === 'Tab') {
-    await submitRowText(item, text, actions)
+    await submitRowText(item, text, actions, options)
     if (command.shiftKey) {
       await actions.outdentItem(item.id)
     } else {

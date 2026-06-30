@@ -15,6 +15,7 @@ import {
   patchItem,
 } from '@/app/actions'
 import { CommentsPanel } from '@/components/comments-panel'
+import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
 import { MarkerControls } from '@/components/marker-controls'
 import { OutlinerRow } from '@/components/outliner-row'
 import {
@@ -33,14 +34,17 @@ import type {
   TreeItem,
 } from '@/lib/contracts'
 import {
+  DependencyRemovalConfirmationRequiredError,
   applyRowKeyboardCommand,
   createFirstRoot,
   moveRowAfter,
   moveRowToFirst,
   NEW_ITEM_TITLE,
   submitRowText,
+  type RemovedDependency,
   type RowKeyboardCommand,
   type RowMutationActions,
+  type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
 import { isExternalWaitingState } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
@@ -93,6 +97,27 @@ type FocusRequest = {
   requestId: number
   selectTitle: boolean
 }
+
+type RowDraftResetRequest = {
+  itemId: string
+  requestId: number
+  text: string
+}
+
+type PendingDependencyRemoval =
+  | {
+      kind: 'submit'
+      item: TreeItem
+      text: string
+      dependencies: RemovedDependency[]
+    }
+  | {
+      kind: 'keyboard'
+      item: TreeItem
+      text: string
+      command: RowKeyboardCommand
+      dependencies: RemovedDependency[]
+    }
 
 const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
 
@@ -575,10 +600,18 @@ export function Outliner({
     null
   )
   const nextFocusRequestId = React.useRef(0)
+  const nextDraftResetRequestId = React.useRef(0)
+  const confirmedDependencyRemovalRef = React.useRef(false)
   const [selectedItemId, setSelectedItemId] = React.useState<string | null>(
     () => items[0]?.id ?? null
   )
   const [detailRefreshKey, setDetailRefreshKey] = React.useState(0)
+  const [pendingDeleteItem, setPendingDeleteItem] =
+    React.useState<TreeItem | null>(null)
+  const [pendingDependencyRemoval, setPendingDependencyRemoval] =
+    React.useState<PendingDependencyRemoval | null>(null)
+  const [draftResetRequest, setDraftResetRequest] =
+    React.useState<RowDraftResetRequest | null>(null)
   const [selectedView, setSelectedView] = React.useState<OutlinerView>('tree')
   const [sessionNewlyAddedIds, setSessionNewlyAddedIds] = React.useState(
     () => new Set<string>()
@@ -791,23 +824,46 @@ export function Outliner({
     setSelectedItemId(firstAvailableItemId(items, unavailableIds))
   }
 
-  async function submitText(item: TreeItem, text: string) {
-    await submitRowText(item, text, mutationActions)
+  async function performSubmitText(
+    item: TreeItem,
+    text: string,
+    options: SubmitRowTextOptions = {}
+  ) {
+    await submitRowText(item, text, mutationActions, options)
     setDetailRefreshKey((current) => current + 1)
     requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
 
-  async function runKeyboardCommand(
+  async function submitText(item: TreeItem, text: string) {
+    try {
+      await performSubmitText(item, text)
+    } catch (caught) {
+      if (caught instanceof DependencyRemovalConfirmationRequiredError) {
+        setPendingDependencyRemoval({
+          kind: 'submit',
+          item,
+          text,
+          dependencies: caught.dependencies,
+        })
+        return
+      }
+      throw caught
+    }
+  }
+
+  async function performKeyboardCommand(
     item: TreeItem,
     text: string,
-    command: RowKeyboardCommand
+    command: RowKeyboardCommand,
+    options: SubmitRowTextOptions = {}
   ) {
     const result = await applyRowKeyboardCommand(
       item,
       text,
       command,
-      mutationActions
+      mutationActions,
+      options
     )
 
     if (command.key === 'Tab' && !command.shiftKey) {
@@ -834,9 +890,88 @@ export function Outliner({
     }
   }
 
+  async function runKeyboardCommand(
+    item: TreeItem,
+    text: string,
+    command: RowKeyboardCommand
+  ) {
+    if (command.key === 'Delete' && (command.ctrlKey || command.metaKey)) {
+      setPendingDeleteItem(item)
+      return
+    }
+
+    try {
+      await performKeyboardCommand(item, text, command)
+    } catch (caught) {
+      if (caught instanceof DependencyRemovalConfirmationRequiredError) {
+        setPendingDependencyRemoval({
+          kind: 'keyboard',
+          item,
+          text,
+          command,
+          dependencies: caught.dependencies,
+        })
+        return
+      }
+      throw caught
+    }
+  }
+
   async function removeItem(item: TreeItem) {
     await mutationActions.deleteItem(item.id)
     markItemSubtreeDeleted(item)
+  }
+
+  async function requestItemDelete(item: TreeItem) {
+    setPendingDeleteItem(item)
+  }
+
+  function closePendingDependencyRemoval() {
+    const pending = pendingDependencyRemoval
+    const wasConfirmed = confirmedDependencyRemovalRef.current
+    confirmedDependencyRemovalRef.current = false
+    setPendingDependencyRemoval(null)
+
+    if (!pending || wasConfirmed) {
+      return
+    }
+
+    setDraftResetRequest({
+      itemId: pending.item.id,
+      requestId: nextDraftResetRequestId.current,
+      text: pending.item.title,
+    })
+    nextDraftResetRequestId.current += 1
+    requestItemFocus(pending.item.id)
+    setSelectedItemId(pending.item.id)
+  }
+
+  async function confirmPendingDependencyRemoval() {
+    const pending = pendingDependencyRemoval
+    if (!pending) {
+      return
+    }
+
+    confirmedDependencyRemovalRef.current = true
+    const options: SubmitRowTextOptions = {
+      destructiveDependencyRemoval: 'confirmed',
+    }
+
+    try {
+      if (pending.kind === 'submit') {
+        await performSubmitText(pending.item, pending.text, options)
+      } else {
+        await performKeyboardCommand(
+          pending.item,
+          pending.text,
+          pending.command,
+          options
+        )
+      }
+    } catch (caught) {
+      confirmedDependencyRemovalRef.current = false
+      throw caught
+    }
   }
 
   async function moveUp(item: TreeItem) {
@@ -979,6 +1114,15 @@ export function Outliner({
     setSelectedItemId(created.id)
   }
 
+  const pendingDependencyCount =
+    pendingDependencyRemoval?.dependencies.length ?? 0
+  const pendingDependencyLabel =
+    pendingDependencyRemoval?.dependencies
+      .map((dependency) => `>needs:${dependency.slug}`)
+      .join(', ') ?? 'selected dependencies'
+  const pendingDependencyTitle =
+    pendingDependencyCount === 1 ? 'Remove dependency' : 'Remove dependencies'
+
   return (
     <div className={cn('space-y-3', className)}>
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
@@ -1009,6 +1153,13 @@ export function Outliner({
                 filteredOutNewlyAdded,
               }) => {
                 const targets = moveTargets(activeItems, item)
+                const rowDraftResetRequest =
+                  draftResetRequest?.itemId === item.id
+                    ? {
+                        requestId: draftResetRequest.requestId,
+                        text: draftResetRequest.text,
+                      }
+                    : null
 
                 return (
                   <div
@@ -1054,11 +1205,12 @@ export function Outliner({
                       onSelect={(itemId) => setSelectedItemId(itemId)}
                       onSubmitText={submitText}
                       onKeyboardCommand={runKeyboardCommand}
-                      onDelete={removeItem}
+                      onDelete={requestItemDelete}
                       onMoveUp={moveUp}
                       onMoveDown={moveDown}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
+                      draftResetRequest={rowDraftResetRequest}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = 'move'
                         event.dataTransfer.setData('text/plain', item.id)
@@ -1087,6 +1239,48 @@ export function Outliner({
           activityRefreshKey={detailRefreshKey}
         />
       </div>
+      <DestructiveConfirmationDialog
+        open={Boolean(pendingDependencyRemoval)}
+        title={pendingDependencyTitle}
+        description={
+          <>
+            This removes{' '}
+            <span className="text-foreground font-medium">
+              {pendingDependencyLabel}
+            </span>{' '}
+            from{' '}
+            <span className="text-foreground font-medium">
+              {pendingDependencyRemoval?.item.title ?? 'this item'}
+            </span>
+            . This cannot be undone.
+          </>
+        }
+        confirmLabel={pendingDependencyTitle}
+        confirmingLabel="Removing dependency"
+        onCancel={closePendingDependencyRemoval}
+        onConfirm={confirmPendingDependencyRemoval}
+      />
+      <DestructiveConfirmationDialog
+        open={Boolean(pendingDeleteItem)}
+        title="Delete item"
+        description={
+          <>
+            This removes{' '}
+            <span className="text-foreground font-medium">
+              {pendingDeleteItem?.title ?? 'this item'}
+            </span>{' '}
+            and any nested items, comments, and activity. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete item"
+        confirmingLabel="Deleting item"
+        onCancel={() => setPendingDeleteItem(null)}
+        onConfirm={async () => {
+          if (pendingDeleteItem) {
+            await removeItem(pendingDeleteItem)
+          }
+        }}
+      />
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
 import {
+  DependencyRemovalConfirmationRequiredError,
   NEW_ITEM_TITLE,
   applyRowKeyboardCommand,
   createFirstRoot,
@@ -87,7 +88,7 @@ describe('editable outliner behaviours', () => {
     expect(actions.deleteDependency).not.toHaveBeenCalled()
   })
 
-  it('deletes a known explicit dependency when its token is removed', async () => {
+  it('requires confirmation before deleting a known explicit dependency when its token is removed', async () => {
     const current = item({
       id: 'current',
       title: 'Ship login',
@@ -96,7 +97,31 @@ describe('editable outliner behaviours', () => {
     })
     const actions = mutationActions()
 
-    await submitRowText(current, 'Ship login', actions)
+    await expect(
+      submitRowText(current, 'Ship login', actions)
+    ).rejects.toMatchObject(
+      new DependencyRemovalConfirmationRequiredError([
+        { id: 'dep-deploy-db', slug: 'deploy-db' },
+      ])
+    )
+
+    expect(actions.patchItem).not.toHaveBeenCalled()
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
+  })
+
+  it('deletes a known explicit dependency after confirmation', async () => {
+    const current = item({
+      id: 'current',
+      title: 'Ship login',
+      needs: ['deploy-db'],
+      needs_edges: [{ id: 'dep-deploy-db', slug: 'deploy-db' }],
+    })
+    const actions = mutationActions()
+
+    await submitRowText(current, 'Ship login', actions, {
+      destructiveDependencyRemoval: 'confirmed',
+    })
 
     expect(actions.patchItem).not.toHaveBeenCalled()
     expect(actions.createDependency).not.toHaveBeenCalled()
@@ -104,7 +129,7 @@ describe('editable outliner behaviours', () => {
     expect(actions.deleteDependency).toHaveBeenCalledWith('dep-deploy-db')
   })
 
-  it('reconciles mixed dependency additions and removals by slug', async () => {
+  it('reconciles mixed dependency additions and removals by slug after confirmation', async () => {
     const current = item({
       id: 'current',
       title: 'Ship login',
@@ -119,7 +144,8 @@ describe('editable outliner behaviours', () => {
     await submitRowText(
       current,
       'Ship login >needs:kept-api >needs:new-api',
-      actions
+      actions,
+      { destructiveDependencyRemoval: 'confirmed' }
     )
 
     expect(actions.createDependency).toHaveBeenCalledTimes(1)
