@@ -26,6 +26,10 @@ type OutlinerTargetElement = {
 
 type OutlinerTargetQuery = (selector: string) => OutlinerTargetElement | null
 
+type FocusAndScrollOptions = {
+  selectTitle?: boolean
+}
+
 function sortedByTreeOrder(items: TreeItem[]) {
   return [...items].sort(
     (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id)
@@ -85,16 +89,30 @@ export function focusAndScrollOutlinerItem(
   query: OutlinerTargetQuery = (selector) =>
     typeof document === 'undefined'
       ? null
-      : (document.querySelector(selector) as OutlinerTargetElement | null)
+      : (document.querySelector(selector) as OutlinerTargetElement | null),
+  options: FocusAndScrollOptions = {}
 ) {
-  const target = query(
-    `[data-outliner-item-id="${escapeAttributeValue(itemId)}"]`
-  )
+  const escapedItemId = escapeAttributeValue(itemId)
+  const target = query(`[data-outliner-item-id="${escapedItemId}"]`)
   if (!target) {
     return false
   }
 
-  target.focus({ preventScroll: true })
+  const titleTarget = options.selectTitle
+    ? query(
+        `[data-outliner-item-id="${escapedItemId}"] input[aria-label="Item text"]`
+      )
+    : null
+  const focusTarget = titleTarget ?? target
+
+  focusTarget.focus({ preventScroll: true })
+  if (
+    options.selectTitle &&
+    titleTarget &&
+    typeof (titleTarget as { select?: unknown }).select === 'function'
+  ) {
+    ;(titleTarget as { select: () => void }).select()
+  }
   target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   return true
 }

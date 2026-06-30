@@ -54,6 +54,8 @@ const baseItem = {
 
 type CreateItemInput = {
   title: string
+  parent_id?: string | null
+  after_id?: string | null
 }
 
 type LiveOutlinerHarnessProps = {
@@ -100,6 +102,24 @@ function LiveOutlinerHarness({
   })
 }
 
+function SiblingCreationHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({ id: 'current', title: 'Current', sort_order: 1 }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, { items })
+}
+
 async function flushReact() {
   await act(async () => {
     await Promise.resolve()
@@ -133,6 +153,16 @@ function getInput(container: ParentNode, ariaLabel: string) {
   const input = container.querySelector(`input[aria-label="${ariaLabel}"]`)
   if (!(input instanceof HTMLInputElement)) {
     throw new Error(`Missing input: ${ariaLabel}`)
+  }
+  return input
+}
+
+function getItemInput(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input: ${itemId}`)
   }
   return input
 }
@@ -171,6 +201,44 @@ async function submitFirstRoot(container: ParentNode) {
 
   await act(async () => {
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
+}
+
+async function keyDown(input: HTMLInputElement, key: string) {
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function typeThroughCurrentSelection(
+  input: HTMLInputElement,
+  text: string
+) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  const start = input.selectionStart ?? input.value.length
+  const end = input.selectionEnd ?? input.value.length
+
+  await act(async () => {
+    valueSetter.call(
+      input,
+      `${input.value.slice(0, start)}${text}${input.value.slice(end)}`
+    )
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
   })
   await flushReact()
 }
@@ -309,5 +377,34 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(hasOutlinerItem(container, 'caller-added')).toBe(true)
     expect(hasFilterNotice(container)).toBe(true)
+  })
+
+  it('selects the default title for an Enter-created sibling so immediate typing replaces it', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 2,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(React.createElement(SiblingCreationHarness))
+
+    await keyDown(getItemInput(container, 'current'), 'Enter')
+
+    const createdInput = getItemInput(container, 'created-sibling')
+
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.value).toBe('New item')
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
+
+    await typeThroughCurrentSelection(createdInput, 'Write docs')
+
+    expect(createdInput.value).toBe('Write docs')
   })
 })

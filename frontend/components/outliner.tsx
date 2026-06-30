@@ -78,15 +78,32 @@ type AfterMoveTarget = {
 
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
+type FocusRequest = {
+  itemId: string
+  requestId: number
+  selectTitle: boolean
+}
+
 type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
 }
 
 function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
+  const inputRef = React.useRef<HTMLInputElement>(null)
   const [draft, setDraft] = React.useState(NEW_ITEM_TITLE)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const trimmedDraft = draft.trim()
+
+  React.useEffect(() => {
+    const input = inputRef.current
+    if (!input) {
+      return
+    }
+
+    input.focus()
+    input.select()
+  }, [])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -112,6 +129,7 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
       onSubmit={handleSubmit}
     >
       <Input
+        ref={inputRef}
         aria-label="First root title"
         className="h-9 min-w-0 flex-1"
         value={draft}
@@ -307,6 +325,10 @@ export function Outliner({
   )
   const [expandedIds, setExpandedIds] = React.useState(defaultExpandedIds)
   const [focusedItemId, setFocusedItemId] = React.useState<string | null>(null)
+  const [focusRequest, setFocusRequest] = React.useState<FocusRequest | null>(
+    null
+  )
+  const nextFocusRequestId = React.useRef(0)
   const [selectedItemId, setSelectedItemId] = React.useState<string | null>(
     () => items[0]?.id ?? null
   )
@@ -387,16 +409,43 @@ export function Outliner({
   }, [items, itemsById, selectedItemId])
 
   React.useEffect(() => {
-    if (!focusedItemId) {
+    if (!focusRequest) {
       return
     }
 
     const animationFrame = window.requestAnimationFrame(() => {
-      focusAndScrollOutlinerItem(focusedItemId)
+      const focused = focusAndScrollOutlinerItem(
+        focusRequest.itemId,
+        undefined,
+        { selectTitle: focusRequest.selectTitle }
+      )
+      if (focused) {
+        setFocusRequest((current) =>
+          current?.requestId === focusRequest.requestId ? null : current
+        )
+      }
     })
 
     return () => window.cancelAnimationFrame(animationFrame)
-  }, [focusedItemId, expandedIds])
+  }, [focusRequest, expandedIds, items])
+
+  function requestItemFocus(
+    itemId: string,
+    options: { selectTitle?: boolean } = {}
+  ) {
+    setFocusedItemId(itemId)
+    setFocusRequest({
+      itemId,
+      requestId: nextFocusRequestId.current,
+      selectTitle: options.selectTitle ?? false,
+    })
+    nextFocusRequestId.current += 1
+  }
+
+  function clearItemFocus() {
+    setFocusedItemId(null)
+    setFocusRequest(null)
+  }
 
   function toggle(itemId: string) {
     setExpandedIds((current) => {
@@ -427,13 +476,13 @@ export function Outliner({
     }
 
     setExpandedIds(jumpState.expandedIds)
-    setFocusedItemId(jumpState.focusedItemId)
+    requestItemFocus(jumpState.focusedItemId)
     setSelectedItemId(jumpState.focusedItemId)
   }
 
   async function submitText(item: TreeItem, text: string) {
     await submitRowText(item, text, mutationActions)
-    setFocusedItemId(item.id)
+    requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
 
@@ -463,22 +512,22 @@ export function Outliner({
       if (parentId) {
         setExpandedIds((current) => new Set(current).add(parentId))
       }
-      setFocusedItemId(createdItemId)
+      requestItemFocus(createdItemId, { selectTitle: true })
       setSelectedItemId(createdItemId)
     } else if (result.deletedItemId) {
-      setFocusedItemId(null)
+      clearItemFocus()
       setSelectedItemId(
         items.find((candidate) => candidate.id !== item.id)?.id ?? null
       )
     } else if (result.handled) {
-      setFocusedItemId(item.id)
+      requestItemFocus(item.id)
       setSelectedItemId(item.id)
     }
   }
 
   async function removeItem(item: TreeItem) {
     await mutationActions.deleteItem(item.id)
-    setFocusedItemId(null)
+    clearItemFocus()
     setSelectedItemId(
       items.find((candidate) => candidate.id !== item.id)?.id ?? null
     )
@@ -494,7 +543,7 @@ export function Outliner({
     } else {
       await moveRowAfter(item, target.afterId, mutationActions)
     }
-    setFocusedItemId(item.id)
+    requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
 
@@ -504,7 +553,7 @@ export function Outliner({
       return
     }
     await moveRowAfter(item, target.afterId, mutationActions)
-    setFocusedItemId(item.id)
+    requestItemFocus(item.id)
     setSelectedItemId(item.id)
   }
 
@@ -528,14 +577,16 @@ export function Outliner({
     if (targetParentId) {
       setExpandedIds((current) => new Set(current).add(targetParentId))
     }
-    setFocusedItemId(draggedItem.id)
+    requestItemFocus(draggedItem.id)
     setSelectedItemId(draggedItem.id)
   }
 
   async function createRoot(title: string) {
     const created = await createFirstRoot(title, mutationActions)
     setSessionNewlyAddedIds((current) => new Set(current).add(created.id))
-    setFocusedItemId(created.id)
+    requestItemFocus(created.id, {
+      selectTitle: title.trim() === NEW_ITEM_TITLE,
+    })
     setSelectedItemId(created.id)
   }
 
@@ -625,7 +676,7 @@ export function Outliner({
                       onMoveDown={moveDown}
                       onOpenComments={(itemId) => {
                         setSelectedItemId(itemId)
-                        setFocusedItemId(itemId)
+                        requestItemFocus(itemId)
                       }}
                     />
                     {filteredOutNewlyAdded ? (
