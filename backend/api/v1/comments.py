@@ -77,6 +77,7 @@ async def create_comment(
 @router.get("/items/{item_id}/comments", response_model=list[CommentOut])
 async def list_comments(
     item_id: str,
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[CommentOut]:
     """List an item's comments flat, ordered by creation time ascending."""

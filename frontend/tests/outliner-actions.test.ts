@@ -13,6 +13,8 @@ import {
   fetchChanges,
   fetchComments,
   fetchMarkers,
+  fetchPriority,
+  fetchTree,
   listRuns,
   indentItem,
   moveItem,
@@ -383,6 +385,94 @@ describe('outliner mutation Server Actions', () => {
         .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
         .map(([, init]) => requestAuthHeaders(init))
     ).toEqual(expectedAuthHeaders(4))
+  })
+
+  it('forwards the signed session token for protected read Server Actions', async () => {
+    const treeItem = {
+      ...baseItem,
+      needs: [],
+      actionable: true,
+      complete: false,
+    }
+    const priorityItem = {
+      ...baseItem,
+      rank: 1,
+    }
+    const comment = {
+      id: 'comment-1',
+      item_id: 'current',
+      author: 'alice',
+      body: 'Ready',
+      created_at: '2026-06-29T00:00:00.000000Z',
+      updated_at: '2026-06-29T00:00:00.000000Z',
+    }
+    const marker = {
+      id: 'marker-1',
+      name: 'Before launch',
+      at: '2026-06-29T00:00:00.000000Z',
+      created_at: '2026-06-29T00:00:00.000000Z',
+    }
+    const run = {
+      id: 'run-1',
+      item_id: 'current',
+      status: 'pending',
+      created_at: '2026-06-29T00:00:00.000000Z',
+    }
+    const fetch = vi.fn(async (url: URL | string, _init?: RequestInit) => {
+      const parsedUrl = new URL(url.toString())
+      const pathname = parsedUrl.pathname
+
+      if (pathname === '/api/v1/tree') {
+        return jsonResponse([treeItem])
+      }
+      if (pathname === '/api/v1/priority') {
+        return jsonResponse([priorityItem])
+      }
+      if (pathname === '/api/v1/items/current/comments') {
+        return jsonResponse([comment])
+      }
+      if (pathname === '/api/v1/markers') {
+        return jsonResponse([marker])
+      }
+      if (pathname === '/api/v1/changes') {
+        expect(parsedUrl.searchParams.get('since')).toBe('marker-1')
+        expect(parsedUrl.searchParams.get('field')).toBe('changed')
+        return jsonResponse([baseItem])
+      }
+      if (pathname === '/api/v1/items/current/runs') {
+        return jsonResponse([run])
+      }
+
+      return jsonResponse({ message: `Unexpected read ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(fetchTree()).resolves.toEqual([treeItem])
+    await expect(fetchPriority()).resolves.toEqual([priorityItem])
+    await expect(fetchComments('current')).resolves.toEqual([comment])
+    await expect(fetchMarkers()).resolves.toEqual([marker])
+    await expect(fetchChanges({ since: 'marker-1' })).resolves.toEqual([
+      baseItem,
+    ])
+    await expect(listRuns('current')).resolves.toEqual([run])
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        path: new URL(url.toString()).pathname,
+        auth: requestAuthHeaders(init),
+      }))
+    ).toEqual([
+      { path: '/api/v1/tree', auth: expectedAuthHeaders(1)[0] },
+      { path: '/api/v1/priority', auth: expectedAuthHeaders(1)[0] },
+      {
+        path: '/api/v1/items/current/comments',
+        auth: expectedAuthHeaders(1)[0],
+      },
+      { path: '/api/v1/markers', auth: expectedAuthHeaders(1)[0] },
+      { path: '/api/v1/changes', auth: expectedAuthHeaders(1)[0] },
+      { path: '/api/v1/items/current/runs', auth: expectedAuthHeaders(1)[0] },
+    ])
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled()
   })
 
   it('exposes run and spawn workflows through validated Server Actions', async () => {

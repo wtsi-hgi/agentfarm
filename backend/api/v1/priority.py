@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from api.v1.authz import require_identity
 from db.connection import get_db
 from services import leverage
 
@@ -32,6 +33,7 @@ def _row_to_priority_item(row: sqlite3.Row, rank: int) -> PriorityItemOut:
 
 @router.get("/priority", response_model=list[PriorityItemOut])
 async def get_priority(
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[PriorityItemOut]:
     """Return actionable leaves in descending unblock-leverage order."""

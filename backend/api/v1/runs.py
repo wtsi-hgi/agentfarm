@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.v1.authz import require_owner
+from api.v1.authz import require_identity, require_owner
 from db.connection import get_db
 from services.clock import now
 
@@ -60,6 +60,7 @@ async def create_run(
 @router.get("/items/{item_id}/runs", response_model=list[RunOut])
 async def list_runs(
     item_id: str,
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[RunOut]:
     """List an item's stub runs in creation order."""

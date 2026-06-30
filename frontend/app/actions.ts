@@ -118,6 +118,13 @@ async function mutation<T>(
   return result
 }
 
+async function authenticatedRead<T>(
+  path: string,
+  schema: ZodSchema<T>
+): Promise<T> {
+  return backendJson(path, schema, await authenticatedInit({}))
+}
+
 export async function requestGreeting(
   _prevState: GreetingState,
   formData: FormData
@@ -152,11 +159,11 @@ export async function fetchHealth() {
 }
 
 export async function fetchTree() {
-  return backendJson('/api/v1/tree', treeSchema)
+  return authenticatedRead('/api/v1/tree', treeSchema)
 }
 
 export async function fetchPriority() {
-  return backendJson('/api/v1/priority', priorityResponseSchema)
+  return authenticatedRead('/api/v1/priority', priorityResponseSchema)
 }
 
 export async function createItem(input: CreateItemInput) {
@@ -228,7 +235,7 @@ export async function createRun(itemId: string) {
 }
 
 export async function listRuns(itemId: string) {
-  return backendJson(
+  return authenticatedRead(
     `/api/v1/items/${encodeURIComponent(itemId)}/runs`,
     runListSchema
   )
@@ -244,7 +251,7 @@ export async function spawnItem(itemId: string) {
 }
 
 export async function fetchComments(itemId: string) {
-  return backendJson(
+  return authenticatedRead(
     `/api/v1/items/${encodeURIComponent(itemId)}/comments`,
     commentListSchema
   )
@@ -275,7 +282,7 @@ export async function deleteComment(commentId: string) {
 }
 
 export async function fetchMarkers() {
-  return backendJson('/api/v1/markers', markerListSchema)
+  return authenticatedRead('/api/v1/markers', markerListSchema)
 }
 
 export async function createMarker(input: MarkerInput) {
@@ -296,7 +303,7 @@ export async function fetchChanges(input: ChangesInput) {
     params.set('since', input.since)
   }
 
-  return backendJson(
+  return authenticatedRead(
     `/api/v1/changes?${params.toString()}`,
     markerChangeItemsSchema
   )

@@ -18,7 +18,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.v1.authz import require_owner
+from api.v1.authz import require_identity, require_owner
 from db.connection import get_db
 from models.enums import State, is_complete
 from services import graph, leverage, mirror, tree
@@ -381,6 +381,7 @@ async def move_item(
 
 @router.get("/tree", response_model=list[TreeItemOut])
 async def get_tree(
+    _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[TreeItemOut]:
     """Return every item in tree order with live labels and work flags (A3/H1).

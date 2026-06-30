@@ -76,6 +76,18 @@ def _item_count(db_path) -> int:
     return int(row["count"])
 
 
+def _protected_read_paths(item_id: str, marker_id: str) -> list[str]:
+    """Return protected read endpoints backed by app data."""
+    return [
+        "/api/v1/tree",
+        "/api/v1/priority",
+        f"/api/v1/items/{item_id}/comments",
+        "/api/v1/markers",
+        f"/api/v1/changes?since={marker_id}&field=changed",
+        f"/api/v1/items/{item_id}/runs",
+    ]
+
+
 @pytest.mark.anyio
 async def test_login_success_returns_identity_with_username(monkeypatch) -> None:
     monkeypatch.setattr(settings, "owner", "alice")
@@ -387,6 +399,73 @@ async def test_viewer_get_tree_is_allowed(fresh_db) -> None:
     assert created.status_code == 200
     assert response.status_code == 200
     assert [item["title"] for item in response.json()] == ["Readable"]
+
+
+@pytest.mark.anyio
+async def test_protected_reads_reject_missing_or_invalid_session_and_allow_viewer(
+    fresh_db,
+) -> None:
+    """Protected data reads require a signed session; viewers may still read."""
+    del fresh_db
+    owner_headers = _session_headers("alice", "owner")
+    viewer_headers = _session_headers("vue", "viewer")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        created = await client.post(
+            "/api/v1/items",
+            json={"title": "Readable"},
+            headers=owner_headers,
+        )
+        assert created.status_code == 200
+        item_id = created.json()["id"]
+        comment = await client.post(
+            f"/api/v1/items/{item_id}/comments",
+            json={"body": "visible note"},
+            headers=owner_headers,
+        )
+        marker = await client.post(
+            "/api/v1/markers",
+            json={"name": "Before readable", "at": "2000-01-01T00:00:00.000000Z"},
+            headers=owner_headers,
+        )
+        run = await client.post(
+            f"/api/v1/items/{item_id}/runs",
+            headers=owner_headers,
+        )
+
+        assert comment.status_code == 200
+        assert marker.status_code == 200
+        assert run.status_code == 200
+
+        paths = _protected_read_paths(item_id, marker.json()["id"])
+        for path in paths:
+            missing = await client.get(path)
+            invalid = await client.get(
+                path,
+                headers={"x-agentfarm-session": "not-a-valid-token"},
+            )
+            viewer = await client.get(path, headers=viewer_headers)
+
+            assert missing.status_code == 401, path
+            assert missing.json() == {"detail": "authentication required"}
+            assert invalid.status_code == 401, path
+            assert invalid.json() == {"detail": "invalid session"}
+            assert viewer.status_code == 200, path
+
+
+@pytest.mark.anyio
+async def test_public_reads_remain_public_without_session(fresh_db) -> None:
+    """Health and greeting endpoints are intentionally public."""
+    del fresh_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        health = await client.get("/api/v1/health")
+        greeting = await client.get("/api/v1/hello", params={"name": "Ada"})
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "healthy"}
+    assert greeting.status_code == 200
+    assert greeting.json() == {"message": "Hello, Ada from FastAPI!"}
 
 
 @pytest.mark.anyio
