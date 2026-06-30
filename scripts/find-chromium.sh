@@ -29,11 +29,15 @@ if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" && -d "${PLAYWRIGHT_BROWSERS_PATH}" ]];
       exit 0
     fi
   done < <(
-    find "${PLAYWRIGHT_BROWSERS_PATH}" -maxdepth 3 -type f \
-      \( -path '*/chrome-linux64/chrome' -o \
-         -path '*/chrome-linux/chrome' -o \
-         -path '*/chrome-headless-shell-linux64/chrome-headless-shell' \) \
-      2>/dev/null | sort -Vr
+    find "${PLAYWRIGHT_BROWSERS_PATH}" -type f \
+      \( -path '*/chrome-linux*/chrome' -o \
+         -path '*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium' -o \
+         -path '*/chrome-win*/chrome.exe' -o \
+         -path '*/chrome-headless-shell*/chrome-headless-shell' -o \
+         -path '*/chrome-headless-shell*/chrome-headless-shell.exe' -o \
+         -path '*/chrome-headless-shell-mac*/Chromium.app/Contents/MacOS/Chromium' -o \
+         -path '*/chrome-headless-shell*/headless_shell' \) \
+      2>/dev/null | sort -r
   )
 fi
 

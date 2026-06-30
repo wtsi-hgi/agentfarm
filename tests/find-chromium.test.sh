@@ -30,6 +30,12 @@ fake_path_chrome="${path_bin}/chromium"
 touch "${fake_path_chrome}"
 chmod +x "${fake_path_chrome}"
 
+playwright_cache="${scratch_dir}/playwright-cache"
+fake_mac_chromium="${playwright_cache}/chromium-123/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+mkdir -p "$(dirname -- "${fake_mac_chromium}")"
+touch "${fake_mac_chromium}"
+chmod +x "${fake_mac_chromium}"
+
 detected="$(
   env -u AGENTFARM_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
     -u PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
@@ -39,6 +45,25 @@ detected="$(
     -u CHROMIUM_BIN \
     -u GOOGLE_CHROME_BIN \
     -u PUPPETEER_EXECUTABLE_PATH \
+    PLAYWRIGHT_BROWSERS_PATH="${playwright_cache}" \
+    PATH="${path_bin}:${PATH}" \
+    bash "${repo_root}/scripts/find-chromium.sh"
+)"
+if [[ "${detected}" != "${fake_mac_chromium}" ]]; then
+  echo "expected Playwright cache browser path, got ${detected}" >&2
+  exit 1
+fi
+
+detected="$(
+  env -u AGENTFARM_PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
+    -u PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH \
+    -u CHROME_PATH \
+    -u CHROME_BIN \
+    -u CHROMIUM_PATH \
+    -u CHROMIUM_BIN \
+    -u GOOGLE_CHROME_BIN \
+    -u PUPPETEER_EXECUTABLE_PATH \
+    -u PLAYWRIGHT_BROWSERS_PATH \
     PATH="${path_bin}:${PATH}" \
     bash "${repo_root}/scripts/find-chromium.sh"
 )"

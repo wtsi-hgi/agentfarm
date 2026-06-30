@@ -58,6 +58,12 @@ describe('middleware auth helpers', () => {
     expect(isOwnerOnlyMutation('/api/v1/items/item-1/spawn', 'POST')).toBe(true)
   })
 
+  it('gates owner-only mutation methods regardless of casing', () => {
+    expect(isOwnerOnlyMutation('/api/v1/items', 'post')).toBe(true)
+    expect(isOwnerOnlyMutation('/api/v1/items/item-1', 'pAtCh')).toBe(true)
+    expect(isOwnerOnlyMutation('/api/v1/items/item-1', 'delete')).toBe(true)
+  })
+
   it('allows reads and comment routes through the owner-only role gate', () => {
     expect(isOwnerOnlyMutation('/api/v1/tree', 'GET')).toBe(false)
     expect(isOwnerOnlyMutation('/api/v1/items/item-1/comments', 'POST')).toBe(
@@ -88,12 +94,12 @@ describe('middleware auth helpers', () => {
 
   it('redirects unauthenticated non-public requests to login', async () => {
     const response = await middleware(
-      new NextRequest('https://agentfarm.test/api/v1/tree')
+      new NextRequest('https://agentfarm.test/api/v1/tree?filter=open')
     )
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe(
-      'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree'
+      'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree%3Ffilter%3Dopen'
     )
   })
 
@@ -106,16 +112,19 @@ describe('middleware auth helpers', () => {
     )
     vi.stubGlobal('fetch', fetch)
 
-    const request = new NextRequest('https://agentfarm.test/api/v1/tree', {
-      headers: {
-        cookie: `agentfarm_session=${sessionCookie('mallory', 'owner')}`,
-      },
-    })
+    const request = new NextRequest(
+      'https://agentfarm.test/api/v1/tree?status=active',
+      {
+        headers: {
+          cookie: `agentfarm_session=${sessionCookie('mallory', 'owner')}`,
+        },
+      }
+    )
     const response = await middleware(request)
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe(
-      'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree'
+      'https://agentfarm.test/login?next=%2Fapi%2Fv1%2Ftree%3Fstatus%3Dactive'
     )
     const [url, init] = fetch.mock.calls[0]
     expect(url.toString()).toBe('http://127.0.0.1:8000/api/v1/auth/whoami')

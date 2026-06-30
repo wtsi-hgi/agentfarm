@@ -16,36 +16,40 @@ function normalizeBackendPath(pathname: string): string {
 }
 
 export function isOwnerOnlyMutation(pathname: string, method: string): boolean {
-  if (!MUTATION_METHODS.has(method.toUpperCase())) {
+  const normalizedMethod = method.toUpperCase()
+  if (!MUTATION_METHODS.has(normalizedMethod)) {
     return false
   }
 
   const path = normalizeBackendPath(pathname)
-  if (method === 'POST' && path === '/items') {
+  if (normalizedMethod === 'POST' && path === '/items') {
     return true
   }
   if (
-    (method === 'PATCH' || method === 'DELETE') &&
+    (normalizedMethod === 'PATCH' || normalizedMethod === 'DELETE') &&
     /^\/items\/[^/]+$/.test(path)
   ) {
     return true
   }
   if (
-    method === 'POST' &&
+    normalizedMethod === 'POST' &&
     /^\/items\/[^/]+\/(move|indent|outdent)$/.test(path)
   ) {
     return true
   }
   if (
-    (method === 'POST' && path === '/dependencies') ||
-    (method === 'DELETE' && /^\/dependencies\/[^/]+$/.test(path))
+    (normalizedMethod === 'POST' && path === '/dependencies') ||
+    (normalizedMethod === 'DELETE' && /^\/dependencies\/[^/]+$/.test(path))
   ) {
     return true
   }
-  if (method === 'POST' && path === '/markers') {
+  if (normalizedMethod === 'POST' && path === '/markers') {
     return true
   }
-  if (method === 'POST' && /^\/items\/[^/]+\/(runs|spawn)$/.test(path)) {
+  if (
+    normalizedMethod === 'POST' &&
+    /^\/items\/[^/]+\/(runs|spawn)$/.test(path)
+  ) {
     return true
   }
   return false
@@ -70,24 +74,25 @@ async function verifySessionToken(
 }
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname, search } = request.nextUrl
   if (PUBLIC_PATHS.has(pathname)) {
     return NextResponse.next()
   }
+  const nextPath = `${pathname}${search}`
 
   const session = parseSessionIdentity(
     request.cookies.get(SESSION_COOKIE_NAME)?.value
   )
   if (!session) {
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('next', pathname)
+    loginUrl.searchParams.set('next', nextPath)
     return NextResponse.redirect(loginUrl)
   }
 
   const identity = await verifySessionToken(session.session_token)
   if (!identity) {
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('next', pathname)
+    loginUrl.searchParams.set('next', nextPath)
     return NextResponse.redirect(loginUrl)
   }
 
