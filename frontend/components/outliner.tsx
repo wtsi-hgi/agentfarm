@@ -389,6 +389,16 @@ export function Outliner({
     })
   }
 
+  function changeSelectedModes(nextSelectedModes: Set<Mode>) {
+    setSessionNewlyAddedIds(new Set())
+    setSelectedModes(nextSelectedModes)
+  }
+
+  function changeMarkerFilter(itemIds: readonly string[] | null) {
+    setSessionNewlyAddedIds(new Set())
+    setMarkerFilterItemIds(itemIds ? new Set(itemIds) : null)
+  }
+
   function jumpToItem(itemId: string) {
     const jumpState = resolveJumpState(items, itemId, expandedIds)
     if (!jumpState.focusedItemId) {
@@ -508,14 +518,10 @@ export function Outliner({
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <ModeToggles
           selectedModes={selectedModes}
-          onSelectedModesChange={setSelectedModes}
+          onSelectedModesChange={changeSelectedModes}
         />
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <MarkerControls
-            onFilterChange={(itemIds) =>
-              setMarkerFilterItemIds(itemIds ? new Set(itemIds) : null)
-            }
-          />
+          <MarkerControls onFilterChange={changeMarkerFilter} />
           <ProductSwitcher
             items={items}
             onJump={jumpToItem}
