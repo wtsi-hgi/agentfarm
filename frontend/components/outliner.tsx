@@ -48,7 +48,7 @@ import {
   type RowMutationActions,
   type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
-import { isExternalWaitingState } from '@/lib/state-metadata'
+import { isExternalWaitingItem } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -277,9 +277,26 @@ function isUpNextItem(
     priorityRanks.has(item.id) &&
     item.actionable &&
     !isDoneForProjection(item) &&
-    !item.blocked_external &&
-    !isExternalWaitingState(item.state)
+    !isExternalWaitingItem(item)
   )
+}
+
+function isFollowUpItem(item: TreeItem): boolean {
+  return !isDoneForProjection(item) && isExternalWaitingItem(item)
+}
+
+function isVisibleInView(
+  item: TreeItem,
+  view: OutlinerView,
+  priorityRanks: ReadonlyMap<string, number>
+): boolean {
+  if (view === 'up-next') {
+    return isUpNextItem(item, priorityRanks)
+  }
+  if (view === 'follow-up') {
+    return isFollowUpItem(item)
+  }
+  return true
 }
 
 function isRestorableDoneState(state: State): boolean {
@@ -348,7 +365,7 @@ function makeChildMap(
     }
 
     let rank =
-      view === 'up-next' && !isUpNextItem(item, priorityRanks)
+      view !== 'tree' && !isVisibleInView(item, view, priorityRanks)
         ? Number.POSITIVE_INFINITY
         : (priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY)
     for (const child of children.get(item.id) ?? []) {
@@ -553,7 +570,7 @@ export function visibleOutlinerRows(
   const priorityRanks = makePriorityRanks(options.priorityItems)
   const children = makeChildMap(items, {
     ...options,
-    leverageSort: view === 'up-next' ? true : options.leverageSort,
+    leverageSort: view !== 'tree' ? true : options.leverageSort,
   })
   const rows: VisibleOutlinerRow[] = []
 
@@ -562,8 +579,7 @@ export function visibleOutlinerRows(
       const hasChildren = (children.get(item.id) ?? []).length > 0
       const collapsed = hasChildren && !expandedIds.has(item.id)
       const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
-      const hiddenByView =
-        view === 'up-next' && !isUpNextItem(item, priorityRanks)
+      const hiddenByView = !isVisibleInView(item, view, priorityRanks)
       const filteredOutNewlyAdded =
         hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
       const visible =
@@ -689,7 +705,7 @@ export function Outliner({
     () =>
       visibleOutlinerRows(activeItems, expandedIds, {
         hiddenItemIds: mergedHiddenItemIds,
-        leverageSort: selectedView === 'up-next' ? true : leverageSort,
+        leverageSort: selectedView !== 'tree' ? true : leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems,
         view: selectedView,

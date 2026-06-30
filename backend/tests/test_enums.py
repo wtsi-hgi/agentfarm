@@ -96,7 +96,8 @@ def test_is_complete_only_done_and_abandoned() -> None:
 
 
 def test_external_waiting_states_are_metadata_driven() -> None:
-    """Feedback is externally waiting; Respond remains user-actionable."""
-    assert EXTERNAL_WAITING_STATES == frozenset({State.feedback})
+    """Feedback and Implement wait externally; Respond remains user-actionable."""
+    assert EXTERNAL_WAITING_STATES == frozenset({State.feedback, State.implement})
     assert is_external_waiting(State.feedback) is True
+    assert is_external_waiting(State.implement) is True
     assert is_external_waiting(State.respond) is False

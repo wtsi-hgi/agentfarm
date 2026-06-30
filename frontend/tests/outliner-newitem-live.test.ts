@@ -519,7 +519,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(hasOutlinerItem(container, 'review-state-section')).toBe(true)
   })
 
-  it('shows up-next work in priority order and returns to the tree view', async () => {
+  it('shows up-next work and follow-up work in separate priority views', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -536,24 +536,32 @@ describe('Outliner live newly added filter exemptions', () => {
             actionable: false,
           }),
           item({
+            id: 'implement-row',
+            title: 'Agent implementing',
+            sort_order: 3,
+            state: 'implement',
+            actionable: false,
+          }),
+          item({
             id: 'respond-row',
             title: 'Respond to user',
-            sort_order: 3,
+            sort_order: 4,
             state: 'respond',
           }),
           item({
             id: 'blocked-row',
             title: 'Externally blocked',
-            sort_order: 4,
+            sort_order: 5,
             actionable: false,
             blocked_external: true,
           }),
         ],
         priorityItems: [
           { id: 'feedback-row', rank: 1 },
-          { id: 'respond-row', rank: 2 },
-          { id: 'blocked-row', rank: 3 },
-          { id: 'ready-row', rank: 4 },
+          { id: 'implement-row', rank: 2 },
+          { id: 'respond-row', rank: 3 },
+          { id: 'blocked-row', rank: 4 },
+          { id: 'ready-row', rank: 5 },
         ],
       })
     )
@@ -561,6 +569,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(getOutlinerItemIds(container)).toEqual([
       'ready-row',
       'feedback-row',
+      'implement-row',
       'respond-row',
       'blocked-row',
     ])
@@ -575,11 +584,26 @@ describe('Outliner live newly added filter exemptions', () => {
     ).toBe('true')
     expect(getOutlinerItemIds(container)).toEqual(['respond-row', 'ready-row'])
 
+    await click(getButton(container, 'Show follow up work'))
+
+    expect(
+      getButton(container, 'Show up next work').getAttribute('aria-pressed')
+    ).toBe('false')
+    expect(
+      getButton(container, 'Show follow up work').getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(getOutlinerItemIds(container)).toEqual([
+      'feedback-row',
+      'implement-row',
+      'blocked-row',
+    ])
+
     await click(getButton(container, 'Show tree view'))
 
     expect(getOutlinerItemIds(container)).toEqual([
       'ready-row',
       'feedback-row',
+      'implement-row',
       'respond-row',
       'blocked-row',
     ])
@@ -796,7 +820,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
-  it('shows Feedback as Waiting while Respond stays ready for action', async () => {
+  it('shows Feedback and Implement as Waiting while Respond stays ready for action', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -807,10 +831,17 @@ describe('Outliner live newly added filter exemptions', () => {
             actionable: true,
           }),
           item({
+            id: 'implement-row',
+            title: 'Agent implementing',
+            state: 'implement',
+            sort_order: 2,
+            actionable: true,
+          }),
+          item({
             id: 'respond-row',
             title: 'Respond to user',
             state: 'respond',
-            sort_order: 2,
+            sort_order: 3,
             actionable: true,
           }),
         ],
@@ -819,6 +850,9 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(
       getItemReadinessIndicator(container, 'feedback-row').textContent
+    ).toBe('Waiting')
+    expect(
+      getItemReadinessIndicator(container, 'implement-row').textContent
     ).toBe('Waiting')
     expect(
       getItemReadinessIndicator(container, 'respond-row').textContent

@@ -558,10 +558,10 @@ async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> 
 
 
 @pytest.mark.anyio
-async def test_feedback_waits_externally_while_respond_is_prioritized(
+async def test_feedback_and_implement_wait_externally_while_respond_is_prioritized(
     fresh_db,
 ) -> None:
-    """Feedback is not actionable; Respond surfaces ahead of ordinary work."""
+    """Feedback and Implement are not actionable; Respond surfaces ahead of work."""
     older_time = "2026-01-01T00:00:00.000000Z"
     newer_time = "2026-01-02T00:00:00.000000Z"
     _insert_priority_leaf(
@@ -582,7 +582,15 @@ async def test_feedback_waits_externally_while_respond_is_prioritized(
     )
     _insert_priority_leaf(
         fresh_db,
-        "c-ready",
+        "c-implement",
+        "Agent is implementing",
+        newer_time,
+        newer_time,
+        state="implement",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "d-ready",
         "Ready ordinary work",
         newer_time,
         newer_time,
@@ -593,7 +601,7 @@ async def test_feedback_waits_externally_while_respond_is_prioritized(
 
     assert response.status_code == 200
     body = response.json()
-    assert [entry["id"] for entry in body] == ["a-respond", "c-ready"]
+    assert [entry["id"] for entry in body] == ["a-respond", "d-ready"]
     assert [entry["rank"] for entry in body] == [1, 2]
     assert [entry["state"] for entry in body] == ["respond", "not-started"]
 

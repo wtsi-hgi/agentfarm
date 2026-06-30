@@ -61,7 +61,7 @@ COMPLETE_STATES: frozenset[State] = frozenset({State.done, State.abandoned})
 
 # States blocked on external events. They are not actionable themselves, but
 # still count as open downstream work for leverage calculations.
-EXTERNAL_WAITING_STATES: frozenset[State] = frozenset({State.feedback})
+EXTERNAL_WAITING_STATES: frozenset[State] = frozenset({State.feedback, State.implement})
 
 # States where the next move belongs to the owner/user. These stay actionable
 # and receive a priority boost over ordinary ready work.

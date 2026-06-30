@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { ListTodo, ListTree } from 'lucide-react'
+import { ListChecks, ListTodo, ListTree } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -14,7 +14,7 @@ import { modeSchema } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
 export const MODES = modeSchema.options
-export const OUTLINER_VIEWS = ['tree', 'up-next'] as const
+export const OUTLINER_VIEWS = ['tree', 'up-next', 'follow-up'] as const
 
 export type OutlinerView = (typeof OUTLINER_VIEWS)[number]
 
@@ -27,15 +27,18 @@ type ViewControlsProps = {
 const VIEW_LABELS = {
   tree: 'Tree',
   'up-next': 'Up Next',
+  'follow-up': 'Follow Up',
 } satisfies Record<OutlinerView, string>
 
 const VIEW_ARIA_LABELS = {
   tree: 'Show tree view',
   'up-next': 'Show up next work',
+  'follow-up': 'Show follow up work',
 } satisfies Record<OutlinerView, string>
 
 function ViewIcon({ view }: { view: OutlinerView }) {
-  const Icon = view === 'tree' ? ListTree : ListTodo
+  const Icon =
+    view === 'tree' ? ListTree : view === 'up-next' ? ListTodo : ListChecks
   return <Icon className="size-3.5" aria-hidden="true" />
 }
 

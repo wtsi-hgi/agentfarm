@@ -26,7 +26,7 @@ import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import {
   STATE_OPTIONS,
-  isExternalWaitingState,
+  isExternalWaitingItem,
   itemReadiness,
 } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
@@ -184,8 +184,7 @@ export function OutlinerRow({
           MODE_COLOUR_MAP[item.mode],
           selected && 'bg-accent/50',
           displayDone && 'text-muted-foreground',
-          (item.blocked_external || isExternalWaitingState(item.state)) &&
-            'text-muted-foreground'
+          isExternalWaitingItem(item) && 'text-muted-foreground'
         )}
         style={{ paddingLeft: `${depth * 1.25}rem` }}
         data-mode={item.mode}

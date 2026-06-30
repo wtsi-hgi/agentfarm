@@ -570,12 +570,13 @@ async def test_state_changes_are_listed_as_timestamped_activity(fresh_db) -> Non
 
 
 @pytest.mark.anyio
-async def test_feedback_and_respond_round_trip_through_state_activity(
+async def test_external_waiting_and_respond_states_round_trip_through_activity(
     fresh_db,
 ) -> None:
-    """Feedback and Respond are accepted states and record normal activity."""
+    """Feedback, Implement, and Respond are accepted and classify actionability."""
     t1 = "2026-06-29T00:00:00.000000Z"
     t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
 
     clock.set_clock(lambda: t1)
     async with _client() as client:
@@ -589,6 +590,10 @@ async def test_feedback_and_respond_round_trip_through_state_activity(
         tree_before = await _tree(client)
 
         clock.set_clock(lambda: t2)
+        implementing = await _patch(client, item_id, {"state": "implement"})
+        tree_implementing = await _tree(client)
+
+        clock.set_clock(lambda: t3)
         updated = await _patch(client, item_id, {"state": "respond"})
         activity = await _activity(client, item_id)
 
@@ -604,11 +609,21 @@ async def test_feedback_and_respond_round_trip_through_state_activity(
     assert feedback_tree_item["actionable"] is False
     assert feedback_tree_item["complete"] is False
 
+    assert implementing.status_code == 200
+    implementing_body = implementing.json()
+    assert implementing_body["state"] == "implement"
+    assert implementing_body["completed_at"] is None
+    assert tree_implementing.status_code == 200
+    implementing_tree_item = _tree_item(tree_implementing.json(), item_id)
+    assert implementing_tree_item["state"] == "implement"
+    assert implementing_tree_item["actionable"] is False
+    assert implementing_tree_item["complete"] is False
+
     assert updated.status_code == 200
     updated_body = updated.json()
     assert updated_body["state"] == "respond"
     assert updated_body["completed_at"] is None
-    assert updated_body["state_changed_at"] == t2
+    assert updated_body["state_changed_at"] == t3
     assert _item_row(fresh_db, item_id)["state"] == "respond"
 
     assert activity.status_code == 200
@@ -620,9 +635,18 @@ async def test_feedback_and_respond_round_trip_through_state_activity(
             "kind": "state-change",
             "actor": activity_body[0]["actor"],
             "from_state": "feedback",
-            "to_state": "respond",
+            "to_state": "implement",
             "created_at": t2,
-        }
+        },
+        {
+            "id": activity_body[1]["id"],
+            "item_id": item_id,
+            "kind": "state-change",
+            "actor": activity_body[1]["actor"],
+            "from_state": "implement",
+            "to_state": "respond",
+            "created_at": t3,
+        },
     ]
 
 
@@ -955,7 +979,7 @@ async def test_container_with_mixed_done_and_in_progress_children_is_incomplete(
         await _create(client, {"title": "c1", "parent_id": parent_id, "state": "done"})
         c2 = await _create(
             client,
-            {"title": "c2", "parent_id": parent_id, "state": "implement"},
+            {"title": "c2", "parent_id": parent_id, "state": "review"},
         )
         dependent = await _create(client, {"title": "D"})
         dependent_id = dependent.json()["id"]

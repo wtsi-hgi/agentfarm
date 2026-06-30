@@ -26,7 +26,7 @@ export const STATE_OPTIONS = [
   { value: 'abandoned', label: STATE_LABELS.abandoned },
 ] satisfies readonly { value: State; label: string }[]
 
-export const EXTERNAL_WAITING_STATES = new Set<State>(['feedback'])
+export const EXTERNAL_WAITING_STATES = new Set<State>(['feedback', 'implement'])
 
 export type ItemReadiness = 'done' | 'ready' | 'waiting'
 
@@ -34,13 +34,17 @@ export function isExternalWaitingState(state: State): boolean {
   return EXTERNAL_WAITING_STATES.has(state)
 }
 
+export function isExternalWaitingItem(
+  item: Pick<TreeItem, 'blocked_external' | 'state'>
+): boolean {
+  return item.blocked_external || isExternalWaitingState(item.state)
+}
+
 export function itemReadiness(
-  item: Pick<TreeItem, 'actionable' | 'complete' | 'state'>
+  item: Pick<TreeItem, 'actionable' | 'blocked_external' | 'complete' | 'state'>
 ): ItemReadiness {
   if (item.state === 'done' || item.complete) {
     return 'done'
   }
-  return item.actionable && !isExternalWaitingState(item.state)
-    ? 'ready'
-    : 'waiting'
+  return item.actionable && !isExternalWaitingItem(item) ? 'ready' : 'waiting'
 }

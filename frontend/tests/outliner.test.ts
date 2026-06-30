@@ -106,6 +106,14 @@ describe('Outliner', () => {
         actionable: false,
       }),
       item({
+        id: 'implement',
+        title: 'Agent is implementing',
+        parent_id: 'section',
+        sort_order: 3,
+        state: 'implement',
+        actionable: false,
+      }),
+      item({
         id: 'respond',
         title: 'Respond to feedback',
         sort_order: 2,
@@ -127,10 +135,69 @@ describe('Outliner', () => {
           { id: 'respond', rank: 2 },
           { id: 'blocked', rank: 3 },
           { id: 'ready', rank: 4 },
+          { id: 'implement', rank: 5 },
         ],
         view: 'up-next',
       }).map((row) => row.item.id)
     ).toEqual(['respond', 'ready'])
+  })
+
+  it('shows follow-up rows as non-me waiting work without respond', () => {
+    const items = [
+      item({
+        id: 'ready',
+        title: 'Ready work',
+      }),
+      item({
+        id: 'feedback',
+        title: 'Waiting on feedback',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+      item({
+        id: 'implement',
+        title: 'Agent is implementing',
+        sort_order: 3,
+        state: 'implement',
+        actionable: false,
+      }),
+      item({
+        id: 'respond',
+        title: 'Respond to feedback',
+        sort_order: 4,
+        state: 'respond',
+      }),
+      item({
+        id: 'blocked',
+        title: 'Externally blocked',
+        sort_order: 5,
+        actionable: false,
+        blocked_external: true,
+      }),
+      item({
+        id: 'done-feedback',
+        title: 'Completed feedback',
+        sort_order: 6,
+        state: 'feedback',
+        actionable: false,
+        complete: true,
+        completed_at: '2026-06-30T01:00:00.000000Z',
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems: [
+          { id: 'implement', rank: 1 },
+          { id: 'blocked', rank: 2 },
+          { id: 'feedback', rank: 3 },
+          { id: 'respond', rank: 4 },
+          { id: 'ready', rank: 5 },
+        ],
+        view: 'follow-up',
+      }).map((row) => row.item.id)
+    ).toEqual(['implement', 'blocked', 'feedback'])
   })
 
   it('orders actionable rows by leverage priority without mutating stored order', () => {
