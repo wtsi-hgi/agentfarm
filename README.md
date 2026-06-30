@@ -2,13 +2,13 @@
 
 Agent Farm tracks work being done by many LLM agents across many software
 products. It is a Next.js + FastAPI app with a single authenticated outliner,
-explicit dependency edges, priority projection, comments, markers, a markdown
-mirror, and v2 seams for runs/spawn.
+explicit dependency edges, priority projection, comments, markers, and v2 seams
+for runs/spawn.
 
 - Frontend: Next.js App Router, React, TypeScript, Tailwind/shadcn, Server Actions
 - Backend: FastAPI, SQLite, Pydantic, LDAP login, signed session tokens
 - Scope: maintain a tree of agent tasks, track explicit `>needs:` dependencies,
-  surface actionable work, and keep a markdown mirror of the tree
+  and surface actionable work
 
 ## Repository Layout
 
