@@ -2,7 +2,12 @@ import { NextRequest } from 'next/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseSessionIdentity } from '@/lib/session'
-import { isOwnerOnlyMutation, isOwnerOnlyPagePath, proxy } from '@/proxy'
+import {
+  isOwnerOnlyMutation,
+  isOwnerOnlyPagePath,
+  isPublicHomeServerAction,
+  proxy,
+} from '@/proxy'
 
 function sessionCookie(username: string, role: 'owner' | 'viewer'): string {
   return encodeURIComponent(
@@ -84,6 +89,31 @@ describe('proxy auth helpers', () => {
     expect(isOwnerOnlyPagePath('/login')).toBe(false)
   })
 
+  it('allows only Next server-action posts to the signed-out home page', () => {
+    expect(
+      isPublicHomeServerAction(
+        '/',
+        'POST',
+        new Headers({ 'next-action': 'action-id' })
+      )
+    ).toBe(true)
+    expect(isPublicHomeServerAction('/', 'POST', new Headers())).toBe(false)
+    expect(
+      isPublicHomeServerAction(
+        '/api/v1/items',
+        'POST',
+        new Headers({ 'next-action': 'action-id' })
+      )
+    ).toBe(false)
+    expect(
+      isPublicHomeServerAction(
+        '/',
+        'GET',
+        new Headers({ 'next-action': 'action-id' })
+      )
+    ).toBe(false)
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
   })
@@ -105,6 +135,24 @@ describe('proxy auth helpers', () => {
     )
 
     expect(response.status).toBe(200)
+  })
+
+  it('allows signed-out home server actions without opening ordinary home posts', async () => {
+    const actionResponse = await proxy(
+      new NextRequest('https://agentfarm.test/', {
+        method: 'POST',
+        headers: { 'next-action': 'action-id' },
+      })
+    )
+    const ordinaryResponse = await proxy(
+      new NextRequest('https://agentfarm.test/', { method: 'POST' })
+    )
+
+    expect(actionResponse.status).toBe(200)
+    expect(ordinaryResponse.status).toBe(307)
+    expect(ordinaryResponse.headers.get('location')).toBe(
+      'https://agentfarm.test/login?next=%2F'
+    )
   })
 
   it('redirects forged session cookies rejected by the backend verifier', async () => {

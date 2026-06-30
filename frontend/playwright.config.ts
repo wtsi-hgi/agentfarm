@@ -12,6 +12,10 @@ const outputDir = path.join(scratchDir, 'test-results')
 const htmlReportDir = path.join(scratchDir, 'playwright-report')
 const frontendPort = Number(process.env.PLAYWRIGHT_FRONTEND_PORT ?? 3100)
 const backendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT ?? 8100)
+const fakeLdapPort = Number(process.env.PLAYWRIGHT_FAKE_LDAP_PORT ?? 8390)
+const fakeLdapHealthPort = Number(
+  process.env.PLAYWRIGHT_FAKE_LDAP_HEALTH_PORT ?? 8391
+)
 const backendUrl = `https://127.0.0.1:${backendPort}`
 const frontendUrl = `https://127.0.0.1:${frontendPort}`
 const tlsCert = path.join(dataDir, 'tls', 'agentfarm-self-signed.crt')
@@ -60,10 +64,25 @@ export default defineConfig({
   globalSetup: './e2e/global-setup.ts',
   webServer: [
     {
+      command: 'node frontend/e2e/fake-ldap-server.mjs',
+      cwd: repoRoot,
+      env: buildWebServerEnv({
+        PLAYWRIGHT_FAKE_LDAP_PORT: String(fakeLdapPort),
+        PLAYWRIGHT_FAKE_LDAP_HEALTH_PORT: String(fakeLdapHealthPort),
+      }),
+      reuseExistingServer: false,
+      timeout: 30_000,
+      url: `http://127.0.0.1:${fakeLdapHealthPort}`,
+    },
+    {
       command: 'cd backend && ./run_uvicorn.sh',
       cwd: repoRoot,
       env: buildWebServerEnv({
         AGENTFARM_DATA_DIR: dataDir,
+        AGENTFARM_LDAP_DN_TEMPLATE:
+          'uid={username},ou=people,dc=example,dc=com',
+        AGENTFARM_LDAP_SERVER: `ldap://127.0.0.1:${fakeLdapPort}`,
+        AGENTFARM_OWNER: 'playwright-owner',
         BACKEND_PORT: String(backendPort),
         UVICORN_RELOAD: '0',
       }),

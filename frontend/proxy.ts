@@ -11,6 +11,7 @@ const PUBLIC_PATHS = new Set([
   '/api/health',
 ])
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'DELETE'])
+const NEXT_SERVER_ACTION_HEADER = 'next-action'
 
 function normalizeBackendPath(pathname: string): string {
   return pathname.startsWith('/api/v1')
@@ -62,6 +63,18 @@ export function isOwnerOnlyPagePath(pathname: string): boolean {
   return pathname === '/owner' || pathname.startsWith('/owner/')
 }
 
+export function isPublicHomeServerAction(
+  pathname: string,
+  method: string,
+  headers: Headers
+): boolean {
+  return (
+    pathname === '/' &&
+    method.toUpperCase() === 'POST' &&
+    headers.has(NEXT_SERVER_ACTION_HEADER)
+  )
+}
+
 async function verifySessionToken(
   sessionToken: string
 ): Promise<WhoAmI | null> {
@@ -78,7 +91,10 @@ async function verifySessionToken(
 
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
-  if (PUBLIC_PATHS.has(pathname)) {
+  if (
+    PUBLIC_PATHS.has(pathname) ||
+    isPublicHomeServerAction(pathname, request.method, request.headers)
+  ) {
     return NextResponse.next()
   }
   const nextPath = `${pathname}${search}`

@@ -127,7 +127,7 @@ describe('Playwright browser resolution', () => {
       }
 
       const webServers = configModule.default.webServer ?? []
-      expect(webServers).toHaveLength(2)
+      expect(webServers).toHaveLength(3)
       for (const server of webServers) {
         expect(server.env?.FORCE_COLOR).toBe('1')
         expect(server.env).not.toHaveProperty('NO_COLOR')

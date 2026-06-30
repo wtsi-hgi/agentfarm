@@ -2,6 +2,12 @@ import { expect, test } from '@playwright/test'
 
 import { createItem, gotoPath, signInAs } from './helpers'
 
+async function fillAndSubmitLoginForm(page: Parameters<typeof signInAs>[0]) {
+  await page.getByLabel('Username').fill('playwright-owner')
+  await page.getByLabel('Password').fill('correct horse')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+}
+
 test.describe('Agent Farm app shell', () => {
   test('renders the sign-in box for unauthenticated visitors', async ({
     page,
@@ -95,6 +101,35 @@ test.describe('Agent Farm app shell', () => {
     ).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Create root' })).toHaveCount(
       0
+    )
+  })
+
+  test('signs back in on the first central form submission after signing out', async ({
+    page,
+  }) => {
+    const actionResponses: string[] = []
+    page.on('response', (response) => {
+      const request = response.request()
+      if (request.method() === 'POST' && response.url().endsWith('/')) {
+        actionResponses.push(`${response.status()} ${response.url()}`)
+      }
+    })
+
+    await signInAs(page)
+    await gotoPath(page, '/')
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+
+    await fillAndSubmitLoginForm(page)
+
+    await expect(
+      page.getByRole('navigation', { name: 'Account' })
+    ).toContainText('playwright-owner')
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    expect(actionResponses).toContainEqual(
+      expect.stringMatching(/^200 https:\/\/127\.0\.0\.1:\d+\/$/)
     )
   })
 })
