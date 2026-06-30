@@ -1142,7 +1142,7 @@ export function Outliner({
     <div className={cn('space-y-3', className)}>
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <ViewControls view={selectedView} onViewChange={changeSelectedView} />
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
           <MarkerControls
             initialMarkers={markers}
             onFilterChange={changeMarkerFilter}
@@ -1150,7 +1150,7 @@ export function Outliner({
           <ProductSwitcher
             items={activeItems}
             onJump={jumpToItem}
-            className="lg:max-w-xl"
+            className="xl:max-w-xl"
           />
         </div>
       </div>

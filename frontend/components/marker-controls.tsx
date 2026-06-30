@@ -119,7 +119,10 @@ export function MarkerControls({
       className={cn('flex flex-wrap items-center gap-1.5', className)}
       aria-label="Marker controls"
     >
-      <form className="flex items-center gap-1.5" onSubmit={createNamedMarker}>
+      <form
+        className="flex shrink-0 items-center gap-1.5"
+        onSubmit={createNamedMarker}
+      >
         <Input
           value={name}
           onChange={(event) => setName(event.target.value)}
@@ -155,68 +158,74 @@ export function MarkerControls({
         </Button>
       </form>
 
-      <select
-        value={sinceId}
-        onChange={(event) => setSinceId(event.target.value)}
-        aria-label="Since marker"
-        className="border-border bg-background h-8 rounded-md border px-2 text-sm"
-      >
-        <option value="">Since</option>
-        {markers.map((marker) => (
-          <option key={marker.id} value={marker.id}>
-            {marker.name}
-          </option>
-        ))}
-      </select>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <select
+          value={sinceId}
+          onChange={(event) => setSinceId(event.target.value)}
+          aria-label="Since marker"
+          className="border-border bg-background h-8 w-36 min-w-0 rounded-md border px-2 text-sm xl:w-44"
+        >
+          <option value="">Since</option>
+          {markers.map((marker) => (
+            <option key={marker.id} value={marker.id}>
+              {marker.name}
+            </option>
+          ))}
+        </select>
 
-      <select
-        value={untilId}
-        onChange={(event) => setUntilId(event.target.value)}
-        aria-label="Until marker"
-        className="border-border bg-background h-8 rounded-md border px-2 text-sm"
-      >
-        <option value="">Now</option>
-        {markers.map((marker) => (
-          <option key={marker.id} value={marker.id}>
-            {marker.name}
-          </option>
-        ))}
-      </select>
+        <select
+          value={untilId}
+          onChange={(event) => setUntilId(event.target.value)}
+          aria-label="Until marker"
+          className="border-border bg-background h-8 w-36 min-w-0 rounded-md border px-2 text-sm xl:w-44"
+        >
+          <option value="">Now</option>
+          {markers.map((marker) => (
+            <option key={marker.id} value={marker.id}>
+              {marker.name}
+            </option>
+          ))}
+        </select>
 
-      <select
-        value={field}
-        onChange={(event) => setField(event.target.value as MarkerChangeField)}
-        aria-label="Change field"
-        className="border-border bg-background h-8 rounded-md border px-2 text-sm"
-      >
-        {CHANGE_FIELDS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <select
+            value={field}
+            onChange={(event) =>
+              setField(event.target.value as MarkerChangeField)
+            }
+            aria-label="Change field"
+            className="border-border bg-background h-8 w-28 rounded-md border px-2 text-sm"
+          >
+            {CHANGE_FIELDS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
 
-      <Button
-        type="button"
-        size="icon"
-        variant="outline"
-        className="size-8"
-        aria-label="Apply marker filter"
-        disabled={!sinceId}
-        onClick={() => void applyMarkerFilter()}
-      >
-        <Filter className="size-3.5" aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        className="size-8"
-        aria-label="Clear marker filter"
-        onClick={clearMarkerFilter}
-      >
-        <X className="size-3.5" aria-hidden="true" />
-      </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="size-8"
+            aria-label="Apply marker filter"
+            disabled={!sinceId}
+            onClick={() => void applyMarkerFilter()}
+          >
+            <Filter className="size-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-8"
+            aria-label="Clear marker filter"
+            onClick={clearMarkerFilter}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
       {status ? (
         <span className="text-muted-foreground text-xs">{status}</span>
       ) : null}
