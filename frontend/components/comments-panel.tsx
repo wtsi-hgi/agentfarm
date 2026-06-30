@@ -281,16 +281,6 @@ export function CommentsPanel({
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         <form className="space-y-2" onSubmit={saveDetails}>
-          <label className="text-muted-foreground block text-xs font-medium">
-            Description
-            <textarea
-              value={descriptionDraft}
-              onChange={(event) => setDescriptionDraft(event.target.value)}
-              disabled={!item || savingDetails}
-              aria-label="Item description"
-              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-            />
-          </label>
           {isRootItem ? (
             <div className="text-muted-foreground block text-xs font-medium">
               <div>Repository</div>
@@ -341,6 +331,16 @@ export function CommentsPanel({
               </div>
             </div>
           ) : null}
+          <label className="text-muted-foreground block text-xs font-medium">
+            Description
+            <textarea
+              value={descriptionDraft}
+              onChange={(event) => setDescriptionDraft(event.target.value)}
+              disabled={!item || savingDetails}
+              aria-label="Item description"
+              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 min-h-24 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </label>
           <div className="flex justify-end">
             <Button
               type="submit"

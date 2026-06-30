@@ -135,6 +135,14 @@ function getDetailsPanel(container: ParentNode) {
   return panel
 }
 
+function getTextOffset(container: HTMLElement, text: string) {
+  const offset = container.textContent?.indexOf(text) ?? -1
+  if (offset < 0) {
+    throw new Error(`Missing text: ${text}`)
+  }
+  return offset
+}
+
 function getInput(container: ParentNode, ariaLabel: string) {
   const input = container.querySelector(`input[aria-label="${ariaLabel}"]`)
   if (!(input instanceof HTMLInputElement)) {
@@ -390,6 +398,35 @@ describe('Outliner comment target lifecycle', () => {
       body: 'Ready for review',
     })
     expect(newCommentInput.value).toBe('')
+  })
+
+  it('orders root Details with Repository before Description', async () => {
+    const repositoryUrl = 'https://github.com/example/root-project'
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            description: 'Root plan',
+            repo_url: repositoryUrl,
+          }),
+        ],
+      })
+    )
+
+    const detailsPanel = getDetailsPanel(container)
+
+    expect(getTextOffset(detailsPanel, 'Repository')).toBeLessThan(
+      getTextOffset(detailsPanel, 'Description')
+    )
+    expect(getLink(detailsPanel, 'Open repository URL').textContent).toBe(
+      repositoryUrl
+    )
+    expect(getTextarea(detailsPanel, 'Item description').value).toBe(
+      'Root plan'
+    )
   })
 
   it('shows a saved root repository URL as a safe accessible link', async () => {
@@ -686,7 +723,13 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getItemRow(container, 'child'))
 
-    expect(getDetailsPanel(container).textContent).toContain('Child task')
+    const detailsPanel = getDetailsPanel(container)
+    const descriptionField = getTextarea(detailsPanel, 'Item description')
+
+    expect(detailsPanel.textContent).toContain('Child task')
+    expect(detailsPanel.textContent).toContain('Description')
+    expect(detailsPanel.textContent).not.toContain('Repository')
+    expect(descriptionField.disabled).toBe(false)
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
     expect(getOptionalLink(container, 'Open repository URL')).toBeNull()
     expect(getOptionalButton(container, 'Edit repository URL')).toBeNull()
