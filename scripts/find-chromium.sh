@@ -37,14 +37,16 @@ if [[ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" && -d "${PLAYWRIGHT_BROWSERS_PATH}" ]];
   )
 fi
 
-for binary in google-chrome-stable google-chrome chrome chromium chromium-browser; do
-  if command -v "${binary}" >/dev/null 2>&1; then
-    candidate="$(command -v "${binary}")"
+IFS=':' read -r -a path_entries <<< "${PATH:-}"
+for directory in "${path_entries[@]}"; do
+  [[ -n "${directory}" ]] || continue
+  for binary in chromium chromium-browser google-chrome google-chrome-stable chrome; do
+    candidate="${directory}/${binary}"
     if is_executable_file "${candidate}"; then
       printf '%s\n' "${candidate}"
       exit 0
     fi
-  fi
+  done
 done
 
 for candidate in \
