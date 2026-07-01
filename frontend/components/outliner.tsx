@@ -64,6 +64,7 @@ export type VisibleOutlinerRow = {
 type IdCollection = ReadonlySet<string> | readonly string[]
 
 export type VisibleOutlinerOptions = {
+  dragPreview?: DragPreview | null
   leverageSort?: boolean
   localSiblingAnchorIds?: ReadonlyMap<string, string>
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
@@ -96,6 +97,12 @@ type AfterMoveTarget = {
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
 type DropPosition = 'before' | 'after'
+
+type DragPreview = {
+  draggedItemId: string
+  targetItemId: string
+  position: DropPosition
+}
 
 type FocusRequest = {
   itemId: string
@@ -937,6 +944,8 @@ function makeChildMap(
     applyExplicitSectionDependencyOrder(siblings)
   }
 
+  applyDragPreviewToChildren(children, items, order.dragPreview)
+
   return children
 }
 
@@ -1028,6 +1037,77 @@ function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
   }
 
   return subtreeIds
+}
+
+function resolveDragPreviewItems(
+  items: TreeItem[],
+  { draggedItemId, targetItemId }: DragPreview
+): { draggedItem: TreeItem; targetItem: TreeItem } | null {
+  if (draggedItemId === targetItemId) {
+    return null
+  }
+
+  const draggedItem = items.find((item) => item.id === draggedItemId)
+  const targetItem = items.find((item) => item.id === targetItemId)
+  if (!draggedItem || !targetItem) {
+    return null
+  }
+
+  if (collectSubtreeItemIds(items, draggedItem.id).has(targetItem.id)) {
+    return null
+  }
+
+  return { draggedItem, targetItem }
+}
+
+function applyDragPreviewToChildren(
+  children: ChildMap,
+  items: TreeItem[],
+  preview: DragPreview | null | undefined
+) {
+  if (!preview || preview.draggedItemId === preview.targetItemId) {
+    return
+  }
+
+  const previewItems = resolveDragPreviewItems(items, preview)
+  if (!previewItems) {
+    return
+  }
+  const { draggedItem, targetItem } = previewItems
+
+  const sourceSiblings = children.get(draggedItem.parent_id)
+  if (!sourceSiblings) {
+    return
+  }
+
+  const sourceIndex = sourceSiblings.findIndex(
+    (sibling) => sibling.id === draggedItem.id
+  )
+  if (sourceIndex < 0) {
+    return
+  }
+
+  const [removedItem] = sourceSiblings.splice(sourceIndex, 1)
+  const destinationParentId = targetItem.parent_id
+  const destinationSiblings = children.get(destinationParentId) ?? []
+  const targetIndex = destinationSiblings.findIndex(
+    (sibling) => sibling.id === targetItem.id
+  )
+
+  if (!removedItem || targetIndex < 0) {
+    if (removedItem) {
+      sourceSiblings.splice(sourceIndex, 0, removedItem)
+    }
+    return
+  }
+
+  const insertionIndex =
+    preview.position === 'before' ? targetIndex : targetIndex + 1
+  destinationSiblings.splice(insertionIndex, 0, {
+    ...removedItem,
+    parent_id: destinationParentId,
+  })
+  children.set(destinationParentId, destinationSiblings)
 }
 
 function firstAvailableItemId(
@@ -1207,6 +1287,7 @@ export function Outliner({
   const [draggingItemId, setDraggingItemId] = React.useState<string | null>(
     null
   )
+  const [dragPreview, setDragPreview] = React.useState<DragPreview | null>(null)
   const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
     () => new Map<string, State>()
   )
@@ -1323,6 +1404,7 @@ export function Outliner({
   const rows = React.useMemo(
     () =>
       visibleOutlinerRows(activeItems, expandedIds, {
+        dragPreview,
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
         localSiblingAnchorIds,
@@ -1332,6 +1414,7 @@ export function Outliner({
       }),
     [
       activeItems,
+      dragPreview,
       effectivePriorityItems,
       expandedIds,
       localSiblingAnchorIds,
@@ -1696,6 +1779,17 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
+  async function reorderFromDragHandleKeyboard(
+    item: TreeItem,
+    direction: 'up' | 'down'
+  ) {
+    if (direction === 'up') {
+      await moveUp(item)
+    } else {
+      await moveDown(item)
+    }
+  }
+
   async function changeItemState(item: TreeItem, state: State) {
     if (state === item.state) {
       return
@@ -1769,6 +1863,32 @@ export function Outliner({
 
   async function removeExplicitDependency(dependencyId: string) {
     await mutationActions.deleteDependency(dependencyId)
+  }
+
+  function clearDragState() {
+    setDraggingItemId(null)
+    setDragPreview(null)
+  }
+
+  function updateDragPreview(
+    draggedItemId: string,
+    targetItemId: string,
+    position: DropPosition
+  ): boolean {
+    const nextPreview = { draggedItemId, targetItemId, position }
+    if (!resolveDragPreviewItems(activeItems, nextPreview)) {
+      setDragPreview(null)
+      return false
+    }
+
+    setDragPreview((current) =>
+      current?.draggedItemId === draggedItemId &&
+      current.targetItemId === targetItemId &&
+      current.position === position
+        ? current
+        : nextPreview
+    )
+    return true
   }
 
   async function moveDragged(
@@ -1873,7 +1993,6 @@ export function Outliner({
                 collapsed,
                 filteredOutNewlyAdded,
               }) => {
-                const targets = moveTargets(activeItems, item)
                 const rowDraftResetRequest =
                   draftResetRequest?.itemId === item.id
                     ? {
@@ -1892,7 +2011,12 @@ export function Outliner({
                         draggingItemId ||
                         event.dataTransfer.getData('text/plain') ||
                         null
-                      if (draggedId && draggedId !== item.id) {
+                      if (!draggedId || draggedId === item.id) {
+                        return
+                      }
+
+                      const position = dropPosition(event)
+                      if (updateDragPreview(draggedId, item.id, position)) {
                         event.preventDefault()
                       }
                     }}
@@ -1903,16 +2027,23 @@ export function Outliner({
                         event.dataTransfer.getData('text/plain') ||
                         null
                       const position = dropPosition(event)
-                      setDraggingItemId(null)
+                      clearDragState()
                       if (draggedId) {
                         void moveDragged(draggedId, item.id, position)
                       }
                     }}
                     className={cn(
-                      'focus-visible:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                      'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
                       focusedItemId === item.id && 'bg-accent/60',
-                      draggingItemId === item.id && 'opacity-60'
+                      dragPreview?.draggedItemId === item.id
+                        ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+                        : draggingItemId === item.id && 'opacity-60'
                     )}
+                    data-drag-preview={
+                      dragPreview?.draggedItemId === item.id
+                        ? 'true'
+                        : undefined
+                    }
                   >
                     <OutlinerRow
                       item={item}
@@ -1920,16 +2051,13 @@ export function Outliner({
                       hasChildren={hasChildren}
                       collapsed={collapsed}
                       selected={selectedItemId === item.id}
-                      canMoveUp={Boolean(targets.upTarget)}
-                      canMoveDown={Boolean(targets.downTarget)}
                       onToggle={toggle}
                       onSelect={(itemId) => setSelectedItemId(itemId)}
                       onSubmitText={submitText}
                       onCreateSibling={createSibling}
                       onKeyboardCommand={runKeyboardCommand}
                       onDelete={requestItemDelete}
-                      onMoveUp={moveUp}
-                      onMoveDown={moveDown}
+                      onKeyboardReorder={reorderFromDragHandleKeyboard}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
                       onOpenPromptTimeline={openPromptTimeline}
@@ -1938,8 +2066,9 @@ export function Outliner({
                         event.dataTransfer.effectAllowed = 'move'
                         event.dataTransfer.setData('text/plain', item.id)
                         setDraggingItemId(item.id)
+                        setDragPreview(null)
                       }}
-                      onDragEnd={() => setDraggingItemId(null)}
+                      onDragEnd={clearDragState}
                     />
                     {filteredOutNewlyAdded ? (
                       <div

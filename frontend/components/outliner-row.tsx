@@ -2,8 +2,6 @@
 
 import * as React from 'react'
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ChevronRight,
   CornerDownLeft,
@@ -49,8 +47,6 @@ type OutlinerRowProps = {
   hasChildren: boolean
   collapsed: boolean
   selected?: boolean
-  canMoveUp?: boolean
-  canMoveDown?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
   onSubmitText: (item: TreeItem, text: string) => Promise<void>
@@ -61,8 +57,7 @@ type OutlinerRowProps = {
     command: RowKeyboardCommand
   ) => Promise<void>
   onDelete: (item: TreeItem) => Promise<void>
-  onMoveUp: (item: TreeItem) => Promise<void>
-  onMoveDown: (item: TreeItem) => Promise<void>
+  onKeyboardReorder: (item: TreeItem, direction: 'up' | 'down') => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onOpenPromptTimeline: (item: TreeItem) => void
@@ -77,16 +72,13 @@ export function OutlinerRow({
   hasChildren,
   collapsed,
   selected = false,
-  canMoveUp = false,
-  canMoveDown = false,
   onToggle,
   onSelect,
   onSubmitText,
   onCreateSibling,
   onKeyboardCommand,
   onDelete,
-  onMoveUp,
-  onMoveDown,
+  onKeyboardReorder,
   onChangeState,
   onChangeDone,
   onOpenPromptTimeline,
@@ -171,6 +163,21 @@ export function OutlinerRow({
     }
   }
 
+  function handleDragHandleKeyDown(
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ) {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return
+    }
+
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      void run(() =>
+        onKeyboardReorder(item, event.key === 'ArrowUp' ? 'up' : 'down')
+      )
+    }
+  }
+
   const checkedDone = item.state === 'done'
   const readiness = itemReadiness(item, { ignoreState: hasChildren })
   const displayDone = readiness === 'done'
@@ -199,9 +206,11 @@ export function OutlinerRow({
               size="icon"
               className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
               aria-label="Drag item"
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
               draggable
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}
+              onKeyDown={handleDragHandleKeyDown}
             >
               <GripVertical className="size-3.5" aria-hidden="true" />
             </Button>
@@ -359,38 +368,6 @@ export function OutlinerRow({
               </Button>
             </TooltipTrigger>
             <TooltipContent>Outdent</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Move item up"
-                disabled={pending || !canMoveUp}
-                onClick={() => void run(() => onMoveUp(item))}
-              >
-                <ArrowUp className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move up</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Move item down"
-                disabled={pending || !canMoveDown}
-                onClick={() => void run(() => onMoveDown(item))}
-              >
-                <ArrowDown className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move down</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>

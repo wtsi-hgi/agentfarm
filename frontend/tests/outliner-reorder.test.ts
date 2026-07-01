@@ -251,6 +251,23 @@ async function click(target: HTMLButtonElement) {
   await flushReact()
 }
 
+async function keyDown(
+  target: HTMLElement,
+  key: string,
+  init: { altKey?: boolean } = {}
+) {
+  await act(async () => {
+    const event = new KeyboardEvent('keydown', {
+      altKey: init.altKey ?? false,
+      bubbles: true,
+      cancelable: true,
+      key,
+    })
+    target.dispatchEvent(event)
+  })
+  await flushReact()
+}
+
 function dataTransfer() {
   const values = new Map<string, string>()
   return {
@@ -343,17 +360,16 @@ describe('Outliner reorder controls', () => {
     vi.clearAllMocks()
   })
 
-  it('moves the second root to the explicit first position', async () => {
+  it('moves the second root to the explicit first position from the drag handle keyboard shortcut', async () => {
     const container = await render([
       item({ id: 'first', title: 'First', sort_order: 1 }),
       item({ id: 'second', title: 'Second', sort_order: 2 }),
       item({ id: 'third', title: 'Third', sort_order: 3 }),
     ])
 
-    const moveUp = button(outlinerItem(container, 'second'), 'Move item up')
-    expect(moveUp.disabled).toBe(false)
-
-    await click(moveUp)
+    await keyDown(dragHandle(outlinerItem(container, 'second')), 'ArrowUp', {
+      altKey: true,
+    })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
       new_parent_id: null,
@@ -508,6 +524,30 @@ describe('Outliner reorder controls', () => {
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
   })
 
+  it('previews the dragged row in its landing slot before drop', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const thirdRow = outlinerItem(container, 'third')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(thirdRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+    expect(renderedItemIds(container)).toEqual(['third', 'first', 'second'])
+
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'third')),
+      'dragend',
+      transfer
+    )
+
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+  })
+
   it('renders the outliner and details surface without invalid DOM nesting warnings', async () => {
     const consoleError = vi
       .spyOn(console, 'error')
@@ -530,20 +570,26 @@ describe('Outliner reorder controls', () => {
     }
   })
 
-  it('updates visible order and move controls after clicking an available move button', async () => {
+  it('updates visible order from the drag handle keyboard shortcut without visible move arrows', async () => {
     const container = await renderElement(
       React.createElement(LocalReorderHarness)
     )
 
     expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
     expect(
-      button(outlinerItem(container, 'first'), 'Move item up').disabled
-    ).toBe(true)
+      outlinerItem(container, 'first').querySelector(
+        'button[aria-label="Move item up"]'
+      )
+    ).toBeNull()
     expect(
-      button(outlinerItem(container, 'first'), 'Move item down').disabled
-    ).toBe(false)
+      outlinerItem(container, 'first').querySelector(
+        'button[aria-label="Move item down"]'
+      )
+    ).toBeNull()
 
-    await click(button(outlinerItem(container, 'first'), 'Move item down'))
+    await keyDown(dragHandle(outlinerItem(container, 'first')), 'ArrowDown', {
+      altKey: true,
+    })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
       new_parent_id: null,
@@ -552,10 +598,9 @@ describe('Outliner reorder controls', () => {
     })
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
     expect(
-      button(outlinerItem(container, 'second'), 'Move item up').disabled
-    ).toBe(true)
-    expect(
-      button(outlinerItem(container, 'first'), 'Move item up').disabled
-    ).toBe(false)
+      outlinerItem(container, 'second').querySelector(
+        'button[aria-label="Move item up"]'
+      )
+    ).toBeNull()
   })
 })
