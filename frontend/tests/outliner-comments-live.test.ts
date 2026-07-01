@@ -487,14 +487,14 @@ describe('Outliner comment target lifecycle', () => {
     expect(getDialog().textContent).toContain('Delete item')
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel deletion'))
+    await click(getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
     expect(getItemInput(container, 'root').value).toBe('Root project')
 
     await click(getItemButton(container, 'root', 'Delete item'))
-    await click(getDialogButton('Confirm deletion'))
+    await click(getDialogButton('Delete item'))
 
     expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
@@ -518,14 +518,14 @@ describe('Outliner comment target lifecycle', () => {
     expect(getDialog().textContent).toContain('Delete item')
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel deletion'))
+    await click(getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
     expect(getItemInput(container, 'root').value).toBe('Root project')
 
     await keyDown(getItemInput(container, 'root'), 'Delete', { ctrlKey: true })
-    await click(getDialogButton('Confirm deletion'))
+    await click(getDialogButton('Delete item'))
 
     expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
@@ -554,7 +554,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(actionMocks.patchItem).not.toHaveBeenCalled()
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel deletion'))
+    await click(getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.patchItem).not.toHaveBeenCalled()
@@ -580,7 +580,7 @@ describe('Outliner comment target lifecycle', () => {
 
     await changeInput(input, 'Renamed root')
     await keyDown(input, 'Enter')
-    await click(getDialogButton('Confirm deletion'))
+    await click(getDialogButton('Remove dependency'))
 
     expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
@@ -623,14 +623,14 @@ describe('Outliner comment target lifecycle', () => {
     expect(getDialog().textContent).toContain('Delete comment')
     expect(actionMocks.deleteComment).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel deletion'))
+    await click(getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteComment).not.toHaveBeenCalled()
     expect(detailsPanel.textContent).toContain('Looks ready')
 
     await click(getButton(detailsPanel, 'Delete comment'))
-    await click(getDialogButton('Confirm deletion'))
+    await click(getDialogButton('Delete comment'))
 
     expect(actionMocks.deleteComment).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteComment).toHaveBeenCalledWith('comment-1')
@@ -655,7 +655,7 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getItemRow(container, 'child'))
     await click(getItemButton(container, 'root', 'Delete item'))
-    await click(getDialogButton('Confirm deletion'))
+    await click(getDialogButton('Delete item'))
     await rejectPendingChildCommentLoads()
 
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')

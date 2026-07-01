@@ -438,7 +438,7 @@ describe('Outliner reorder controls', () => {
     expect(getDialog().textContent).toContain('>blocking-section')
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(dialogButton('Cancel deletion'))
+    await click(dialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
@@ -468,7 +468,7 @@ describe('Outliner reorder controls', () => {
 
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(dialogButton('Confirm deletion'))
+    await click(dialogButton('Remove dependency'))
 
     expect(actionMocks.deleteDependency).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteDependency).toHaveBeenCalledWith('dep-1')
@@ -678,7 +678,7 @@ describe('Outliner reorder controls', () => {
     await click(itemInput(container, 'b'))
     await click(button(getDetailsPanel(container), 'Edit dependencies'))
     await click(button(getDetailsPanel(container), 'Remove dependency A'))
-    await click(dialogButton('Confirm deletion'))
+    await click(dialogButton('Remove dependency'))
 
     expect(getDetailsPanel(container).textContent).toContain(
       'No explicit dependencies'

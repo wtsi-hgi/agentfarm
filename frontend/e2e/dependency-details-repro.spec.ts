@@ -213,9 +213,7 @@ test.describe('dependency details UI reproduction', () => {
     await expect(
       dependenciesSection.getByText(`>${blockingSection.slug}`)
     ).toBeVisible()
-    await confirmationDialog
-      .getByRole('button', { name: 'Cancel deletion' })
-      .click()
+    await confirmationDialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(confirmationDialog).toBeHidden()
     await expect(
       dependenciesSection.getByText(`>${blockingSection.slug}`)
@@ -228,7 +226,7 @@ test.describe('dependency details UI reproduction', () => {
       .click()
     await page
       .getByRole('alertdialog')
-      .getByRole('button', { name: 'Confirm deletion' })
+      .getByRole('button', { name: 'Remove dependency' })
       .click()
     await expect(
       dependentRow.getByText(`>${blockingSection.slug}`)
