@@ -283,11 +283,6 @@ export function OutlinerRow({
               <TooltipContent>Add sibling</TooltipContent>
             </Tooltip>
           </div>
-          {item.needs.length > 0 ? (
-            <div className="text-muted-foreground truncate text-xs">
-              {item.needs.map((need) => `>${need}`).join(' ')}
-            </div>
-          ) : null}
           {error ? (
             <div className="text-destructive truncate text-xs" role="alert">
               {error}

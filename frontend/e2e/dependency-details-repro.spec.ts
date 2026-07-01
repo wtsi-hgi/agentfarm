@@ -134,8 +134,9 @@ test.describe('dependency details UI reproduction', () => {
       blockingRow.getByRole('textbox', { name: 'Item text' })
     ).toHaveValue(blockingSection.title)
     await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`)
-    ).toBeVisible()
+      dependentRow.getByText(`>${blockingSection.slug}`),
+      'Dependency labels belong in Details, not on item rows.'
+    ).toHaveCount(0)
     await expect(dependentRow.getByLabel('Item readiness')).toHaveText(
       'Waiting'
     )
@@ -180,6 +181,12 @@ test.describe('dependency details UI reproduction', () => {
       .toBeVisible()
     await expect
       .soft(
+        dependenciesSection.getByText(`>${blockingSection.slug}`),
+        'Details should list the current dependency target slug.'
+      )
+      .toBeVisible()
+    await expect
+      .soft(
         detailsPanel.getByRole('button', { name: /edit dependencies/i }),
         'Details should provide an edit affordance for dependency removal.'
       )
@@ -204,14 +211,14 @@ test.describe('dependency details UI reproduction', () => {
     await expect(confirmationDialog).toContainText(blockingSection.title)
     await expect(confirmationDialog).toContainText(`>${blockingSection.slug}`)
     await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`)
+      dependenciesSection.getByText(`>${blockingSection.slug}`)
     ).toBeVisible()
     await confirmationDialog
       .getByRole('button', { name: 'Cancel deletion' })
       .click()
     await expect(confirmationDialog).toBeHidden()
     await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`)
+      dependenciesSection.getByText(`>${blockingSection.slug}`)
     ).toBeVisible()
 
     await detailsPanel
@@ -239,10 +246,14 @@ test.describe('dependency details UI reproduction', () => {
       detailsPanel.getByLabel(/add dependency/i)
     )
     await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`)
-    ).toBeVisible()
+      dependentRow.getByText(`>${blockingSection.slug}`),
+      'Adding a dependency through Details should not reintroduce a row label.'
+    ).toHaveCount(0)
     await expect(
       dependenciesSection.getByText(blockingSection.title)
+    ).toBeVisible()
+    await expect(
+      dependenciesSection.getByText(`>${blockingSection.slug}`)
     ).toBeVisible()
   })
 })
