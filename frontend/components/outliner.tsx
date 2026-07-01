@@ -1962,6 +1962,7 @@ export function Outliner({
           allItems={activeItems}
           activityRefreshKey={detailRefreshKey}
           draggingItemId={draggingItemId}
+          className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
           onAddDependency={addExplicitDependency}
           onRemoveDependency={removeExplicitDependency}
         />
