@@ -5,6 +5,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CommentsPanel } from '@/components/comments-panel'
 import { Outliner } from '@/components/outliner'
 import type { TreeItem } from '@/lib/contracts'
 
@@ -387,6 +388,44 @@ describe('Outliner reorder controls', () => {
     })
   })
 
+  it('does not reorder from the drag handle while the row is pending', async () => {
+    let resolveCreated: (created: TreeItem) => void = () => {
+      throw new Error('Create item promise was not initialized')
+    }
+    const createdItemPromise = new Promise<TreeItem>((resolve) => {
+      resolveCreated = resolve
+    })
+    actionMocks.createItem.mockImplementation(async () => createdItemPromise)
+    const container = await render([
+      item({ id: 'first', title: 'First', sort_order: 1 }),
+      item({ id: 'second', title: 'Second', sort_order: 2 }),
+      item({ id: 'third', title: 'Third', sort_order: 3 }),
+    ])
+    const secondRow = outlinerItem(container, 'second')
+
+    await click(button(secondRow, 'Add sibling'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledTimes(1)
+    expect(dragHandle(secondRow).disabled).toBe(true)
+
+    await keyDown(dragHandle(secondRow), 'ArrowUp', { altKey: true })
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveCreated(
+        item({
+          id: 'created',
+          title: 'New item',
+          slug: 'created',
+          sort_order: 3,
+        })
+      )
+      await createdItemPromise
+    })
+    await flushReact()
+  })
+
   it('keeps drag-and-drop reorders anchored after the target item', async () => {
     const container = await render([
       item({ id: 'first', title: 'First', sort_order: 1 }),
@@ -475,6 +514,76 @@ describe('Outliner reorder controls', () => {
     expect(queryDialog()).toBeNull()
     expect(detailsPanel.textContent).not.toContain('>blocking-section')
     expect(detailsPanel.textContent).toContain('No explicit dependencies')
+  })
+
+  it('closes Details dependency removal after confirm before a parent refresh removes the edge', async () => {
+    const removeDependency = vi.fn().mockResolvedValue(undefined)
+    const dependent = item({
+      id: 'dependent',
+      title: 'Dependent section',
+      slug: 'dependent-section',
+      needs: ['blocking-section'],
+      needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+    })
+    const blocking = item({
+      id: 'blocking',
+      title: 'Blocking section',
+      slug: 'blocking-section',
+      sort_order: 2,
+    })
+    const container = await renderElement(
+      React.createElement(CommentsPanel, {
+        item: dependent,
+        allItems: [dependent, blocking],
+        onRemoveDependency: removeDependency,
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+    await click(dialogButton('Remove dependency'))
+
+    expect(removeDependency).toHaveBeenCalledTimes(1)
+    expect(removeDependency).toHaveBeenCalledWith('dep-1')
+    expect(queryDialog()).toBeNull()
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('keeps Details dependency removal open when confirm fails', async () => {
+    const removeDependency = vi
+      .fn()
+      .mockRejectedValue(new Error('Unable to remove dependency'))
+    const dependent = item({
+      id: 'dependent',
+      title: 'Dependent section',
+      slug: 'dependent-section',
+      needs: ['blocking-section'],
+      needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+    })
+    const blocking = item({
+      id: 'blocking',
+      title: 'Blocking section',
+      slug: 'blocking-section',
+      sort_order: 2,
+    })
+    const container = await renderElement(
+      React.createElement(CommentsPanel, {
+        item: dependent,
+        allItems: [dependent, blocking],
+        onRemoveDependency: removeDependency,
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+    await click(dialogButton('Remove dependency'))
+
+    expect(removeDependency).toHaveBeenCalledTimes(1)
+    expect(queryDialog()).not.toBeNull()
+    expect(getDialog().textContent).toContain('Unable to remove dependency')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
   })
 
   it('adds a dependency by dropping an outliner row onto the Details target', async () => {

@@ -380,6 +380,18 @@ export function CommentsPanel({
     }
   }
 
+  async function confirmDependencyRemoval() {
+    const pending = pendingRemoveDependency
+    if (!pending) {
+      return
+    }
+
+    await removeDependency(pending.dependencyId)
+    setPendingRemoveDependency((current) =>
+      current?.dependencyId === pending.dependencyId ? null : current
+    )
+  }
+
   function requestDependencyRemoval({
     dependencyId,
     label,
@@ -1087,11 +1099,7 @@ export function CommentsPanel({
         confirmLabel="Remove dependency"
         confirmingLabel="Removing dependency"
         onCancel={() => setPendingRemoveDependency(null)}
-        onConfirm={async () => {
-          if (pendingRemoveDependency) {
-            await removeDependency(pendingRemoveDependency.dependencyId)
-          }
-        }}
+        onConfirm={confirmDependencyRemoval}
       />
     </aside>
   )

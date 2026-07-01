@@ -83,6 +83,7 @@ export function OutlinerRow({
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const pendingRef = React.useRef(false)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
 
@@ -98,6 +99,11 @@ export function OutlinerRow({
   }, [draftResetRequestId, draftResetText])
 
   async function run(operation: () => Promise<void>) {
+    if (pendingRef.current) {
+      return
+    }
+
+    pendingRef.current = true
     setPending(true)
     setError(null)
     try {
@@ -105,6 +111,7 @@ export function OutlinerRow({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Action failed')
     } finally {
+      pendingRef.current = false
       setPending(false)
     }
   }
@@ -166,6 +173,10 @@ export function OutlinerRow({
 
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault()
+      if (pendingRef.current) {
+        return
+      }
+
       void run(() =>
         onKeyboardReorder(item, event.key === 'ArrowUp' ? 'up' : 'down')
       )
@@ -199,7 +210,8 @@ export function OutlinerRow({
         aria-label="Drag item"
         aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         title="Drag"
-        draggable
+        disabled={pending}
+        draggable={!pending}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
