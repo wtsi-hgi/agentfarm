@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
+  Dependency,
   Item,
   ItemActivity,
   Marker,
@@ -508,6 +509,68 @@ function appendSavedItem(
   return recomputeLocalWorkFlags([...items, treeItemFromSavedItem(savedItem)])
 }
 
+function sortDependencyEdges(
+  edges: readonly { id: string; slug: string }[]
+): { id: string; slug: string }[] {
+  return [...edges].sort(
+    (a, b) => a.slug.localeCompare(b.slug) || a.id.localeCompare(b.id)
+  )
+}
+
+function appendLocalDependency(
+  items: readonly TreeItem[],
+  dependency: Dependency
+): TreeItem[] {
+  const target = items.find((item) => item.id === dependency.to_id)
+  if (!target) {
+    return recomputeLocalWorkFlags(items)
+  }
+
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (item.id !== dependency.from_id) {
+        return item
+      }
+
+      const nextEdges = item.needs_edges.some(
+        (edge) => edge.id === dependency.id
+      )
+        ? item.needs_edges
+        : sortDependencyEdges([
+            ...item.needs_edges,
+            { id: dependency.id, slug: target.slug },
+          ])
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
+function removeLocalDependency(
+  items: readonly TreeItem[],
+  dependencyId: string
+): TreeItem[] {
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (!item.needs_edges.some((edge) => edge.id === dependencyId)) {
+        return item
+      }
+
+      const nextEdges = item.needs_edges.filter(
+        (edge) => edge.id !== dependencyId
+      )
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
 type LocalPriorityEntry = {
   id: string
   localIndex: number
@@ -734,6 +797,68 @@ function makeChildMap(
     }
   }
 
+  function applyExplicitSectionDependencyOrder(siblings: TreeItem[]) {
+    if (siblings.length < 2) {
+      return
+    }
+
+    const siblingSectionIdsBySlug = new Map(
+      siblings
+        .filter((item) => hasChildItems(item))
+        .map((item) => [item.slug, item.id])
+    )
+    if (siblingSectionIdsBySlug.size < 2) {
+      return
+    }
+
+    const maxPasses = siblings.length * siblings.length
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      let moved = false
+      const indexById = new Map(
+        siblings.map((item, index) => [item.id, index] as const)
+      )
+
+      for (const source of [...siblings]) {
+        if (!hasChildItems(source)) {
+          continue
+        }
+
+        const sourceIndex = indexById.get(source.id)
+        if (sourceIndex === undefined) {
+          continue
+        }
+
+        const blockingTarget = source.needs_edges
+          .map((edge) => siblingSectionIdsBySlug.get(edge.slug) ?? null)
+          .find(
+            (targetId) =>
+              targetId !== null &&
+              targetId !== source.id &&
+              (indexById.get(targetId) ?? -1) > sourceIndex
+          )
+        if (!blockingTarget) {
+          continue
+        }
+
+        siblings.splice(sourceIndex, 1)
+        const targetIndex = siblings.findIndex(
+          (item) => item.id === blockingTarget
+        )
+        if (targetIndex < 0) {
+          siblings.splice(sourceIndex, 0, source)
+        } else {
+          siblings.splice(targetIndex + 1, 0, source)
+        }
+        moved = true
+        break
+      }
+
+      if (!moved) {
+        return
+      }
+    }
+  }
+
   function hasChildItems(item: TreeItem) {
     return (children.get(item.id) ?? []).length > 0
   }
@@ -787,6 +912,7 @@ function makeChildMap(
   for (const [parentId, siblings] of children.entries()) {
     if (!order.leverageSort) {
       siblings.sort(treeOrder)
+      applyExplicitSectionDependencyOrder(siblings)
       continue
     }
 
@@ -795,6 +921,7 @@ function makeChildMap(
       if (view === 'tree') {
         applyLocalSiblingAnchors(siblings)
       }
+      applyExplicitSectionDependencyOrder(siblings)
       continue
     }
 
@@ -807,6 +934,7 @@ function makeChildMap(
         .map((item) => [item]),
     ]
     siblings.splice(0, siblings.length, ...sortSectionUnits(sectionUnits))
+    applyExplicitSectionDependencyOrder(siblings)
   }
 
   return children
@@ -1093,8 +1221,23 @@ export function Outliner({
         }
         return savedItem
       },
-      createDependency: addDependency,
-      deleteDependency,
+      createDependency: async (input) => {
+        const dependency = await addDependency(input)
+        setLocalItems((current) => appendLocalDependency(current, dependency))
+        return dependency
+      },
+      deleteDependency: async (dependencyId) => {
+        const deleted = await deleteDependency(dependencyId)
+        const deletedId =
+          typeof deleted === 'object' &&
+          deleted !== null &&
+          'id' in deleted &&
+          typeof deleted.id === 'string'
+            ? deleted.id
+            : dependencyId
+        setLocalItems((current) => removeLocalDependency(current, deletedId))
+        return deleted
+      },
       createItem: async (input) => {
         const savedItem = await createItem(input)
         appendReturnedItem(savedItem)
@@ -1535,6 +1678,29 @@ export function Outliner({
     await changeItemState(item, await restoredStateForDoneItem(item))
   }
 
+  async function addExplicitDependency(fromId: string, toId: string) {
+    const source = itemsById.get(fromId)
+    const target = itemsById.get(toId)
+    if (
+      !source ||
+      !target ||
+      source.id === target.id ||
+      source.needs_edges.some((edge) => edge.slug === target.slug)
+    ) {
+      return
+    }
+
+    await mutationActions.createDependency({
+      from_id: source.id,
+      to_id: target.id,
+    })
+    setSelectedItemId(source.id)
+  }
+
+  async function removeExplicitDependency(dependencyId: string) {
+    await mutationActions.deleteDependency(dependencyId)
+  }
+
   async function moveDragged(
     draggedItemId: string,
     targetItemId: string,
@@ -1723,7 +1889,11 @@ export function Outliner({
         </div>
         <CommentsPanel
           item={selectedItem}
+          allItems={activeItems}
           activityRefreshKey={detailRefreshKey}
+          draggingItemId={draggingItemId}
+          onAddDependency={addExplicitDependency}
+          onRemoveDependency={removeExplicitDependency}
         />
       </div>
       <DestructiveConfirmationDialog

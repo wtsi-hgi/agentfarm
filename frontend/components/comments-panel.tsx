@@ -4,9 +4,11 @@ import * as React from 'react'
 import {
   Check,
   Clock3,
+  GitBranch,
   Link,
   MessageSquare,
   Pencil,
+  Plus,
   Save,
   Send,
   Terminal,
@@ -38,8 +40,12 @@ import { cn } from '@/lib/utils'
 
 type CommentsPanelProps = {
   item: TreeItem | null
+  allItems?: readonly TreeItem[]
   activityRefreshKey?: number
   className?: string
+  draggingItemId?: string | null
+  onAddDependency?: (fromId: string, toId: string) => Promise<void>
+  onRemoveDependency?: (dependencyId: string) => Promise<void>
 }
 
 type DetailOverride = {
@@ -49,6 +55,13 @@ type DetailOverride = {
 }
 
 type DetailField = 'description' | 'repo_url' | 'usage'
+
+type PendingDependencyRemoval = {
+  dependencyId: string
+  label: string
+  slug: string
+  itemTitle: string
+}
 
 function formatTimestamp(timestamp: string) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(timestamp)
@@ -67,8 +80,12 @@ function stateChangeLabel(activity: ItemActivity) {
 
 export function CommentsPanel({
   item,
+  allItems = [],
   activityRefreshKey = 0,
   className,
+  draggingItemId = null,
+  onAddDependency,
+  onRemoveDependency,
 }: CommentsPanelProps) {
   const [comments, setComments] = React.useState<Comment[]>([])
   const [activity, setActivity] = React.useState<ItemActivity[]>([])
@@ -87,15 +104,21 @@ export function CommentsPanel({
   const [editingUsage, setEditingUsage] = React.useState(() =>
     Boolean(item && item.parent_id === null && item.usage.trim().length === 0)
   )
+  const [editingDependencies, setEditingDependencies] = React.useState(false)
+  const [dependencyTargetId, setDependencyTargetId] = React.useState('')
+  const [dependencyDropActive, setDependencyDropActive] = React.useState(false)
   const [draft, setDraft] = React.useState('')
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [editingBody, setEditingBody] = React.useState('')
   const [pendingDeleteComment, setPendingDeleteComment] =
     React.useState<Comment | null>(null)
+  const [pendingRemoveDependency, setPendingRemoveDependency] =
+    React.useState<PendingDependencyRemoval | null>(null)
   const [loadingComments, setLoadingComments] = React.useState(false)
   const [loadingActivity, setLoadingActivity] = React.useState(false)
   const [savingDetailField, setSavingDetailField] =
     React.useState<DetailField | null>(null)
+  const [savingDependency, setSavingDependency] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   const itemId = item?.id ?? null
@@ -120,6 +143,37 @@ export function CommentsPanel({
   const showRepoEditor = isRootItem && editingRepoUrl
   const showDescriptionEditor = editingDescription
   const showUsageEditor = isRootItem && editingUsage
+  const itemsBySlug = React.useMemo(
+    () => new Map(allItems.map((candidate) => [candidate.slug, candidate])),
+    [allItems]
+  )
+  const itemsById = React.useMemo(
+    () => new Map(allItems.map((candidate) => [candidate.id, candidate])),
+    [allItems]
+  )
+  const dependencyTargetSlugs = React.useMemo(
+    () => new Set(item?.needs_edges.map((edge) => edge.slug) ?? []),
+    [item?.needs_edges]
+  )
+  const dependencyTargets = React.useMemo(
+    () =>
+      (item?.needs_edges ?? []).map((edge) => ({
+        edge,
+        target: itemsBySlug.get(edge.slug) ?? null,
+      })),
+    [item?.needs_edges, itemsBySlug]
+  )
+  const dependencyCandidates = React.useMemo(
+    () =>
+      item
+        ? allItems.filter(
+            (candidate) =>
+              candidate.id !== item.id &&
+              !dependencyTargetSlugs.has(candidate.slug)
+          )
+        : [],
+    [allItems, dependencyTargetSlugs, item]
+  )
 
   React.useEffect(() => {
     if (previousDetailItemId.current === itemId) {
@@ -140,8 +194,13 @@ export function CommentsPanel({
     setEditingUsage(
       Boolean(hasSelectedItem && isRootItem && currentUsage.trim().length === 0)
     )
+    setEditingDependencies(false)
+    setDependencyTargetId('')
+    setDependencyDropActive(false)
     setSavingDetailField(null)
+    setSavingDependency(false)
     setPendingDeleteComment(null)
+    setPendingRemoveDependency(null)
   }, [
     currentDescription,
     currentRepoUrl,
@@ -252,6 +311,123 @@ export function CommentsPanel({
 
     setUsageDraft(currentUsage)
     setEditingUsage(false)
+  }
+
+  function dependencyLabel(target: TreeItem | null, slug: string): string {
+    return target?.title ?? `>${slug}`
+  }
+
+  function dependencyContext(target: TreeItem | null): string {
+    if (!target) {
+      return 'Target no longer appears in the current outline'
+    }
+
+    if (!target.parent_id) {
+      return 'Root item'
+    }
+
+    const parent = itemsById.get(target.parent_id)
+    return parent ? `Inside ${parent.title}` : 'Nested item'
+  }
+
+  function canAddDependencyTarget(targetId: string): boolean {
+    if (!item || !targetId || targetId === item.id || savingDependency) {
+      return false
+    }
+
+    const target = itemsById.get(targetId)
+    return Boolean(target && !dependencyTargetSlugs.has(target.slug))
+  }
+
+  async function addDependencyTarget(targetId: string) {
+    if (!item || !onAddDependency || !canAddDependencyTarget(targetId)) {
+      return
+    }
+
+    const requestedItemId = item.id
+    setSavingDependency(true)
+    setError(null)
+    try {
+      await onAddDependency(requestedItemId, targetId)
+      if (currentItemId.current === requestedItemId) {
+        setDependencyTargetId('')
+        setDependencyDropActive(false)
+      }
+    } catch (caught) {
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to add')
+      }
+    } finally {
+      if (currentItemId.current === requestedItemId) {
+        setSavingDependency(false)
+      }
+    }
+  }
+
+  async function removeDependency(dependencyId: string) {
+    if (!item || !onRemoveDependency) {
+      return
+    }
+
+    const requestedItemId = item.id
+    setSavingDependency(true)
+    setError(null)
+    try {
+      await onRemoveDependency(dependencyId)
+    } catch (caught) {
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to remove')
+      }
+      throw caught
+    } finally {
+      if (currentItemId.current === requestedItemId) {
+        setSavingDependency(false)
+      }
+    }
+  }
+
+  function requestDependencyRemoval({
+    dependencyId,
+    label,
+    slug,
+  }: {
+    dependencyId: string
+    label: string
+    slug: string
+  }) {
+    if (!item || !onRemoveDependency) {
+      return
+    }
+
+    setPendingRemoveDependency({
+      dependencyId,
+      label,
+      slug,
+      itemTitle: item.title,
+    })
+  }
+
+  function draggedDependencyTargetId(event: React.DragEvent<HTMLElement>) {
+    return draggingItemId || event.dataTransfer.getData('text/plain') || ''
+  }
+
+  function handleDependencyDragOver(event: React.DragEvent<HTMLElement>) {
+    if (!canAddDependencyTarget(draggedDependencyTargetId(event))) {
+      return
+    }
+
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'link'
+    setDependencyDropActive(true)
+  }
+
+  function handleDependencyDrop(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault()
+    const targetId = draggedDependencyTargetId(event)
+    setDependencyDropActive(false)
+    if (canAddDependencyTarget(targetId)) {
+      void addDependencyTarget(targetId)
+    }
   }
 
   function isDetailFieldDirty(field: DetailField) {
@@ -441,6 +617,38 @@ export function CommentsPanel({
     })
   }
 
+  function renderDependencyDropTarget(compact = false) {
+    return (
+      <div
+        aria-label="Add dependency"
+        className={cn(
+          'border-border bg-background text-muted-foreground flex items-center gap-2 rounded-md border border-dashed transition-colors',
+          compact ? 'h-8 min-w-0 px-2 text-xs' : 'min-h-10 p-2 text-sm',
+          dependencyDropActive && 'border-foreground text-foreground',
+          (!item || savingDependency) && 'cursor-not-allowed opacity-60'
+        )}
+        onDragEnter={(event) => {
+          if (canAddDependencyTarget(draggedDependencyTargetId(event))) {
+            setDependencyDropActive(true)
+          }
+        }}
+        onDragOver={handleDependencyDragOver}
+        onDragLeave={() => setDependencyDropActive(false)}
+        onDrop={handleDependencyDrop}
+      >
+        <Plus
+          className={cn('shrink-0', compact ? 'size-3.5' : 'size-4')}
+          aria-hidden="true"
+        />
+        <span className="min-w-0 truncate">
+          {dependencyTargets.length > 0
+            ? 'Add dependency'
+            : 'No explicit dependencies'}
+        </span>
+      </div>
+    )
+  }
+
   return (
     <aside
       className={cn(
@@ -509,6 +717,115 @@ export function CommentsPanel({
               )}
             </section>
           ) : null}
+          <section className="space-y-2" aria-label="Dependencies">
+            <div className="flex min-h-8 items-center justify-between gap-2">
+              <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-xs font-medium">
+                <GitBranch className="size-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">Dependencies</span>
+              </div>
+              <div className="flex min-w-0 items-center justify-end gap-1">
+                {dependencyTargets.length === 0
+                  ? renderDependencyDropTarget(true)
+                  : null}
+                {editingDependencies
+                  ? renderDetailControlButton({
+                      label: 'Done editing dependencies',
+                      disabled: !item || savingDependency,
+                      onClick: () => setEditingDependencies(false),
+                      children: (
+                        <Check className="size-3.5" aria-hidden="true" />
+                      ),
+                    })
+                  : renderDetailControlButton({
+                      label: 'Edit dependencies',
+                      disabled: !item || savingDependency,
+                      onClick: () => setEditingDependencies(true),
+                      children: (
+                        <Pencil className="size-3.5" aria-hidden="true" />
+                      ),
+                    })}
+              </div>
+            </div>
+            {dependencyTargets.length > 0 || editingDependencies ? (
+              <div className="space-y-2">
+                {dependencyTargets.map(({ edge, target }) => {
+                  const label = dependencyLabel(target, edge.slug)
+                  return (
+                    <div
+                      key={edge.id}
+                      className="border-border bg-muted/20 flex min-w-0 items-start justify-between gap-2 rounded-md border p-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-foreground truncate text-sm font-medium">
+                          {label}
+                        </div>
+                        <div className="text-muted-foreground truncate text-xs">
+                          {`>${edge.slug}`}
+                        </div>
+                        <div className="text-muted-foreground truncate text-xs">
+                          {dependencyContext(target)}
+                        </div>
+                      </div>
+                      {editingDependencies ? (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7 shrink-0"
+                          disabled={savingDependency || !onRemoveDependency}
+                          aria-label={`Remove dependency ${label}`}
+                          onClick={() =>
+                            requestDependencyRemoval({
+                              dependencyId: edge.id,
+                              label,
+                              slug: edge.slug,
+                            })
+                          }
+                        >
+                          <Trash2 className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  )
+                })}
+                {dependencyTargets.length > 0
+                  ? renderDependencyDropTarget()
+                  : null}
+                {editingDependencies ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      aria-label="Dependency target"
+                      className="border-border bg-background text-foreground focus-visible:ring-ring h-8 min-w-0 flex-1 rounded-md border px-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={dependencyTargetId}
+                      disabled={!item || savingDependency}
+                      onChange={(event) =>
+                        setDependencyTargetId(event.currentTarget.value)
+                      }
+                    >
+                      <option value="">Select dependency</option>
+                      {dependencyCandidates.map((candidate) => (
+                        <option key={candidate.id} value={candidate.id}>
+                          {candidate.title}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      size="icon"
+                      className="size-8 shrink-0"
+                      aria-label="Add selected dependency"
+                      disabled={!canAddDependencyTarget(dependencyTargetId)}
+                      onClick={() =>
+                        void addDependencyTarget(dependencyTargetId)
+                      }
+                    >
+                      <Plus className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
           <section className="space-y-2" aria-label="Description">
             <div className="flex min-h-8 items-center justify-between gap-2">
               <div className="text-muted-foreground min-w-0 truncate text-xs font-medium">
@@ -756,6 +1073,35 @@ export function CommentsPanel({
         onConfirm={async () => {
           if (pendingDeleteComment) {
             await removeComment(pendingDeleteComment.id)
+          }
+        }}
+      />
+      <DestructiveConfirmationDialog
+        open={Boolean(pendingRemoveDependency)}
+        title="Remove dependency"
+        description={
+          <>
+            This removes{' '}
+            <span className="text-foreground font-medium">
+              {pendingRemoveDependency?.label ?? 'this dependency'}
+            </span>{' '}
+            (
+            <span className="text-foreground font-medium">
+              &gt;{pendingRemoveDependency?.slug ?? 'dependency'}
+            </span>
+            ) from{' '}
+            <span className="text-foreground font-medium">
+              {pendingRemoveDependency?.itemTitle ?? 'this item'}
+            </span>
+            . This cannot be undone.
+          </>
+        }
+        confirmLabel="Remove dependency"
+        confirmingLabel="Removing dependency"
+        onCancel={() => setPendingRemoveDependency(null)}
+        onConfirm={async () => {
+          if (pendingRemoveDependency) {
+            await removeDependency(pendingRemoveDependency.dependencyId)
           }
         }}
       />

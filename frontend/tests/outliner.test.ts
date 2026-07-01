@@ -84,6 +84,44 @@ describe('Outliner', () => {
     ).toEqual(['prompt', 'review'])
   })
 
+  it('displays an explicit sibling section dependency before its waiting section', () => {
+    const items = [
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+        actionable: false,
+        needs: ['blocking-section'],
+        needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+      }),
+      item({
+        id: 'dependent-child',
+        title: 'Dependent child',
+        slug: 'dependent-child',
+        parent_id: 'dependent',
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+        actionable: false,
+      }),
+      item({
+        id: 'blocking-child',
+        title: 'Blocking child',
+        slug: 'blocking-child',
+        parent_id: 'blocking',
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['dependent', 'blocking'])).map(
+        (row) => row.item.id
+      )
+    ).toEqual(['blocking', 'blocking-child', 'dependent', 'dependent-child'])
+  })
+
   it('shows up-next rows as actionable non-waiting work in priority order', () => {
     const items = [
       item({

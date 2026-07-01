@@ -118,6 +118,43 @@ function button(element: ParentNode, ariaLabel: string) {
   return candidate
 }
 
+function getDetailsPanel(container: ParentNode) {
+  const panel = container.querySelector('aside[aria-label="Item details"]')
+  if (!(panel instanceof HTMLElement)) {
+    throw new Error('Missing item details panel')
+  }
+  return panel
+}
+
+function labelledElement(container: ParentNode, ariaLabel: string) {
+  const element = container.querySelector(`[aria-label="${ariaLabel}"]`)
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Missing labelled element: ${ariaLabel}`)
+  }
+  return element
+}
+
+function getDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error('Missing confirmation dialog')
+  }
+  return dialog
+}
+
+function queryDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  return dialog instanceof HTMLElement ? dialog : null
+}
+
+function dialogButton(ariaLabel: string) {
+  return button(getDialog(), ariaLabel)
+}
+
 function dragHandle(element: ParentNode) {
   return button(element, 'Drag item')
 }
@@ -277,6 +314,7 @@ describe('Outliner reorder controls', () => {
     })
     actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
+    actionMocks.deleteDependency.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
@@ -342,6 +380,112 @@ describe('Outliner reorder controls', () => {
       position: 'after',
       after_id: 'first',
     })
+  })
+
+  it('cancels Details dependency removal without deleting the dependency', async () => {
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+        needs: ['blocking-section'],
+        needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const detailsPanel = getDetailsPanel(container)
+
+    expect(detailsPanel.textContent).toContain('Dependencies')
+    expect(detailsPanel.textContent).toContain('Blocking section')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+
+    expect(getDialog().textContent).toContain('Remove dependency')
+    expect(getDialog().textContent).toContain('Blocking section')
+    expect(getDialog().textContent).toContain('>blocking-section')
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+
+    await click(dialogButton('Cancel deletion'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('deletes a Details dependency only after confirmation', async () => {
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+        needs: ['blocking-section'],
+        needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+
+    await click(dialogButton('Confirm deletion'))
+
+    expect(actionMocks.deleteDependency).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteDependency).toHaveBeenCalledWith('dep-1')
+    expect(queryDialog()).toBeNull()
+    expect(detailsPanel.textContent).not.toContain('>blocking-section')
+    expect(detailsPanel.textContent).toContain('No explicit dependencies')
+  })
+
+  it('adds a dependency by dropping an outliner row onto the Details target', async () => {
+    actionMocks.addDependency.mockResolvedValue({
+      id: 'dep-new',
+      from_id: 'dependent',
+      to_id: 'blocking',
+      kind: 'explicit',
+    })
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const blockingRow = outlinerItem(container, 'blocking')
+    const detailsPanel = getDetailsPanel(container)
+    const dropTarget = labelledElement(detailsPanel, 'Add dependency')
+    const transfer = dataTransfer()
+
+    await dispatchDrag(dragHandle(blockingRow), 'dragstart', transfer)
+    await dispatchDrag(dropTarget, 'dragover', transfer)
+    await dispatchDrag(dropTarget, 'drop', transfer)
+
+    expect(actionMocks.addDependency).toHaveBeenCalledWith({
+      from_id: 'dependent',
+      to_id: 'blocking',
+    })
+    expect(detailsPanel.textContent).toContain('Blocking section')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
   })
 
   it('reorders upward from the visible drag handle and persists the first-position move', async () => {
