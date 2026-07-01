@@ -65,18 +65,24 @@ def slugify(title: str) -> str:
     return trimmed or _EMPTY_SLUG_FALLBACK
 
 
-def _existing_slugs(conn: sqlite3.Connection, exclude_id: str | None) -> set[str]:
-    """Return the set of slugs currently in use, optionally excluding one item.
+def _slug_family(
+    conn: sqlite3.Connection, base: str, exclude_id: str | None
+) -> set[str]:
+    """Return used slugs that can collide with ``base`` or its numeric suffixes.
 
     ``exclude_id`` lets an item that is re-deriving its own slug (on rename)
     ignore the slug it currently holds, so re-saving an unchanged title is a
     no-op rather than bumping to ``-2``.
     """
+    params: list[object] = [base, f"{base}-*"]
+    where = "(slug = ? OR slug GLOB ?)"
     if exclude_id is None:
-        rows = conn.execute("SELECT slug FROM items").fetchall()
+        rows = conn.execute(f"SELECT slug FROM items WHERE {where}", params).fetchall()
     else:
+        params.append(exclude_id)
         rows = conn.execute(
-            "SELECT slug FROM items WHERE id != ?", (exclude_id,)
+            f"SELECT slug FROM items WHERE {where} AND id != ?",
+            params,
         ).fetchall()
     return {row["slug"] for row in rows}
 
@@ -98,7 +104,7 @@ def derive_unique_slug(
             collisions (used when re-deriving that item's own slug on rename).
     """
     base = slugify(title)
-    taken = _existing_slugs(conn, exclude_id)
+    taken = _slug_family(conn, base, exclude_id)
     if base not in taken:
         return base
     suffix = 2
@@ -265,24 +271,61 @@ def explicit_needs_slugs(conn: sqlite3.Connection, from_id: str) -> list[str]:
     return [edge["slug"] for edge in explicit_needs_edges(conn, from_id)]
 
 
-def _sibling_sort_orders(
+def _max_sibling_sort_order(
     conn: sqlite3.Connection, parent_id: str | None
-) -> list[float]:
-    """Return existing siblings' ``sort_order`` values in ascending order.
-
-    ``parent_id`` of ``None`` selects the root group (product items). SQLite
-    treats ``= NULL`` as never-true, so the root group uses ``IS NULL``.
-    """
+) -> float | None:
+    """Return the greatest existing sibling sort order, if any."""
     if parent_id is None:
-        rows = conn.execute(
-            "SELECT sort_order FROM items WHERE parent_id IS NULL ORDER BY sort_order"
-        ).fetchall()
+        row = conn.execute(
+            "SELECT MAX(sort_order) AS sort_order FROM items WHERE parent_id IS NULL"
+        ).fetchone()
     else:
-        rows = conn.execute(
-            "SELECT sort_order FROM items WHERE parent_id = ? ORDER BY sort_order",
+        row = conn.execute(
+            "SELECT MAX(sort_order) AS sort_order FROM items WHERE parent_id = ?",
             (parent_id,),
-        ).fetchall()
-    return [row["sort_order"] for row in rows]
+        ).fetchone()
+    return None if row is None else row["sort_order"]
+
+
+def _min_sibling_sort_order(
+    conn: sqlite3.Connection, parent_id: str | None
+) -> float | None:
+    """Return the smallest existing sibling sort order, if any."""
+    if parent_id is None:
+        row = conn.execute(
+            "SELECT MIN(sort_order) AS sort_order FROM items WHERE parent_id IS NULL"
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT MIN(sort_order) AS sort_order FROM items WHERE parent_id = ?",
+            (parent_id,),
+        ).fetchone()
+    return None if row is None else row["sort_order"]
+
+
+def _next_sibling_sort_order_after(
+    conn: sqlite3.Connection, parent_id: str | None, after_order: float
+) -> float | None:
+    """Return the next sibling sort order greater than ``after_order``."""
+    if parent_id is None:
+        row = conn.execute(
+            """
+            SELECT MIN(sort_order) AS sort_order
+            FROM items
+            WHERE parent_id IS NULL AND sort_order > ?
+            """,
+            (after_order,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT MIN(sort_order) AS sort_order
+            FROM items
+            WHERE parent_id = ? AND sort_order > ?
+            """,
+            (parent_id, after_order),
+        ).fetchone()
+    return None if row is None else row["sort_order"]
 
 
 def compute_sort_order(
@@ -303,25 +346,25 @@ def compute_sort_order(
     Returns:
         The ``sort_order`` value to store for the new item.
     """
-    orders = _sibling_sort_orders(conn, parent_id)
-
     if after_id is None:
         # Append at the end of the group (or start the group at 1.0).
-        return (orders[-1] + 1.0) if orders else 1.0
+        max_order = _max_sibling_sort_order(conn, parent_id)
+        return (max_order + 1.0) if max_order is not None else 1.0
 
     after_row = conn.execute(
         "SELECT sort_order FROM items WHERE id = ?", (after_id,)
     ).fetchone()
     if after_row is None:
         # Unknown anchor: fall back to appending at the end.
-        return (orders[-1] + 1.0) if orders else 1.0
+        max_order = _max_sibling_sort_order(conn, parent_id)
+        return (max_order + 1.0) if max_order is not None else 1.0
 
     after_order = after_row["sort_order"]
     # The next sibling strictly after the anchor, if any.
-    next_orders = [order for order in orders if order > after_order]
-    if not next_orders:
+    next_order = _next_sibling_sort_order_after(conn, parent_id, after_order)
+    if next_order is None:
         return after_order + 1.0
-    return (after_order + min(next_orders)) / 2.0
+    return (after_order + next_order) / 2.0
 
 
 def compute_first_child_sort_order(
@@ -339,10 +382,10 @@ def compute_first_child_sort_order(
         conn: Open connection (within the caller's transaction).
         parent_id: The destination parent (``None`` for the root/product group).
     """
-    orders = _sibling_sort_orders(conn, parent_id)
-    if not orders:
+    min_order = _min_sibling_sort_order(conn, parent_id)
+    if min_order is None:
         return 1.0
-    return orders[0] - 1.0
+    return min_order - 1.0
 
 
 def reparent_item(

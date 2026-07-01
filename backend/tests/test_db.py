@@ -28,6 +28,12 @@ EXPECTED_TABLES = {
     "markers",
     "runs",
 }
+EXPECTED_INDEXES = {
+    "idx_items_parent_sort",
+    "idx_dependencies_from",
+    "idx_dependencies_to",
+    "idx_dependencies_kind_from",
+}
 
 
 def _table_names(db_path: Path) -> set[str]:
@@ -35,6 +41,19 @@ def _table_names(db_path: Path) -> set[str]:
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    return {row["name"] for row in rows}
+
+
+def _index_names(db_path: Path) -> set[str]:
+    """Return project-created index names recorded in ``sqlite_master``."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'
+            """
         ).fetchall()
     return {row["name"] for row in rows}
 
@@ -78,11 +97,23 @@ def test_migration_is_idempotent(tmp_path) -> None:
 
     apply_migrations(db_path)
     first = _table_names(db_path)
+    first_indexes = _index_names(db_path)
     # Second application must be a no-op (guaranteed by IF NOT EXISTS).
     apply_migrations(db_path)
     second = _table_names(db_path)
+    second_indexes = _index_names(db_path)
 
     assert first == second == EXPECTED_TABLES
+    assert first_indexes == second_indexes == EXPECTED_INDEXES
+
+
+def test_migration_creates_projection_indexes(tmp_path) -> None:
+    """Migrations add the indexes used by tree and priority projections."""
+    db_path = tmp_path / "agentfarm.db"
+
+    apply_migrations(db_path)
+
+    assert _index_names(db_path) == EXPECTED_INDEXES
 
 
 def test_migration_creates_parent_directory(tmp_path) -> None:
@@ -160,6 +191,7 @@ def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None
     assert row["description"] == ""
     assert row["repo_url"] is None
     assert row["usage"] == ""
+    assert _index_names(db_path) == EXPECTED_INDEXES
 
 
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:

@@ -1,8 +1,9 @@
 """Apply the SQLite schema idempotently at startup.
 
-``schema.sql`` uses ``CREATE TABLE IF NOT EXISTS`` throughout, so applying it
-repeatedly creates any missing tables. Additive column migrations live here so
-existing SQLite files pick up new nullable/defaulted columns after startup.
+``schema.sql`` uses ``CREATE TABLE/INDEX IF NOT EXISTS`` throughout, so applying
+it repeatedly creates any missing tables and indexes. Additive column migrations
+live here so existing SQLite files pick up new nullable/defaulted columns after
+startup.
 """
 
 from __future__ import annotations

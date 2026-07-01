@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
+  Item,
   ItemActivity,
   Marker,
   PriorityItem,
@@ -269,16 +270,23 @@ function defaultExpandedItemIds(items: readonly TreeItem[]): Set<string> {
   return new Set(items.map((item) => item.id))
 }
 
-function isUpNextItem(
-  item: TreeItem,
-  priorityRanks: ReadonlyMap<string, number>
-): boolean {
+function isCompleteState(state: State): boolean {
+  return state === 'done' || state === 'abandoned'
+}
+
+function isPriorityEligibleItem(item: TreeItem): boolean {
   return (
-    priorityRanks.has(item.id) &&
     item.actionable &&
     !isDoneForProjection(item) &&
     !isExternalWaitingItem(item)
   )
+}
+
+function isUpNextItem(
+  item: TreeItem,
+  priorityRanks: ReadonlyMap<string, number>
+): boolean {
+  return priorityRanks.has(item.id) && isPriorityEligibleItem(item)
 }
 
 function isFollowUpItem(item: TreeItem): boolean {
@@ -301,6 +309,265 @@ function isVisibleInView(
 
 function isRestorableDoneState(state: State): boolean {
   return state !== 'done' && state !== 'abandoned'
+}
+
+function itemResponse(value: unknown): Item | null {
+  if (typeof value !== 'object' || value === null || !('id' in value)) {
+    return null
+  }
+  return typeof (value as { id: unknown }).id === 'string'
+    ? (value as Item)
+    : null
+}
+
+function treeItemFromSavedItem(savedItem: Item): TreeItem {
+  const complete = isCompleteState(savedItem.state)
+  return {
+    ...savedItem,
+    needs: [],
+    needs_edges: [],
+    actionable:
+      !complete &&
+      !isExternalWaitingItem(savedItem) &&
+      !savedItem.blocked_external,
+    complete,
+  }
+}
+
+function localChildrenByParent(items: readonly TreeItem[]) {
+  const children = new Map<string | null, TreeItem[]>()
+  for (const item of items) {
+    const siblings = children.get(item.parent_id) ?? []
+    siblings.push(item)
+    children.set(item.parent_id, siblings)
+  }
+
+  for (const siblings of children.values()) {
+    siblings.sort(
+      (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id)
+    )
+  }
+  return children
+}
+
+function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const bySlug = new Map(items.map((item) => [item.slug, item]))
+  const completeCache = new Map<string, boolean>()
+
+  function isLeaf(itemId: string): boolean {
+    return (children.get(itemId) ?? []).length === 0
+  }
+
+  function complete(itemId: string): boolean {
+    const cached = completeCache.get(itemId)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const item = byId.get(itemId)
+    if (!item) {
+      return false
+    }
+
+    const childItems = children.get(itemId) ?? []
+    const value =
+      childItems.length > 0
+        ? childItems.every((child) => complete(child.id))
+        : isCompleteState(item.state)
+    completeCache.set(itemId, value)
+    return value
+  }
+
+  function selfAndAncestors(item: TreeItem): TreeItem[] {
+    const lineage: TreeItem[] = []
+    const visited = new Set<string>()
+    let current: TreeItem | undefined = item
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id)
+      lineage.push(current)
+      current = current.parent_id ? byId.get(current.parent_id) : undefined
+    }
+    return lineage
+  }
+
+  function dependencyTargetIds(item: TreeItem): string[] {
+    const targetIds: string[] = []
+    const seen = new Set<string>()
+    for (const scope of selfAndAncestors(item)) {
+      for (const slug of scope.needs) {
+        const target = bySlug.get(slug)
+        if (target && !seen.has(target.id)) {
+          seen.add(target.id)
+          targetIds.push(target.id)
+        }
+      }
+    }
+
+    if (item.parent_id !== null && isLeaf(item.id)) {
+      const siblingLeaves = (children.get(item.parent_id) ?? []).filter(
+        (sibling) => isLeaf(sibling.id)
+      )
+      const index = siblingLeaves.findIndex((sibling) => sibling.id === item.id)
+      const previous = index > 0 ? siblingLeaves[index - 1] : null
+      if (previous && !seen.has(previous.id)) {
+        targetIds.push(previous.id)
+      }
+    }
+    return targetIds
+  }
+
+  return items.map((item) => {
+    const itemComplete = complete(item.id)
+    const actionable =
+      isLeaf(item.id) &&
+      !itemComplete &&
+      !isExternalWaitingItem(item) &&
+      dependencyTargetIds(item).every((targetId) => complete(targetId))
+    return {
+      ...item,
+      actionable,
+      complete: itemComplete,
+    }
+  })
+}
+
+function mergeSavedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): TreeItem[] {
+  const existing = items.find((item) => item.id === savedItem.id)
+  const oldSlug = existing?.slug
+  const merged = treeItemFromSavedItem(savedItem)
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (item.id === savedItem.id) {
+        return {
+          ...item,
+          ...merged,
+          needs: item.needs,
+          needs_edges: item.needs_edges,
+        }
+      }
+      if (!oldSlug || oldSlug === savedItem.slug) {
+        return item
+      }
+      return {
+        ...item,
+        needs: item.needs.map((slug) =>
+          slug === oldSlug ? savedItem.slug : slug
+        ),
+        needs_edges: item.needs_edges.map((edge) =>
+          edge.slug === oldSlug ? { ...edge, slug: savedItem.slug } : edge
+        ),
+      }
+    })
+  )
+}
+
+function appendSavedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): TreeItem[] {
+  if (items.some((item) => item.id === savedItem.id)) {
+    return mergeSavedItem(items, savedItem)
+  }
+  return recomputeLocalWorkFlags([...items, treeItemFromSavedItem(savedItem)])
+}
+
+type LocalPriorityEntry = {
+  id: string
+  localIndex: number
+  serverIndex: number
+  serverRank: number | null
+  userActionTier: number
+}
+
+function localUserActionTier(
+  item: Pick<TreeItem, 'state'> | undefined
+): number {
+  return item?.state === 'respond' ? 1 : 0
+}
+
+function compareLocalPriorityEntries(
+  left: LocalPriorityEntry,
+  right: LocalPriorityEntry
+): number {
+  const byUserAction = right.userActionTier - left.userActionTier
+  if (byUserAction !== 0) {
+    return byUserAction
+  }
+
+  if (left.serverRank !== null && right.serverRank !== null) {
+    const byServerRank = left.serverRank - right.serverRank
+    return byServerRank !== 0
+      ? byServerRank
+      : left.serverIndex - right.serverIndex
+  }
+
+  if (left.serverRank !== null || right.serverRank !== null) {
+    return left.serverRank !== null ? -1 : 1
+  }
+
+  return left.localIndex - right.localIndex
+}
+
+function localPriorityItems(
+  items: readonly TreeItem[],
+  priorityItems: readonly Pick<PriorityItem, 'id' | 'rank'>[],
+  locallyRankedItemIds: ReadonlySet<string>
+): Pick<PriorityItem, 'id' | 'rank'>[] {
+  if (locallyRankedItemIds.size === 0) {
+    return [...priorityItems]
+  }
+
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const rankedItemIds = new Set(priorityItems.map((item) => item.id))
+  const localItems = items
+    .filter(
+      (item) =>
+        locallyRankedItemIds.has(item.id) &&
+        !rankedItemIds.has(item.id) &&
+        isPriorityEligibleItem(item)
+    )
+    .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))
+  if (localItems.length === 0) {
+    return [...priorityItems]
+  }
+
+  const serverEntries = priorityItems.map((item, index) => ({
+    id: item.id,
+    localIndex: index,
+    serverIndex: index,
+    serverRank: item.rank,
+    userActionTier: localUserActionTier(itemsById.get(item.id)),
+  }))
+  const localEntries = localItems.map((item, index) => ({
+    id: item.id,
+    localIndex: index,
+    serverIndex: index,
+    serverRank: null,
+    userActionTier: localUserActionTier(item),
+  }))
+
+  return [...serverEntries, ...localEntries]
+    .sort(compareLocalPriorityEntries)
+    .map((item, index) => ({ id: item.id, rank: index + 1 }))
+}
+
+function patchAffectsPriorityMembership(patch: {
+  state?: State
+  mode?: unknown
+  effort?: unknown
+  blocked_external?: unknown
+}): boolean {
+  return (
+    Object.hasOwn(patch, 'state') ||
+    Object.hasOwn(patch, 'mode') ||
+    Object.hasOwn(patch, 'effort') ||
+    Object.hasOwn(patch, 'blocked_external')
+  )
 }
 
 function previousDoneStateFromActivity(
@@ -618,6 +885,9 @@ export function Outliner({
     () => defaultExpandedItemIds(items),
     [items]
   )
+  const [localItems, setLocalItems] = React.useState(() =>
+    recomputeLocalWorkFlags(items)
+  )
   const [expandedIds, setExpandedIds] = React.useState(defaultExpandedIds)
   const [focusedItemId, setFocusedItemId] = React.useState<string | null>(null)
   const [focusRequest, setFocusRequest] = React.useState<FocusRequest | null>(
@@ -654,9 +924,36 @@ export function Outliner({
   const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
     () => new Map<string, State>()
   )
+  const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
+    () => new Set<string>()
+  )
+  React.useEffect(() => {
+    setLocalItems(recomputeLocalWorkFlags(items))
+  }, [items])
+
+  const mergeReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => mergeSavedItem(current, savedItem))
+  }, [])
+
+  const appendReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => appendSavedItem(current, savedItem))
+  }, [])
+
   const activeItems = React.useMemo(
-    () => items.filter((item) => !locallyDeletedItemIds.has(item.id)),
-    [items, locallyDeletedItemIds]
+    () => localItems.filter((item) => !locallyDeletedItemIds.has(item.id)),
+    [localItems, locallyDeletedItemIds]
+  )
+  const effectivePriorityItems = React.useMemo(
+    () => localPriorityItems(activeItems, priorityItems, locallyRankedItemIds),
+    [activeItems, priorityItems, locallyRankedItemIds]
   )
   const itemsById = React.useMemo(
     () => new Map(activeItems.map((item) => [item.id, item])),
@@ -690,16 +987,34 @@ export function Outliner({
   }, [newlyAddedIds, sessionNewlyAddedIds])
   const mutationActions = React.useMemo<RowMutationActions>(
     () => ({
-      patchItem,
+      patchItem: async (itemId, patch) => {
+        const savedItem = await patchItem(itemId, patch)
+        mergeReturnedItem(savedItem)
+        if (patchAffectsPriorityMembership(patch)) {
+          setLocallyRankedItemIds((current) => {
+            if (current.has(itemId)) {
+              return current
+            }
+            const next = new Set(current)
+            next.add(itemId)
+            return next
+          })
+        }
+        return savedItem
+      },
       createDependency: addDependency,
       deleteDependency,
-      createItem,
+      createItem: async (input) => {
+        const savedItem = await createItem(input)
+        appendReturnedItem(savedItem)
+        return savedItem
+      },
       indentItem,
       outdentItem,
       deleteItem,
       moveItem,
     }),
-    []
+    [appendReturnedItem, mergeReturnedItem]
   )
   const rows = React.useMemo(
     () =>
@@ -707,16 +1022,16 @@ export function Outliner({
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
-        priorityItems,
+        priorityItems: effectivePriorityItems,
         view: selectedView,
       }),
     [
       activeItems,
+      effectivePriorityItems,
       expandedIds,
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
-      priorityItems,
       selectedView,
     ]
   )
@@ -768,11 +1083,11 @@ export function Outliner({
         return current
       }
 
-      const itemIds = new Set(items.map((item) => item.id))
+      const itemIds = new Set(localItems.map((item) => item.id))
       const next = new Set([...current].filter((itemId) => itemIds.has(itemId)))
       return next.size === current.size ? current : next
     })
-  }, [items])
+  }, [localItems])
 
   React.useEffect(() => {
     if (!focusRequest) {
@@ -847,14 +1162,14 @@ export function Outliner({
   }
 
   function markItemSubtreeDeleted(item: TreeItem) {
-    const deletedIds = collectSubtreeItemIds(items, item.id)
+    const deletedIds = collectSubtreeItemIds(localItems, item.id)
     const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
     setLocallyDeletedItemIds(unavailableIds)
     setTimelineItemId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
-    setSelectedItemId(firstAvailableItemId(items, unavailableIds))
+    setSelectedItemId(firstAvailableItemId(localItems, unavailableIds))
   }
 
   async function performSubmitText(

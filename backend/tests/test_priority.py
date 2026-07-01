@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import config
-from db.connection import get_connection
+from db.connection import get_connection, get_db
 from db.migrate import apply_migrations
 from services import leverage
 
@@ -49,6 +49,36 @@ async def _priority(client: AsyncClient):
 
 async def _tree(client: AsyncClient):
     return await client.get("/api/v1/tree")
+
+
+async def _count_endpoint_queries(db_path, path: str) -> tuple[int, list[str]]:
+    """Return the number of SQL work statements used to serve one GET request."""
+    from main import app
+
+    statements: list[str] = []
+    counted_operations = {"SELECT", "INSERT", "UPDATE", "DELETE"}
+
+    def traced_db():
+        with get_connection(db_path) as conn:
+            conn.set_trace_callback(
+                lambda statement: (
+                    statements.append(statement)
+                    if statement.lstrip().split(maxsplit=1)[0].upper()
+                    in counted_operations
+                    else None
+                )
+            )
+            yield conn
+
+    app.dependency_overrides[get_db] = traced_db
+    try:
+        async with _client() as client:
+            response = await client.get(path)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    return len(statements), statements
 
 
 def _dependency_edges(db_path) -> set[tuple[str, str]]:
@@ -322,6 +352,35 @@ async def test_priority_uses_section_leaf_chain_and_reorder_updates_it(
     assert [entry["id"] for entry in reordered_priority.json()] == [third_id]
     assert reordered_downstream == {first_id, second_id}
     assert reordered_score == 1.0
+
+
+@pytest.mark.anyio
+async def test_tree_and_priority_query_counts_stay_bounded_for_large_chain(
+    fresh_db,
+) -> None:
+    """Large outlines are projected set-at-once instead of via per-item walks."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Performance section"})
+        section_id = section.json()["id"]
+        for index in range(40):
+            created = await _create(
+                client,
+                {
+                    "title": f"Chain item {index + 1:02d}",
+                    "parent_id": section_id,
+                },
+            )
+            assert created.status_code == 200
+
+    tree_query_count, tree_statements = await _count_endpoint_queries(
+        fresh_db, "/api/v1/tree"
+    )
+    priority_query_count, priority_statements = await _count_endpoint_queries(
+        fresh_db, "/api/v1/priority"
+    )
+
+    assert tree_query_count <= 5, tree_statements
+    assert priority_query_count <= 5, priority_statements
 
 
 @pytest.mark.anyio

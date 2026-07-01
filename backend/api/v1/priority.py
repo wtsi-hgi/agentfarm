@@ -41,11 +41,10 @@ async def get_priority(
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[PriorityItemOut]:
     """Return actionable leaves in descending unblock-leverage order."""
+    projection = leverage.build_projection(conn)
     ranked: list[PriorityItemOut] = []
-    for rank, item_id in enumerate(leverage.priority_item_ids(conn), start=1):
-        row = conn.execute(
-            f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
-        ).fetchone()
+    for rank, item_id in enumerate(projection.priority_item_ids(), start=1):
+        row = projection.item_rows.get(item_id)
         if row is not None:
             ranked.append(_row_to_priority_item(row, rank))
     return ranked

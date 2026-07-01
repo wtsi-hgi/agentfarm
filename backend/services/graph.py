@@ -324,7 +324,28 @@ def regenerate_group(conn: sqlite3.Connection, parent_id: str | None) -> None:
     call after create/delete/move operations; it only removes legacy
     ``kind='implicit'`` rows originating from members of the affected group.
     """
-    _delete_group_implicit_edges(conn, _child_ids_in_order(conn, parent_id))
+    if parent_id is None:
+        conn.execute(
+            """
+            DELETE FROM dependencies
+            WHERE kind = 'implicit'
+              AND from_id IN (
+                SELECT id FROM items WHERE parent_id IS NULL
+              )
+            """
+        )
+        return
+
+    conn.execute(
+        """
+        DELETE FROM dependencies
+        WHERE kind = 'implicit'
+          AND from_id IN (
+            SELECT id FROM items WHERE parent_id = ?
+          )
+        """,
+        (parent_id,),
+    )
 
 
 def regenerate_groups(

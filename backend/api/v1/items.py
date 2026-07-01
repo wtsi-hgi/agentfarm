@@ -68,6 +68,26 @@ def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
     return ItemActivityOut(kind="state-change", **dict(row))
 
 
+def _explicit_needs_edges_by_item(
+    conn: sqlite3.Connection,
+) -> dict[str, list[dict[str, str]]]:
+    """Return explicit dependency labels grouped by source item."""
+    rows = conn.execute(
+        """
+        SELECT dep.from_id AS from_id, dep.id AS id, target.slug AS slug
+        FROM dependencies AS dep
+        JOIN items AS target ON target.id = dep.to_id
+        WHERE dep.kind = 'explicit'
+        ORDER BY dep.from_id, target.slug, dep.id
+        """
+    ).fetchall()
+    edges_by_item: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        edges = edges_by_item.setdefault(row["from_id"], [])
+        edges.append({"id": row["id"], "slug": row["slug"]})
+    return edges_by_item
+
+
 def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether an item with ``item_id`` exists."""
     row = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
@@ -421,21 +441,22 @@ async def get_tree(
     projection. They are computed per item without filtering: every stored item
     remains present in the response, including collapsed/non-actionable ones.
     """
-    rows = {
-        row["id"]: row
-        for row in conn.execute(f"SELECT {_ITEM_COLUMNS} FROM items").fetchall()
-    }
+    projection = leverage.build_projection(conn)
+    needs_edges_by_item = _explicit_needs_edges_by_item(conn)
     result: list[TreeItemOut] = []
-    for item_id in tree.items_in_tree_order(conn):
-        item = _row_to_item(rows[item_id])
-        needs_edges = tree.explicit_needs_edges(conn, item_id)
+    for item_id in projection.tree_order_ids():
+        row = projection.item_rows.get(item_id)
+        if row is None:
+            continue
+        item = _row_to_item(row)
+        needs_edges = needs_edges_by_item.get(item_id, [])
         result.append(
             TreeItemOut(
                 **item.model_dump(),
                 needs=[edge["slug"] for edge in needs_edges],
                 needs_edges=needs_edges,
-                actionable=leverage.is_actionable(conn, item_id),
-                complete=tree.is_complete(conn, item_id),
+                actionable=projection.is_actionable(item_id),
+                complete=projection.is_complete(item_id),
             )
         )
     return result

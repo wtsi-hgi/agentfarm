@@ -80,3 +80,15 @@ CREATE TABLE IF NOT EXISTS runs (         -- v2 seam, unused in v1 logic
   status      TEXT NOT NULL DEFAULT 'pending',
   created_at  TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_items_parent_sort
+  ON items(parent_id, sort_order, id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_from
+  ON dependencies(from_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_to
+  ON dependencies(to_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_kind_from
+  ON dependencies(kind, from_id);

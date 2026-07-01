@@ -609,6 +609,105 @@ describe('Outliner live newly added filter exemptions', () => {
     ])
   })
 
+  it('moves a waiting item changed to respond into up-next without a route refresh', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) =>
+        item({
+          id: itemId,
+          title: 'Await user feedback',
+          state: patch.state ?? 'feedback',
+          sort_order: 1,
+        })
+    )
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            state: 'feedback',
+            actionable: false,
+          }),
+        ],
+        priorityItems: [],
+      })
+    )
+
+    await click(getButton(container, 'Show follow up work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row'])
+
+    await changeSelect(
+      getItemSelect(container, 'feedback-row', 'Item state'),
+      'respond'
+    )
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('feedback-row', {
+      state: 'respond',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row'])
+    expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
+      'respond'
+    )
+    expect(
+      getItemReadinessIndicator(container, 'feedback-row').textContent
+    ).toBe('Ready')
+  })
+
+  it('orders a locally changed respond item ahead of server-ranked ready work', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) =>
+        item({
+          id: itemId,
+          title: 'Await user feedback',
+          state: patch.state ?? 'feedback',
+          sort_order: 2,
+        })
+    )
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'ready-row',
+            title: 'Ready row',
+            sort_order: 1,
+          }),
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            sort_order: 2,
+            state: 'feedback',
+            actionable: false,
+          }),
+        ],
+        priorityItems: [{ id: 'ready-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row'])
+
+    await click(getButton(container, 'Show follow up work'))
+    await changeSelect(
+      getItemSelect(container, 'feedback-row', 'Item state'),
+      'respond'
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row', 'ready-row'])
+    expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
+      'respond'
+    )
+  })
+
   it('keeps up-next separate from the default marker-completed tree cutoff', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
@@ -1224,6 +1323,57 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(actionMocks.createItem).not.toHaveBeenCalled()
     expect(getOutlinerItemIds(container)).toEqual(['current'])
     expect(getItemInput(container, 'current').value).toBe('Renamed current')
+  })
+
+  it('uses the returned saved item without waiting for a parent refresh', async () => {
+    actionMocks.patchItem.mockImplementation(async (itemId: string) =>
+      item({
+        id: itemId,
+        title: 'Renamed by backend',
+        slug: 'renamed-by-backend',
+        sort_order: 1,
+      })
+    )
+    const container = await render(React.createElement(SiblingCreationHarness))
+    const currentInput = getItemInput(container, 'current')
+
+    currentInput.setSelectionRange(0, currentInput.value.length)
+    await typeThroughCurrentSelection(currentInput, 'Renamed current')
+    await keyDown(currentInput, 'Enter')
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('current', {
+      title: 'Renamed current',
+    })
+    expect(getOutlinerItemIds(container)).toEqual(['current'])
+    expect(getItemInput(container, 'current').value).toBe('Renamed by backend')
+  })
+
+  it('renders a returned created sibling without waiting for a parent refresh', async () => {
+    actionMocks.createItem.mockImplementation(async (input: CreateItemInput) =>
+      item({
+        id: 'created-without-refresh',
+        title: input.title,
+        parent_id: input.parent_id ?? null,
+        sort_order: 2,
+      })
+    )
+    const container = await render(React.createElement(SiblingCreationHarness))
+
+    await click(getItemButton(container, 'current', 'Add sibling'))
+
+    const createdInput = getItemInput(container, 'created-without-refresh')
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'current',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'current',
+      'created-without-refresh',
+    ])
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
   it('selects the default title for a button-created sibling so immediate typing replaces it', async () => {
