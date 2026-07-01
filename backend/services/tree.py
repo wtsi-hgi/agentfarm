@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterable
+from typing import TypedDict
 
 from models.enums import State
 from models.enums import is_complete as state_is_complete
@@ -47,6 +48,14 @@ _NON_SLUG_RUN = re.compile(r"[^a-z0-9]+")
 
 # Fallback slug when a title has no slug-able characters at all.
 _EMPTY_SLUG_FALLBACK = "item"
+
+
+class ExplicitNeedsEdge(TypedDict):
+    """Visible dependency edge identity with its current target slug."""
+
+    id: str
+    slug: str
+    automatic_chain: bool
 
 
 def slugify(title: str) -> str:
@@ -232,7 +241,7 @@ def is_self_or_descendant(
 
 def explicit_needs_edges(
     conn: sqlite3.Connection, from_id: str
-) -> list[dict[str, str]]:
+) -> list[ExplicitNeedsEdge]:
     """Return visible dependency edge ids with their current target slugs.
 
     ``kind='explicit'`` includes both user-owned rows and automatic ordinary

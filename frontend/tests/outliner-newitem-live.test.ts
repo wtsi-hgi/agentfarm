@@ -287,6 +287,80 @@ function PriorityRootSiblingCreationHarness() {
   })
 }
 
+function PrunedRootSiblingAnchorHarness() {
+  const rootItems = () => [
+    item({
+      id: 'priority-anchor',
+      title: 'Priority anchor',
+      sort_order: 1,
+    }),
+    item({
+      id: 'completed-root',
+      title: 'Completed root',
+      actionable: false,
+      complete: true,
+      sort_order: 2,
+    }),
+    item({
+      id: 'completed-child',
+      title: 'Completed child',
+      actionable: false,
+      complete: true,
+      completed_at: '2026-06-29T01:00:00.000000Z',
+      parent_id: 'completed-root',
+      sort_order: 1,
+      state: 'done',
+    }),
+  ]
+  const [items, setItems] = React.useState<TreeItem[]>(rootItems)
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Remove created sibling from server',
+        onClick: () => setItems(rootItems()),
+        type: 'button',
+      },
+      'Remove created sibling from server'
+    ),
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Restore created sibling from server',
+        onClick: () =>
+          setItems([
+            ...rootItems(),
+            item({
+              id: 'created-root-sibling',
+              title: 'Restored root sibling',
+              sort_order: 0,
+            }),
+          ]),
+        type: 'button',
+      },
+      'Restore created sibling from server'
+    ),
+    React.createElement(Outliner, {
+      items,
+      leverageSort: true,
+      priorityItems: [{ id: 'priority-anchor', rank: 1 }],
+    })
+  )
+}
+
 function RootSiblingPriorityProjectionHarness() {
   const [items, setItems] = React.useState<TreeItem[]>([
     item({
@@ -1699,6 +1773,50 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(document.activeElement).toBe(createdInput)
     expect(createdInput.selectionStart).toBe(0)
     expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
+  it('lets a recreated sibling id use normal root ordering after its local anchor is pruned', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 3,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(
+      React.createElement(PrunedRootSiblingAnchorHarness)
+    )
+
+    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+      'created-root-sibling',
+    ])
+
+    await click(getButton(container, 'Remove created sibling from server'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+    ])
+
+    await click(getButton(container, 'Restore created sibling from server'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'created-root-sibling',
+      'completed-root',
+      'completed-child',
+    ])
   })
 
   it('orders a created root sibling changed to respond by priority in up-next', async () => {

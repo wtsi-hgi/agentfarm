@@ -1731,6 +1731,22 @@ export function Outliner({
   }, [localItems])
 
   React.useEffect(() => {
+    setLocalSiblingAnchorIds((current) => {
+      if (current.size === 0) {
+        return current
+      }
+
+      const itemIds = new Set(localItems.map((item) => item.id))
+      const next = new Map(
+        [...current].filter(
+          ([itemId, anchorId]) => itemIds.has(itemId) && itemIds.has(anchorId)
+        )
+      )
+      return next.size === current.size ? current : next
+    })
+  }, [localItems])
+
+  React.useEffect(() => {
     if (!focusRequest) {
       return
     }

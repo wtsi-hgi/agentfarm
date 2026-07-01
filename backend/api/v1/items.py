@@ -70,7 +70,7 @@ def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
 
 def _explicit_needs_edges_by_item(
     conn: sqlite3.Connection,
-) -> dict[str, list[dict[str, str]]]:
+) -> dict[str, list[tree.ExplicitNeedsEdge]]:
     """Return visible dependency labels grouped by source item."""
     rows = conn.execute(
         """
@@ -84,7 +84,7 @@ def _explicit_needs_edges_by_item(
         ORDER BY dep.from_id, target.slug, dep.id
         """
     ).fetchall()
-    edges_by_item: dict[str, list[dict[str, str]]] = {}
+    edges_by_item: dict[str, list[tree.ExplicitNeedsEdge]] = {}
     for row in rows:
         edges = edges_by_item.setdefault(row["from_id"], [])
         edges.append(
