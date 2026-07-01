@@ -64,6 +64,7 @@ type IdCollection = ReadonlySet<string> | readonly string[]
 
 export type VisibleOutlinerOptions = {
   leverageSort?: boolean
+  localSiblingAnchorIds?: ReadonlyMap<string, string>
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   view?: OutlinerView
   hiddenItemIds?: IdCollection
@@ -662,6 +663,35 @@ function makeChildMap(
     return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
   }
 
+  function applyLocalSiblingAnchors(siblings: TreeItem[]) {
+    const anchors = order.localSiblingAnchorIds
+    if (!anchors || anchors.size === 0) {
+      return
+    }
+
+    for (const [itemId, anchorId] of anchors) {
+      const itemIndex = siblings.findIndex((item) => item.id === itemId)
+      if (itemIndex < 0) {
+        continue
+      }
+
+      const [item] = siblings.splice(itemIndex, 1)
+      if (!item) {
+        continue
+      }
+
+      const anchorIndex = siblings.findIndex(
+        (sibling) => sibling.id === anchorId
+      )
+      if (anchorIndex < 0) {
+        siblings.splice(itemIndex, 0, item)
+        continue
+      }
+
+      siblings.splice(anchorIndex + 1, 0, item)
+    }
+  }
+
   function hasChildItems(item: TreeItem) {
     return (children.get(item.id) ?? []).length > 0
   }
@@ -712,6 +742,9 @@ function makeChildMap(
 
     if (parentId === null) {
       siblings.sort(priorityOrder)
+      if (view === 'tree') {
+        applyLocalSiblingAnchors(siblings)
+      }
       continue
     }
 
@@ -927,6 +960,9 @@ export function Outliner({
   const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
     () => new Set<string>()
   )
+  const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
+    () => new Map<string, string>()
+  )
   React.useEffect(() => {
     setLocalItems(recomputeLocalWorkFlags(items))
   }, [items])
@@ -1021,6 +1057,7 @@ export function Outliner({
       visibleOutlinerRows(activeItems, expandedIds, {
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
+        localSiblingAnchorIds,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems: effectivePriorityItems,
         view: selectedView,
@@ -1029,6 +1066,7 @@ export function Outliner({
       activeItems,
       effectivePriorityItems,
       expandedIds,
+      localSiblingAnchorIds,
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
@@ -1185,6 +1223,11 @@ export function Outliner({
 
   function focusCreatedSibling(item: TreeItem, createdItemId: string) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
+    setLocalSiblingAnchorIds((current) => {
+      const next = new Map(current)
+      next.set(createdItemId, item.id)
+      return next
+    })
     const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))

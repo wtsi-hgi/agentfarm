@@ -206,6 +206,83 @@ function ChildSiblingCreationHarness() {
   return React.createElement(Outliner, { items })
 }
 
+function PriorityRootSiblingCreationHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({
+      id: 'priority-anchor',
+      title: 'Priority anchor',
+      sort_order: 1,
+    }),
+    item({
+      id: 'completed-root',
+      title: 'Completed root',
+      actionable: false,
+      complete: true,
+      sort_order: 2,
+    }),
+    item({
+      id: 'completed-child',
+      title: 'Completed child',
+      actionable: false,
+      complete: true,
+      completed_at: '2026-06-29T01:00:00.000000Z',
+      parent_id: 'completed-root',
+      sort_order: 1,
+      state: 'done',
+    }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, {
+    items,
+    leverageSort: true,
+    priorityItems: [{ id: 'priority-anchor', rank: 1 }],
+  })
+}
+
+function RootSiblingPriorityProjectionHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({
+      id: 'ready-root',
+      title: 'Ready root',
+      sort_order: 1,
+    }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+    publishPatchedItem = (itemId, patch) => {
+      setItems((current) =>
+        current.map((existing) =>
+          existing.id === itemId ? { ...existing, ...patch } : existing
+        )
+      )
+    }
+
+    return () => {
+      publishCreatedItem = null
+      publishPatchedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, {
+    items,
+    leverageSort: true,
+    priorityItems: [{ id: 'ready-root', rank: 1 }],
+  })
+}
+
 async function flushReact() {
   await act(async () => {
     await Promise.resolve()
@@ -1444,5 +1521,110 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(document.activeElement).toBe(createdInput)
     expect(createdInput.selectionStart).toBe(0)
     expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
+  it('keeps a button-created root sibling beneath the completed root subtree in priority sort', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 3,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(
+      React.createElement(PriorityRootSiblingCreationHarness)
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+    ])
+
+    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+
+    const createdInput = getItemInput(container, 'created-root-sibling')
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'completed-root',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+      'created-root-sibling',
+    ])
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
+  it('orders a created root sibling changed to respond by priority in up-next', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 2,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) => {
+        const saved = item({
+          id: itemId,
+          title: 'New item',
+          parent_id: null,
+          sort_order: 2,
+          state: patch.state ?? 'not-started',
+        })
+        publishPatchedItem?.(itemId, patch)
+        return saved
+      }
+    )
+    const container = await render(
+      React.createElement(RootSiblingPriorityProjectionHarness)
+    )
+
+    await click(getItemButton(container, 'ready-root', 'Add sibling'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'ready-root',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-root',
+      'created-root-sibling',
+    ])
+
+    await changeSelect(
+      getItemSelect(container, 'created-root-sibling', 'Item state'),
+      'respond'
+    )
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-root-sibling', {
+      state: 'respond',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-root',
+      'created-root-sibling',
+    ])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'created-root-sibling',
+      'ready-root',
+    ])
   })
 })
