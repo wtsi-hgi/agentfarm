@@ -1051,24 +1051,66 @@ export function visibleOutlinerRows(
     leverageSort: view !== 'tree' ? true : options.leverageSort,
   })
   const rows: VisibleOutlinerRow[] = []
+  const projectionCache = new Map<
+    string,
+    {
+      collapsed: boolean
+      directlyVisible: boolean
+      filteredOutNewlyAdded: boolean
+      hasChildren: boolean
+    }
+  >()
+  const visibleDescendantCache = new Map<string, boolean>()
 
-  function visit(parentId: string | null, depth: number) {
+  function projection(item: TreeItem) {
+    const cached = projectionCache.get(item.id)
+    if (cached) {
+      return cached
+    }
+
+    const hasChildren = (children.get(item.id) ?? []).length > 0
+    const collapsed = hasChildren && !expandedIds.has(item.id)
+    const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
+    const hiddenByView = !isVisibleInView(
+      item,
+      view,
+      priorityRanks,
+      hasChildren
+    )
+    const filteredOutNewlyAdded =
+      hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
+    const directlyVisible =
+      (!hiddenByExplicitFilter && !hiddenByView) || filteredOutNewlyAdded
+    const projected = {
+      collapsed,
+      directlyVisible,
+      filteredOutNewlyAdded,
+      hasChildren,
+    }
+    projectionCache.set(item.id, projected)
+    return projected
+  }
+
+  function hasVisibleDescendant(item: TreeItem): boolean {
+    const cached = visibleDescendantCache.get(item.id)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const visible = (children.get(item.id) ?? []).some((child) => {
+      const childProjection = projection(child)
+      return childProjection.directlyVisible || hasVisibleDescendant(child)
+    })
+    visibleDescendantCache.set(item.id, visible)
+    return visible
+  }
+
+  function visitTree(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const hasChildren = (children.get(item.id) ?? []).length > 0
-      const collapsed = hasChildren && !expandedIds.has(item.id)
-      const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
-      const hiddenByView = !isVisibleInView(
-        item,
-        view,
-        priorityRanks,
-        hasChildren
-      )
-      const filteredOutNewlyAdded =
-        hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
-      const visible =
-        (!hiddenByExplicitFilter && !hiddenByView) || filteredOutNewlyAdded
+      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
+        projection(item)
 
-      if (visible) {
+      if (directlyVisible) {
         rows.push({
           item,
           depth,
@@ -1078,13 +1120,41 @@ export function visibleOutlinerRows(
         })
       }
 
-      if (!visible || !collapsed) {
-        visit(item.id, visible ? depth + 1 : depth)
+      if (!directlyVisible || !collapsed) {
+        visitTree(item.id, directlyVisible ? depth + 1 : depth)
       }
     }
   }
 
-  visit(null, 0)
+  function visitFiltered(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
+        projection(item)
+      const visible = directlyVisible || hasVisibleDescendant(item)
+
+      if (!visible) {
+        continue
+      }
+
+      rows.push({
+        item,
+        depth,
+        hasChildren,
+        collapsed,
+        filteredOutNewlyAdded,
+      })
+
+      if (!collapsed) {
+        visitFiltered(item.id, depth + 1)
+      }
+    }
+  }
+
+  if (view === 'tree') {
+    visitTree(null, 0)
+  } else {
+    visitFiltered(null, 0)
+  }
   return rows
 }
 

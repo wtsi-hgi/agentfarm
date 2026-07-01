@@ -122,7 +122,7 @@ describe('Outliner', () => {
     ).toEqual(['blocking', 'blocking-child', 'dependent', 'dependent-child'])
   })
 
-  it('shows up-next rows as actionable non-waiting work in priority order', () => {
+  it('shows up-next rows as actionable non-waiting work with section context', () => {
     const items = [
       item({
         id: 'section',
@@ -177,7 +177,7 @@ describe('Outliner', () => {
         ],
         view: 'up-next',
       }).map((row) => row.item.id)
-    ).toEqual(['respond', 'ready'])
+    ).toEqual(['respond', 'section', 'ready'])
   })
 
   it('shows follow-up rows as non-me waiting work without respond', () => {
@@ -236,6 +236,106 @@ describe('Outliner', () => {
         view: 'follow-up',
       }).map((row) => row.item.id)
     ).toEqual(['implement', 'blocked', 'feedback'])
+  })
+
+  it('keeps filtered rows under ancestor context while pruning unrelated siblings', () => {
+    const items = [
+      item({
+        id: 'root',
+        title: 'Root',
+        actionable: false,
+      }),
+      item({
+        id: 'section',
+        title: 'Section',
+        parent_id: 'root',
+        actionable: false,
+      }),
+      item({
+        id: 'ready',
+        title: 'Ready work',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'waiting',
+        title: 'Waiting on feedback',
+        parent_id: 'section',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+      item({
+        id: 'unrelated-section',
+        title: 'Unrelated section',
+        parent_id: 'root',
+        sort_order: 2,
+        actionable: false,
+      }),
+      item({
+        id: 'unrelated-ready',
+        title: 'Unrelated ready work',
+        parent_id: 'unrelated-section',
+        sort_order: 1,
+      }),
+    ]
+    const expandedIds = new Set(['root', 'section', 'unrelated-section'])
+
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems: [{ id: 'ready', rank: 1 }],
+        view: 'up-next',
+      }).map((row) => [row.item.id, row.depth])
+    ).toEqual([
+      ['root', 0],
+      ['section', 1],
+      ['ready', 2],
+    ])
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems: [{ id: 'ready', rank: 1 }],
+        view: 'follow-up',
+      }).map((row) => [row.item.id, row.depth])
+    ).toEqual([
+      ['root', 0],
+      ['section', 1],
+      ['waiting', 2],
+    ])
+  })
+
+  it('lets collapsed context rows hide matching descendants in filtered views', () => {
+    const items = [
+      item({
+        id: 'root',
+        title: 'Root',
+        actionable: false,
+      }),
+      item({
+        id: 'section',
+        title: 'Section',
+        parent_id: 'root',
+        actionable: false,
+      }),
+      item({
+        id: 'ready',
+        title: 'Ready work',
+        parent_id: 'section',
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['root']), {
+        priorityItems: [{ id: 'ready', rank: 1 }],
+        view: 'up-next',
+      }).map((row) => ({
+        collapsed: row.collapsed,
+        depth: row.depth,
+        id: row.item.id,
+      }))
+    ).toEqual([
+      { collapsed: false, depth: 0, id: 'root' },
+      { collapsed: true, depth: 1, id: 'section' },
+    ])
   })
 
   it('orders actionable rows by leverage priority without mutating stored order', () => {
