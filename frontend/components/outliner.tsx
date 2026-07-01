@@ -207,8 +207,19 @@ function makePriorityRanks(
   return new Map(priorityItems.map((item) => [item.id, item.rank]))
 }
 
-function isDoneForProjection(item: TreeItem): boolean {
-  return item.complete || item.state === 'done' || item.state === 'abandoned'
+type ProjectionStateOptions = {
+  hasChildren?: boolean
+}
+
+function isDoneForProjection(
+  item: TreeItem,
+  options: ProjectionStateOptions = {}
+): boolean {
+  return (
+    item.complete ||
+    item.state === 'done' ||
+    (!options.hasChildren && item.state === 'abandoned')
+  )
 }
 
 function compareTimestamp(left: string, right: string): number {
@@ -243,9 +254,13 @@ function latestMarkerAt(markers: readonly Marker[]): string | null {
   return latest?.at ?? null
 }
 
-function doneOnOrBeforeMarker(item: TreeItem, markerAt: string): boolean {
+function doneOnOrBeforeMarker(
+  item: TreeItem,
+  markerAt: string,
+  options: ProjectionStateOptions = {}
+): boolean {
   return (
-    isDoneForProjection(item) &&
+    isDoneForProjection(item, options) &&
     item.completed_at !== null &&
     compareTimestamp(item.completed_at, markerAt) <= 0
   )
@@ -260,9 +275,20 @@ function defaultTreeMarkerHiddenItemIds(
     return new Set()
   }
 
+  const itemIdsWithChildren = new Set<string>()
+  for (const item of items) {
+    if (item.parent_id !== null) {
+      itemIdsWithChildren.add(item.parent_id)
+    }
+  }
+
   return new Set(
     items
-      .filter((item) => doneOnOrBeforeMarker(item, markerAt))
+      .filter((item) =>
+        doneOnOrBeforeMarker(item, markerAt, {
+          hasChildren: itemIdsWithChildren.has(item.id),
+        })
+      )
       .map((item) => item.id)
   )
 }
@@ -275,35 +301,40 @@ function isCompleteState(state: State): boolean {
   return state === 'done' || state === 'abandoned'
 }
 
-function isPriorityEligibleItem(item: TreeItem): boolean {
+function isPriorityEligibleItem(item: TreeItem, hasChildren = false): boolean {
   return (
     item.actionable &&
-    !isDoneForProjection(item) &&
-    !isExternalWaitingItem(item)
+    !isDoneForProjection(item, { hasChildren }) &&
+    !isExternalWaitingItem(item, { ignoreState: hasChildren })
   )
 }
 
 function isUpNextItem(
   item: TreeItem,
-  priorityRanks: ReadonlyMap<string, number>
+  priorityRanks: ReadonlyMap<string, number>,
+  hasChildren: boolean
 ): boolean {
-  return priorityRanks.has(item.id) && isPriorityEligibleItem(item)
+  return priorityRanks.has(item.id) && isPriorityEligibleItem(item, hasChildren)
 }
 
-function isFollowUpItem(item: TreeItem): boolean {
-  return !isDoneForProjection(item) && isExternalWaitingItem(item)
+function isFollowUpItem(item: TreeItem, hasChildren: boolean): boolean {
+  return (
+    !isDoneForProjection(item, { hasChildren }) &&
+    isExternalWaitingItem(item, { ignoreState: hasChildren })
+  )
 }
 
 function isVisibleInView(
   item: TreeItem,
   view: OutlinerView,
-  priorityRanks: ReadonlyMap<string, number>
+  priorityRanks: ReadonlyMap<string, number>,
+  hasChildren: boolean
 ): boolean {
   if (view === 'up-next') {
-    return isUpNextItem(item, priorityRanks)
+    return isUpNextItem(item, priorityRanks, hasChildren)
   }
   if (view === 'follow-up') {
-    return isFollowUpItem(item)
+    return isFollowUpItem(item, hasChildren)
   }
   return true
 }
@@ -525,12 +556,18 @@ function localPriorityItems(
 
   const itemsById = new Map(items.map((item) => [item.id, item]))
   const rankedItemIds = new Set(priorityItems.map((item) => item.id))
+  const itemIdsWithChildren = new Set<string>()
+  for (const item of items) {
+    if (item.parent_id !== null) {
+      itemIdsWithChildren.add(item.parent_id)
+    }
+  }
   const localItems = items
     .filter(
       (item) =>
         locallyRankedItemIds.has(item.id) &&
         !rankedItemIds.has(item.id) &&
-        isPriorityEligibleItem(item)
+        isPriorityEligibleItem(item, itemIdsWithChildren.has(item.id))
     )
     .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))
   if (localItems.length === 0) {
@@ -627,13 +664,15 @@ function makeChildMap(
       return cached
     }
 
-    if (isDoneForProjection(item)) {
+    const hasChildren = hasChildItems(item)
+    if (isDoneForProjection(item, { hasChildren })) {
       bestRankCache.set(item.id, Number.POSITIVE_INFINITY)
       return Number.POSITIVE_INFINITY
     }
 
     let rank =
-      view !== 'tree' && !isVisibleInView(item, view, priorityRanks)
+      view !== 'tree' &&
+      !isVisibleInView(item, view, priorityRanks, hasChildren)
         ? Number.POSITIVE_INFINITY
         : (priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY)
     for (const child of children.get(item.id) ?? []) {
@@ -649,7 +688,10 @@ function makeChildMap(
   }
 
   function doneOrder(a: TreeItem, b: TreeItem) {
-    return Number(isDoneForProjection(a)) - Number(isDoneForProjection(b))
+    return (
+      Number(isDoneForProjection(a, { hasChildren: hasChildItems(a) })) -
+      Number(isDoneForProjection(b, { hasChildren: hasChildItems(b) }))
+    )
   }
 
   function priorityOrder(a: TreeItem, b: TreeItem) {
@@ -706,8 +748,16 @@ function makeChildMap(
 
   function unitDoneOrder(a: readonly TreeItem[], b: readonly TreeItem[]) {
     return (
-      Number(a.every((item) => isDoneForProjection(item))) -
-      Number(b.every((item) => isDoneForProjection(item)))
+      Number(
+        a.every((item) =>
+          isDoneForProjection(item, { hasChildren: hasChildItems(item) })
+        )
+      ) -
+      Number(
+        b.every((item) =>
+          isDoneForProjection(item, { hasChildren: hasChildItems(item) })
+        )
+      )
     )
   }
 
@@ -879,7 +929,12 @@ export function visibleOutlinerRows(
       const hasChildren = (children.get(item.id) ?? []).length > 0
       const collapsed = hasChildren && !expandedIds.has(item.id)
       const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
-      const hiddenByView = !isVisibleInView(item, view, priorityRanks)
+      const hiddenByView = !isVisibleInView(
+        item,
+        view,
+        priorityRanks,
+        hasChildren
+      )
       const filteredOutNewlyAdded =
         hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
       const visible =

@@ -30,21 +30,35 @@ export const EXTERNAL_WAITING_STATES = new Set<State>(['feedback', 'implement'])
 
 export type ItemReadiness = 'done' | 'ready' | 'waiting'
 
+type WorkflowStateOptions = {
+  ignoreState?: boolean
+}
+
 export function isExternalWaitingState(state: State): boolean {
   return EXTERNAL_WAITING_STATES.has(state)
 }
 
 export function isExternalWaitingItem(
-  item: Pick<TreeItem, 'blocked_external' | 'state'>
+  item: Pick<TreeItem, 'blocked_external' | 'state'>,
+  options: WorkflowStateOptions = {}
 ): boolean {
-  return item.blocked_external || isExternalWaitingState(item.state)
+  return (
+    item.blocked_external ||
+    (!options.ignoreState && isExternalWaitingState(item.state))
+  )
 }
 
 export function itemReadiness(
-  item: Pick<TreeItem, 'actionable' | 'blocked_external' | 'complete' | 'state'>
+  item: Pick<
+    TreeItem,
+    'actionable' | 'blocked_external' | 'complete' | 'state'
+  >,
+  options: WorkflowStateOptions = {}
 ): ItemReadiness {
   if (item.state === 'done' || item.complete) {
     return 'done'
   }
-  return item.actionable && !isExternalWaitingItem(item) ? 'ready' : 'waiting'
+  return item.actionable && !isExternalWaitingItem(item, options)
+    ? 'ready'
+    : 'waiting'
 }

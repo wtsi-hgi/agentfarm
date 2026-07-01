@@ -159,6 +159,44 @@ function NestedRowsHarness() {
   })
 }
 
+function SectionToLeafHarness() {
+  const [hasChild, setHasChild] = React.useState(true)
+  const items = [
+    item({
+      id: 'section',
+      title: 'Feedback section',
+      actionable: false,
+      state: 'feedback',
+      sort_order: 1,
+    }),
+    ...(hasChild
+      ? [
+          item({
+            id: 'leaf',
+            title: 'Leaf item',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ]
+      : []),
+  ]
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Remove child',
+        onClick: () => setHasChild(false),
+        type: 'button',
+      },
+      'Remove child'
+    ),
+    React.createElement(Outliner, { items })
+  )
+}
+
 function SiblingCreationHarness() {
   const [items, setItems] = React.useState<TreeItem[]>([
     item({ id: 'current', title: 'Current', sort_order: 1 }),
@@ -361,6 +399,17 @@ function getItemSelect(
     throw new Error(`Missing ${ariaLabel} select for ${itemId}`)
   }
   return select
+}
+
+function queryItemSelect(
+  container: ParentNode,
+  itemId: string,
+  ariaLabel: string
+) {
+  const select = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] select[aria-label="${ariaLabel}"]`
+  )
+  return select instanceof HTMLSelectElement ? select : null
 }
 
 function getItemCheckbox(container: ParentNode, itemId: string) {
@@ -1043,6 +1092,93 @@ describe('Outliner live newly added filter exemptions', () => {
       HTMLInputElement
     )
     expect(getItemCheckbox(container, 'leaf')).toBeInstanceOf(HTMLInputElement)
+  })
+
+  it('hides state selectors on sections and ignores their stored waiting state in Follow Up', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'section',
+            title: 'Feedback section',
+            actionable: false,
+            state: 'feedback',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Ready leaf',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+        priorityItems: [{ id: 'leaf', rank: 1 }],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual(['section', 'leaf'])
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+    expect(getItemSelect(container, 'leaf', 'Item state').value).toBe(
+      'not-started'
+    )
+    expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
+      HTMLInputElement
+    )
+
+    await click(getButton(container, 'Show follow up work'))
+
+    expect(getOutlinerItemIds(container)).toEqual([])
+  })
+
+  it('remembers a hidden section state when the section becomes a leaf again', async () => {
+    const container = await render(React.createElement(SectionToLeafHarness))
+
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+
+    await click(getButton(container, 'Remove child'))
+
+    expect(getItemSelect(container, 'section', 'Item state').value).toBe(
+      'feedback'
+    )
+  })
+
+  it('keeps the section done checkbox active while the state selector is hidden', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'section',
+            title: 'Review section',
+            actionable: false,
+            state: 'review',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Leaf item',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+
+    await clickCheckbox(getItemCheckbox(container, 'section'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('section', {
+      state: 'done',
+    })
+    expect(getItemCheckbox(container, 'section').checked).toBe(true)
+
+    await clickCheckbox(getItemCheckbox(container, 'section'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('section', {
+      state: 'review',
+    })
+    expect(getItemCheckbox(container, 'section').checked).toBe(false)
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
   })
 
   it('checks a row through the existing state mutation and greys it as done', async () => {

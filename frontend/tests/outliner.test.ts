@@ -337,6 +337,52 @@ describe('Outliner', () => {
     ).toEqual(['ready', 'section', 'first', 'second'])
   })
 
+  it('ignores a section stored abandoned state for marker filtering and priority projection', () => {
+    const items = [
+      item({
+        id: 'section',
+        title: 'Remembered abandoned section',
+        state: 'abandoned',
+        actionable: false,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'urgent-child',
+        title: 'Urgent child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'ready-root',
+        title: 'Ready root',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      renderedItemIds(
+        React.createElement(Outliner, {
+          items,
+          markers: [
+            marker({
+              id: 'latest-marker',
+              at: '2026-06-30T00:00:00.000000Z',
+            }),
+          ],
+        })
+      )
+    ).toEqual(['section', 'urgent-child', 'ready-root'])
+    expect(
+      visibleOutlinerRows(items, new Set(['section']), {
+        leverageSort: true,
+        priorityItems: [
+          { id: 'urgent-child', rank: 1 },
+          { id: 'ready-root', rank: 2 },
+        ],
+      }).map((row) => row.item.id)
+    ).toEqual(['section', 'urgent-child', 'ready-root'])
+  })
+
   it('ranks unranked done rows after unranked not-done rows in priority projection', () => {
     const items = [
       item({

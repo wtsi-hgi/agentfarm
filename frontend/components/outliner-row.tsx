@@ -172,7 +172,7 @@ export function OutlinerRow({
   }
 
   const checkedDone = item.state === 'done'
-  const readiness = itemReadiness(item)
+  const readiness = itemReadiness(item, { ignoreState: hasChildren })
   const displayDone = readiness === 'done'
   const displayReady = readiness === 'ready'
 
@@ -184,7 +184,8 @@ export function OutlinerRow({
           MODE_COLOUR_MAP[item.mode],
           selected && 'bg-accent/50',
           displayDone && 'text-muted-foreground',
-          isExternalWaitingItem(item) && 'text-muted-foreground'
+          isExternalWaitingItem(item, { ignoreState: hasChildren }) &&
+            'text-muted-foreground'
         )}
         style={{ paddingLeft: `${depth * 1.25}rem` }}
         data-mode={item.mode}
@@ -286,22 +287,24 @@ export function OutlinerRow({
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-1">
-          <select
-            aria-label="Item state"
-            className={cn(
-              'border-border bg-background text-foreground focus-visible:ring-ring h-8 w-32 rounded-md border px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
-              displayDone && 'bg-muted text-muted-foreground'
-            )}
-            value={item.state}
-            disabled={pending}
-            onChange={handleStateChange}
-          >
-            {STATE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          {!hasChildren ? (
+            <select
+              aria-label="Item state"
+              className={cn(
+                'border-border bg-background text-foreground focus-visible:ring-ring h-8 w-32 rounded-md border px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50',
+                displayDone && 'bg-muted text-muted-foreground'
+              )}
+              value={item.state}
+              disabled={pending}
+              onChange={handleStateChange}
+            >
+              {STATE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
