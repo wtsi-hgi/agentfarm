@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_owner
 from db.connection import get_db
-from services import graph
+from services import graph, tree
 
 from ..schemas import DeletedResponse, DependencyCreate, DependencyOut
 
@@ -82,6 +82,46 @@ async def create_dependency(
     if _dependency_exists(conn, payload.from_id, to_id):
         raise HTTPException(status_code=409, detail=_DEPENDENCY_ALREADY_EXISTS)
 
+    lower_leaf_placement = graph.same_section_lower_leaf_dependency(
+        conn,
+        payload.from_id,
+        to_id,
+    )
+    if lower_leaf_placement is not None:
+        preserve_edge = graph.automatic_preserve_edge_for_lower_target(
+            conn,
+            payload.from_id,
+            to_id,
+        )
+        preserve_edges = () if preserve_edge is None else (preserve_edge,)
+        if graph.move_would_create_cycle(
+            conn,
+            payload.from_id,
+            lower_leaf_placement["parent_id"],
+            after_id=to_id,
+            preserve_automatic_edges=preserve_edges,
+        ):
+            raise HTTPException(status_code=409, detail="dependency cycle rejected")
+
+        tree.reparent_item(
+            conn,
+            payload.from_id,
+            lower_leaf_placement["parent_id"],
+            after_id=to_id,
+            preserve_automatic_edges=preserve_edges,
+        )
+        row = conn.execute(
+            f"""
+            SELECT {_DEPENDENCY_COLUMNS}
+            FROM dependencies
+            WHERE from_id = ? AND to_id = ?
+            """,
+            (payload.from_id, to_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=409, detail="dependency cycle rejected")
+        return _row_to_dependency(row)
+
     if graph.would_create_cycle(conn, payload.from_id, to_id):
         raise HTTPException(status_code=409, detail="dependency cycle rejected")
 
@@ -89,8 +129,8 @@ async def create_dependency(
     try:
         conn.execute(
             f"""
-            INSERT INTO dependencies ({_DEPENDENCY_COLUMNS})
-            VALUES (?, ?, ?, 'explicit')
+            INSERT INTO dependencies ({_DEPENDENCY_COLUMNS}, automatic_chain)
+            VALUES (?, ?, ?, 'explicit', 0)
             """,
             (dependency_id, payload.from_id, to_id),
         )

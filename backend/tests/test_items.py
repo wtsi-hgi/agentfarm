@@ -71,6 +71,19 @@ def _dependencies(db_path) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _automatic_edges(db_path) -> set[tuple[str, str]]:
+    """Return automatic dependency rows as ``(from_id, to_id)`` pairs."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT from_id, to_id
+            FROM dependencies
+            WHERE kind = 'explicit' AND automatic_chain = 1
+            """
+        ).fetchall()
+    return {(row["from_id"], row["to_id"]) for row in rows}
+
+
 async def _create(client: AsyncClient, body: dict):
     return await client.post("/api/v1/items", json=body)
 
@@ -234,8 +247,8 @@ async def test_bad_enum_returns_422_naming_field(fresh_db) -> None:
 
 
 @pytest.mark.anyio
-async def test_child_sorts_after_sibling_without_dependency(fresh_db) -> None:
-    """Test 6: a second child sorts after the first without creating a dependency."""
+async def test_child_sorts_after_sibling_with_automatic_dependency(fresh_db) -> None:
+    """Test 6: a second ordinary child sorts after and depends on the first."""
     async with _client() as client:
         parent = await _create(client, {"title": "Parent"})
         parent_id = parent.json()["id"]
@@ -249,8 +262,7 @@ async def test_child_sorts_after_sibling_without_dependency(fresh_db) -> None:
     # c2 sorts strictly after c1 among the siblings.
     assert c2_body["sort_order"] > c1_body["sort_order"]
 
-    # Sibling order is organisational only; no dependency is derived.
-    assert _dependencies(fresh_db) == []
+    assert _automatic_edges(fresh_db) == {(c2_body["id"], c1_body["id"])}
 
 
 @pytest.mark.anyio
@@ -802,7 +814,7 @@ async def test_tree_marks_actionable_and_complete_without_omitting_items(
     """H1: GET /tree returns every item plus work-now flags.
 
     Root leaves stay independent, while plain leaf children under ``B`` follow
-    the section's implicit order: ``B2`` waits for ``B1``. ``B`` itself is only
+    the section's automatic order: ``B2`` waits for ``B1``. ``B`` itself is only
     structural because it has children.
     """
     async with _client() as client:
@@ -834,7 +846,7 @@ async def test_tree_marks_actionable_and_complete_without_omitting_items(
     for item_id in ids.values():
         item = _tree_item(payload, item_id)
         assert item["complete"] is False
-        assert item["needs"] == []
+    assert _tree_item(payload, ids["B2"])["needs"] == ["b1"]
 
 
 # --- A4: Delete item with subtree cascade and dependency cleanup ------------
@@ -1046,7 +1058,7 @@ async def test_nested_container_completeness_propagates_to_ancestors(
 # --- F2: Keyboard structure operations (Enter / Tab / Shift-Tab) ------------
 
 
-def _implicit_edges(db_path) -> set[tuple[str, str]]:
+def _legacy_implicit_edges(db_path) -> set[tuple[str, str]]:
     """Return all legacy implicit edges as ``(from_id, to_id)`` tuples."""
     return {
         (e["from_id"], e["to_id"])
@@ -1078,7 +1090,7 @@ async def test_enter_next_sibling_create_preserves_independence(fresh_db) -> Non
     assert b_body["parent_id"] == a_body["parent_id"]
     assert b_body["sort_order"] > a_body["sort_order"]
     # Root sibling order is independent by default and creates no stored rows.
-    assert (b_id, a_id) not in _implicit_edges(fresh_db)
+    assert (b_id, a_id) not in _legacy_implicit_edges(fresh_db)
     assert _dependencies(fresh_db) == []
 
 
@@ -1262,11 +1274,11 @@ async def test_indent_then_outdent_preserves_id_edge_and_comment(
 
 
 @pytest.mark.anyio
-async def test_move_across_products_reparents_without_order_dependency(
+async def test_move_across_products_reparents_and_repairs_automatic_chain(
     fresh_db,
 ) -> None:
     """G1 test 1: moving ``x`` from product ``P1`` to product ``P2`` after ``y``
-    reparents ``x`` and sorts it after ``y`` without deriving ``x -> y``.
+    reparents ``x`` and creates the destination section's automatic ``x -> y``.
 
     Built entirely via the create + move primitives. Asserted via both the move
     response and GET ``/tree`` plus persisted dependency state.
@@ -1297,11 +1309,7 @@ async def test_move_across_products_reparents_without_order_dependency(
     y_order = _item_row(fresh_db, y_id)["sort_order"]
     assert x_order > y_order
 
-    # Placement creates no stored dependency rows; the section chain is derived
-    # from current order by the leverage service.
-    implicit = _implicit_edges(fresh_db)
-    assert (x_id, y_id) not in implicit
-    assert {edge for edge in implicit if x_id in edge} == set()
+    assert _automatic_edges(fresh_db) == {(x_id, y_id)}
 
     # GET /tree confirms the new structure: x is under P2, P1 has no children.
     payload = tree.json()
@@ -1395,7 +1403,7 @@ async def test_move_second_root_to_first_without_dependency_edges(fresh_db) -> N
 async def test_move_second_child_to_first_updates_section_leaf_chain(
     fresh_db,
 ) -> None:
-    """The first-position contract changes the live section dependency chain."""
+    """The first-position contract repairs the section dependency chain."""
     async with _client() as client:
         parent = await _create(client, {"title": "Parent"})
         parent_id = parent.json()["id"]
@@ -1422,7 +1430,10 @@ async def test_move_second_child_to_first_updates_section_leaf_chain(
         first_id,
         third_id,
     ]
-    assert _dependencies(fresh_db) == []
+    assert _automatic_edges(fresh_db) == {
+        (first_id, second_id),
+        (third_id, first_id),
+    }
     assert _actionable(fresh_db) == {second_id}
 
 
@@ -1541,7 +1552,7 @@ async def test_move_after_reverse_dependency_is_rejected(fresh_db) -> None:
 
     Setup: products ``P`` (child ``a``) and ``Q`` (child ``b``) with an explicit
     edge ``a -> b`` (a needs b). Moving ``b`` under ``P`` after ``a`` would make
-    ``b`` implicitly depend on ``a``, so the move is rejected.
+    ``b`` automatically depend on ``a``, so the move is rejected.
     """
     async with _client() as client:
         p = await _create(client, {"title": "P"})
@@ -1567,7 +1578,7 @@ async def test_move_after_reverse_dependency_is_rejected(fresh_db) -> None:
     assert [(e["from_id"], e["to_id"], e["kind"]) for e in edges] == [
         (a_id, b_id, "explicit")
     ]
-    assert (b_id, a_id) not in _implicit_edges(fresh_db)
+    assert (b_id, a_id) not in _automatic_edges(fresh_db)
 
 
 # --- G2: Merge (reparent children, remove emptied item) ---------------------
@@ -1622,9 +1633,10 @@ async def test_merge_via_move_children_then_delete_source(fresh_db) -> None:
     ]
     assert dst_children == [d1_id, s1_id, s2_id]
 
-    # The stored order creates no dependency rows; the section chain is derived
-    # live from current order.
-    assert _implicit_edges(fresh_db) == set()
+    assert _automatic_edges(fresh_db) == {
+        (s1_id, d1_id),
+        (s2_id, s1_id),
+    }
 
 
 # --- G3: Split (new root items, move subtrees under them) -------------------
@@ -1647,8 +1659,7 @@ async def test_split_create_root_then_move_subtree(fresh_db) -> None:
         s1_id = s1.json()["id"]
         s2_id = s2.json()["id"]
 
-        # Precondition: section ordering has created no stored dependency rows.
-        assert _implicit_edges(fresh_db) == set()
+        assert _automatic_edges(fresh_db) == {(s2_id, s1_id)}
 
         # Create a new product root R, then move s1 under it.
         r = await _create(client, {"title": "R", "parent_id": None})
@@ -1667,7 +1678,4 @@ async def test_split_create_root_then_move_subtree(fresh_db) -> None:
     assert r_children == [s1_id]
     assert _item_row(fresh_db, s1_id)["parent_id"] == r_id
 
-    implicit = _implicit_edges(fresh_db)
-    assert {edge for edge in implicit if edge[0] == s1_id} == set()
-    assert (s2_id, s1_id) not in implicit
-    assert all(frm != s2_id for (frm, to) in implicit)
+    assert _automatic_edges(fresh_db) == set()

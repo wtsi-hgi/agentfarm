@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Iterable
 
 from models.enums import State
 from models.enums import is_complete as state_is_complete
@@ -232,12 +233,13 @@ def is_self_or_descendant(
 def explicit_needs_edges(
     conn: sqlite3.Connection, from_id: str
 ) -> list[dict[str, str]]:
-    """Return explicit dependency edge ids with their current target slugs.
+    """Return visible dependency edge ids with their current target slugs.
 
-    Only ``kind='explicit'`` edges are considered; legacy implicit rows are not
-    shown as ``>needs:`` labels. Each target id (``to_id``) is resolved to its
-    current slug, so the labels track renames. The result is sorted by current
-    slug and edge id for a stable, deterministic order.
+    ``kind='explicit'`` includes both user-owned rows and automatic ordinary
+    leaf-chain rows. Legacy ``kind='implicit'`` rows are not shown as
+    ``>needs:`` labels. Each target id (``to_id``) is resolved to its current
+    slug, so the labels track renames. The result is sorted by current slug and
+    edge id for a stable, deterministic order.
 
     Args:
         conn: Open connection (within the caller's transaction).
@@ -245,7 +247,9 @@ def explicit_needs_edges(
     """
     rows = conn.execute(
         """
-        SELECT dep.id AS id, target.slug AS slug
+        SELECT dep.id AS id,
+               target.slug AS slug,
+               dep.automatic_chain AS automatic_chain
         FROM dependencies AS dep
         JOIN items AS target ON target.id = dep.to_id
         WHERE dep.from_id = ? AND dep.kind = 'explicit'
@@ -253,16 +257,24 @@ def explicit_needs_edges(
         """,
         (from_id,),
     ).fetchall()
-    return [{"id": row["id"], "slug": row["slug"]} for row in rows]
+    return [
+        {
+            "id": row["id"],
+            "slug": row["slug"],
+            "automatic_chain": bool(row["automatic_chain"]),
+        }
+        for row in rows
+    ]
 
 
 def explicit_needs_slugs(conn: sqlite3.Connection, from_id: str) -> list[str]:
-    """Return the current slugs of ``from_id``'s explicit dependency targets.
+    """Return the current slugs of ``from_id``'s visible dependency targets.
 
-    Only ``kind='explicit'`` edges are considered; legacy implicit rows are not
-    shown as ``>needs:`` labels. Each target id (``to_id``) is resolved to its
-    current slug, so the labels track renames. The result is sorted by current
-    slug and edge id for a stable, deterministic order.
+    ``kind='explicit'`` includes both user-owned rows and automatic ordinary
+    leaf-chain rows. Legacy implicit rows are not shown as ``>needs:`` labels.
+    Each target id (``to_id``) is resolved to its current slug, so the labels
+    track renames. The result is sorted by current slug and edge id for a
+    stable, deterministic order.
 
     Args:
         conn: Open connection (within the caller's transaction).
@@ -395,6 +407,7 @@ def reparent_item(
     *,
     after_id: str | None = None,
     as_first_child: bool = False,
+    preserve_automatic_edges: Iterable[tuple[str, str]] = (),
 ) -> None:
     """Reparent ``item_id`` under ``new_parent_id`` and clean affected groups.
 
@@ -416,11 +429,10 @@ def reparent_item(
     the destination group's existing membership (which excludes the still-moving
     item) drives the placement, then the row's ``parent_id`` and ``sort_order``
     are written together. Finally both the source group (the item left) and the
-    destination group (the item joined) run legacy implicit-edge cleanup via
-    :func:`services.graph.regenerate_groups`. Explicit edges and comments are
-    untouched. The two parents may be equal (a pure reorder);
-    :func:`~services.graph.regenerate_groups` deduplicates, and ``None`` (the
-    root group) is a valid distinct key.
+    destination group (the item joined) repair automatic chain edges. User-owned
+    explicit edges and comments are untouched. ``preserve_automatic_edges`` is
+    used only by dependency-driven same-section insertion to keep the target's
+    former automatic successor edge attached to the same target.
 
     Args:
         conn: Open connection (within the caller's transaction).
@@ -430,6 +442,8 @@ def reparent_item(
             ``as_first_child`` is set); ``None`` appends at the group's end.
         as_first_child: Place the item first in the destination group instead of
             after ``after_id``.
+        preserve_automatic_edges: Automatic ``(from_id, to_id)`` pairs to keep
+            while repairing the destination group.
     """
     # Imported here (not at module top) to avoid a circular import: services.graph
     # imports nothing from this module, but keeping the dependency one-directional
@@ -440,6 +454,20 @@ def reparent_item(
         "SELECT parent_id FROM items WHERE id = ?", (item_id,)
     ).fetchone()
     old_parent_id = old_row["parent_id"] if old_row is not None else None
+    old_parent_group_id = (
+        conn.execute(
+            "SELECT parent_id FROM items WHERE id = ?", (old_parent_id,)
+        ).fetchone()
+        if old_parent_id is not None
+        else None
+    )
+    new_parent_group_id = (
+        conn.execute(
+            "SELECT parent_id FROM items WHERE id = ?", (new_parent_id,)
+        ).fetchone()
+        if new_parent_id is not None
+        else None
+    )
 
     if as_first_child:
         new_sort_order = compute_first_child_sort_order(conn, new_parent_id)
@@ -451,6 +479,24 @@ def reparent_item(
         (new_parent_id, new_sort_order, item_id),
     )
 
-    # Clean both the group the item left and the group it joined (deduplicated
-    # if equal). Explicit dependencies are preserved.
-    graph.regenerate_groups(conn, (old_parent_id, new_parent_id))
+    # Repair the child group the item left/joined, plus the sibling groups of
+    # the old/new parents because those parents may have changed leaf/container
+    # status. If this is a pure reorder, run that group once with preservation.
+    parent_groups = [
+        old_parent_id,
+        new_parent_id,
+        old_parent_group_id["parent_id"] if old_parent_group_id is not None else None,
+        new_parent_group_id["parent_id"] if new_parent_group_id is not None else None,
+    ]
+    seen: set[str | None] = set()
+    for parent_id in parent_groups:
+        if parent_id in seen:
+            continue
+        seen.add(parent_id)
+        graph.regenerate_group(
+            conn,
+            parent_id,
+            preserve_automatic_edges=(
+                preserve_automatic_edges if parent_id == new_parent_id else ()
+            ),
+        )

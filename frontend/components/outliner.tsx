@@ -139,6 +139,16 @@ type PendingDependencyRemoval =
 
 const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
 
+type PreservedAutomaticEdge = {
+  fromId: string
+  toId: string
+}
+
+type SameSectionLowerLeafDependencyPlacement = {
+  parentId: string
+  preservedAutomaticEdge?: PreservedAutomaticEdge
+}
+
 type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
 }
@@ -390,6 +400,202 @@ function localChildrenByParent(items: readonly TreeItem[]) {
   return children
 }
 
+function automaticDependencyId(fromId: string, toId: string): string {
+  return `auto-chain-${fromId}-${toId}`
+}
+
+function reconcileLocalAutomaticDependencies(
+  items: readonly TreeItem[],
+  parentIds?: ReadonlySet<string | null> | readonly (string | null)[],
+  preserveAutomaticEdges: readonly PreservedAutomaticEdge[] = []
+): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const affectedParentIds =
+    parentIds === undefined
+      ? new Set(children.keys())
+      : new Set(parentIds instanceof Set ? parentIds.values() : parentIds)
+  const desiredTargets = new Map<string, TreeItem>()
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+
+  function isLeaf(item: TreeItem): boolean {
+    return (children.get(item.id) ?? []).length === 0
+  }
+
+  for (const parentId of affectedParentIds) {
+    if (parentId === null) {
+      continue
+    }
+    const siblings = children.get(parentId) ?? []
+    const leafSiblings = siblings.filter((sibling) => isLeaf(sibling))
+    for (let index = 1; index < leafSiblings.length; index += 1) {
+      const dependent = leafSiblings[index]
+      const target = leafSiblings[index - 1]
+      if (dependent && target) {
+        desiredTargets.set(dependent.id, target)
+      }
+    }
+  }
+
+  for (const edge of preserveAutomaticEdges) {
+    const dependent = itemsById.get(edge.fromId)
+    const target = itemsById.get(edge.toId)
+    if (
+      dependent &&
+      target &&
+      dependent.parent_id !== null &&
+      dependent.parent_id === target.parent_id &&
+      affectedParentIds.has(dependent.parent_id) &&
+      isLeaf(dependent) &&
+      isLeaf(target)
+    ) {
+      desiredTargets.set(dependent.id, target)
+    }
+  }
+
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (!affectedParentIds.has(item.parent_id)) {
+        return item
+      }
+
+      const userEdges = item.needs_edges.filter(
+        (edge) => edge.automatic_chain !== true
+      )
+      const target = desiredTargets.get(item.id)
+      const nextEdges =
+        target && !userEdges.some((edge) => edge.slug === target.slug)
+          ? sortDependencyEdges([
+              ...userEdges,
+              {
+                id: automaticDependencyId(item.id, target.id),
+                slug: target.slug,
+                automatic_chain: true,
+              },
+            ])
+          : sortDependencyEdges(userEdges)
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
+function parentGroupId(
+  items: readonly TreeItem[],
+  parentId: string | null
+): string | null {
+  if (parentId === null) {
+    return null
+  }
+  return items.find((item) => item.id === parentId)?.parent_id ?? null
+}
+
+function automaticGroupsForCreatedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): Set<string | null> {
+  const groups = new Set<string | null>([savedItem.parent_id])
+  groups.add(parentGroupId(items, savedItem.parent_id))
+  return groups
+}
+
+function automaticGroupsForStructuralSavedItem(
+  currentItems: readonly TreeItem[],
+  mergedItems: readonly TreeItem[],
+  savedItem: Item
+): Set<string | null> {
+  const existing = currentItems.find((item) => item.id === savedItem.id)
+  const oldParentId = existing?.parent_id ?? savedItem.parent_id
+  const newParentId = savedItem.parent_id
+  const groups = new Set<string | null>([oldParentId, newParentId])
+  groups.add(parentGroupId(currentItems, oldParentId))
+  groups.add(parentGroupId(mergedItems, newParentId))
+  return groups
+}
+
+function sameSectionLowerLeafDependencyPlacement(
+  items: readonly TreeItem[],
+  fromId: string,
+  toId: string
+): SameSectionLowerLeafDependencyPlacement | null {
+  const children = localChildrenByParent(items)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const source = itemsById.get(fromId)
+  const target = itemsById.get(toId)
+  if (
+    !source ||
+    !target ||
+    source.parent_id === null ||
+    source.parent_id !== target.parent_id ||
+    (children.get(source.id) ?? []).length > 0 ||
+    (children.get(target.id) ?? []).length > 0
+  ) {
+    return null
+  }
+
+  const leafSiblings = (children.get(source.parent_id) ?? []).filter(
+    (sibling) => (children.get(sibling.id) ?? []).length === 0
+  )
+  const sourceIndex = leafSiblings.findIndex((sibling) => sibling.id === fromId)
+  const targetIndex = leafSiblings.findIndex((sibling) => sibling.id === toId)
+  if (sourceIndex < 0 || targetIndex <= sourceIndex) {
+    return null
+  }
+
+  const targetNext = leafSiblings[targetIndex + 1]
+  const preservedAutomaticEdge =
+    targetNext &&
+    targetNext.needs_edges.some(
+      (edge) => edge.automatic_chain === true && edge.slug === target.slug
+    )
+      ? { fromId: targetNext.id, toId: target.id }
+      : undefined
+  return {
+    parentId: source.parent_id,
+    preservedAutomaticEdge,
+  }
+}
+
+function moveLocalSiblingAfter(
+  items: readonly TreeItem[],
+  sourceId: string,
+  targetId: string
+): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const source = itemsById.get(sourceId)
+  const target = itemsById.get(targetId)
+  if (!source || !target || source.parent_id !== target.parent_id) {
+    return [...items]
+  }
+
+  const siblings = children.get(target.parent_id) ?? []
+  const remainingSiblings = siblings.filter(
+    (sibling) => sibling.id !== sourceId
+  )
+  const targetIndex = remainingSiblings.findIndex(
+    (sibling) => sibling.id === targetId
+  )
+  if (targetIndex < 0) {
+    return [...items]
+  }
+
+  const reorderedSiblings = [
+    ...remainingSiblings.slice(0, targetIndex + 1),
+    { ...source, parent_id: target.parent_id },
+    ...remainingSiblings.slice(targetIndex + 1),
+  ]
+  const rewrittenSiblings = new Map(
+    reorderedSiblings.map((sibling, index) => [
+      sibling.id,
+      { ...sibling, sort_order: index + 1 },
+    ])
+  )
+  return items.map((item) => rewrittenSiblings.get(item.id) ?? item)
+}
+
 function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
   const children = localChildrenByParent(items)
   const byId = new Map(items.map((item) => [item.id, item]))
@@ -445,16 +651,6 @@ function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
       }
     }
 
-    if (item.parent_id !== null && isLeaf(item.id)) {
-      const siblingLeaves = (children.get(item.parent_id) ?? []).filter(
-        (sibling) => isLeaf(sibling.id)
-      )
-      const index = siblingLeaves.findIndex((sibling) => sibling.id === item.id)
-      const previous = index > 0 ? siblingLeaves[index - 1] : null
-      if (previous && !seen.has(previous.id)) {
-        targetIds.push(previous.id)
-      }
-    }
     return targetIds
   }
 
@@ -513,12 +709,16 @@ function appendSavedItem(
   if (items.some((item) => item.id === savedItem.id)) {
     return mergeSavedItem(items, savedItem)
   }
-  return recomputeLocalWorkFlags([...items, treeItemFromSavedItem(savedItem)])
+  const nextItems = [...items, treeItemFromSavedItem(savedItem)]
+  return reconcileLocalAutomaticDependencies(
+    nextItems,
+    automaticGroupsForCreatedItem(nextItems, savedItem)
+  )
 }
 
 function sortDependencyEdges(
-  edges: readonly { id: string; slug: string }[]
-): { id: string; slug: string }[] {
+  edges: readonly { id: string; slug: string; automatic_chain?: boolean }[]
+): { id: string; slug: string; automatic_chain?: boolean }[] {
   return [...edges].sort(
     (a, b) => a.slug.localeCompare(b.slug) || a.id.localeCompare(b.id)
   )
@@ -533,6 +733,26 @@ function appendLocalDependency(
     return recomputeLocalWorkFlags(items)
   }
 
+  const lowerLeafPlacement = sameSectionLowerLeafDependencyPlacement(
+    items,
+    dependency.from_id,
+    dependency.to_id
+  )
+  if (lowerLeafPlacement) {
+    const movedItems = moveLocalSiblingAfter(
+      items,
+      dependency.from_id,
+      dependency.to_id
+    )
+    return reconcileLocalAutomaticDependencies(
+      movedItems,
+      [lowerLeafPlacement.parentId],
+      lowerLeafPlacement.preservedAutomaticEdge
+        ? [lowerLeafPlacement.preservedAutomaticEdge]
+        : []
+    )
+  }
+
   return recomputeLocalWorkFlags(
     items.map((item) => {
       if (item.id !== dependency.from_id) {
@@ -545,7 +765,13 @@ function appendLocalDependency(
         ? item.needs_edges
         : sortDependencyEdges([
             ...item.needs_edges,
-            { id: dependency.id, slug: target.slug },
+            {
+              id: dependency.id,
+              slug: target.slug,
+              automatic_chain: dependency.id.startsWith('auto-chain-')
+                ? true
+                : undefined,
+            },
           ])
       return {
         ...item,
@@ -1317,6 +1543,20 @@ export function Outliner({
     setLocalItems((current) => appendSavedItem(current, savedItem))
   }, [])
 
+  const mergeStructuralReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => {
+      const merged = mergeSavedItem(current, savedItem)
+      return reconcileLocalAutomaticDependencies(
+        merged,
+        automaticGroupsForStructuralSavedItem(current, merged, savedItem)
+      )
+    })
+  }, [])
+
   const activeItems = React.useMemo(
     () => localItems.filter((item) => !locallyDeletedItemIds.has(item.id)),
     [localItems, locallyDeletedItemIds]
@@ -1394,12 +1634,24 @@ export function Outliner({
         appendReturnedItem(savedItem)
         return savedItem
       },
-      indentItem,
-      outdentItem,
+      indentItem: async (itemId) => {
+        const savedItem = await indentItem(itemId)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
+      outdentItem: async (itemId) => {
+        const savedItem = await outdentItem(itemId)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
       deleteItem,
-      moveItem,
+      moveItem: async (itemId, input) => {
+        const savedItem = await moveItem(itemId, input)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
     }),
-    [appendReturnedItem, mergeReturnedItem]
+    [appendReturnedItem, mergeReturnedItem, mergeStructuralReturnedItem]
   )
   const rows = React.useMemo(
     () =>

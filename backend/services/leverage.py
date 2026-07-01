@@ -9,19 +9,20 @@ An item is actionable iff ALL of:
 * it is a LEAF (has no children) -- containers are NEVER actionable;
 * it is NOT complete (its own state is not ``done``/``abandoned``);
 * ``blocked_external`` is false and its state is not externally waiting; and
-* EVERY dependency target attached to the item, any ancestor section, or the
-  live implicit section-item chain is complete. A section-level dependency
-  gates all leaves nested inside that section. Plain leaf items inside the same
-  non-root section also depend on the previous plain leaf by current sibling
-  order. A dependency on a container is satisfied only when the whole container
-  is done, using :func:`services.tree.is_complete`.
+* EVERY stored dependency target attached to the item or any ancestor section is
+  complete. A section-level dependency gates all leaves nested inside that
+  section. Automatic ordinary-leaf chain dependencies are persisted as rows, so
+  removing one through the UI removes it from this projection until a later
+  structural repair recreates the appropriate row. A dependency on a container
+  is satisfied only when the whole container is done, using
+  :func:`services.tree.is_complete`.
 
 Unblock leverage
 ----------------
 ``Downstream(L)`` is every open leaf whose own dependency edges, inherited
-ancestor-section dependency edges, or implicit section-item chain edges depend
-on ``L`` directly or transitively. ``blocked_external`` and external-waiting
-states exclude a leaf from actionability, but not from downstream membership.
+ancestor-section dependency edges depend on ``L`` directly or transitively.
+``blocked_external`` and external-waiting states exclude a leaf from
+actionability, but not from downstream membership.
 """
 
 from __future__ import annotations
@@ -227,19 +228,6 @@ class LeverageProjection:
             for scope_id in cls._self_and_ancestor_ids(item_rows, item_id):
                 _append_unique(targets, seen, stored_targets.get(scope_id, []))
             dependency_targets[item_id] = targets
-
-        for parent_id, child_ids in children_by_parent.items():
-            if parent_id is None:
-                continue
-            leaf_ids = [
-                child_id
-                for child_id in child_ids
-                if not children_by_parent.get(child_id)
-            ]
-            for previous_id, dependent_id in zip(leaf_ids, leaf_ids[1:]):
-                targets = dependency_targets[dependent_id]
-                if previous_id not in targets:
-                    targets.append(previous_id)
 
         return dependency_targets
 
@@ -449,9 +437,8 @@ def actionable_item_ids(conn: sqlite3.Connection) -> set[str]:
 def depends_on(conn: sqlite3.Connection, item_id: str, target_id: str) -> bool:
     """Return whether ``item_id`` effectively depends on ``target_id``.
 
-    The effective dependency set is the item's own explicit ``>needs:`` edges
-    plus dependency edges inherited from all ancestor sections and any live
-    implicit previous-leaf edge in its section.
+    The effective dependency set is the item's own stored ``>needs:`` edges plus
+    dependency edges inherited from all ancestor sections.
     """
     return build_projection(conn).depends_on(item_id, target_id)
 

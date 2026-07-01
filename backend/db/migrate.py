@@ -9,11 +9,14 @@ startup.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from db.connection import get_connection
+from services import graph
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+AUTOMATIC_CHAIN_MIGRATION_ID = "20260701_automatic_sibling_chain"
 
 
 def _read_schema() -> str:
@@ -47,6 +50,23 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         column="usage",
         definition="usage TEXT NOT NULL DEFAULT ''",
     )
+    _ensure_column(
+        conn,
+        table="dependencies",
+        column="automatic_chain",
+        definition="automatic_chain INTEGER NOT NULL DEFAULT 0",
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dependencies_auto_chain_from
+        ON dependencies(automatic_chain, from_id)
+        """
+    )
+    _run_once(
+        conn,
+        AUTOMATIC_CHAIN_MIGRATION_ID,
+        graph.backfill_automatic_sibling_chains,
+    )
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -62,6 +82,21 @@ def _ensure_column(
     if column in _columns(conn, table):
         return
     conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def _run_once(
+    conn: sqlite3.Connection,
+    migration_id: str,
+    callback: Callable[[sqlite3.Connection], None],
+) -> None:
+    """Run a data migration once, recording completion in ``schema_migrations``."""
+    existing = conn.execute(
+        "SELECT 1 FROM schema_migrations WHERE id = ?", (migration_id,)
+    ).fetchone()
+    if existing is not None:
+        return
+    callback(conn)
+    conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (migration_id,))
 
 
 def apply_migrations(db_path: Path | str | None = None) -> None:

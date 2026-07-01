@@ -37,8 +37,13 @@ CREATE TABLE IF NOT EXISTS dependencies (
   from_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   to_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   kind        TEXT NOT NULL,              -- 'explicit' in v1; 'implicit' legacy
+  automatic_chain INTEGER NOT NULL DEFAULT 0,
   UNIQUE (from_id, to_id)
 );  -- edge means: from_id depends on (needs) to_id
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id          TEXT PRIMARY KEY
+);
 
 CREATE TABLE IF NOT EXISTS comments (
   id          TEXT PRIMARY KEY,

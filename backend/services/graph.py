@@ -1,23 +1,19 @@
 """Dependency graph helpers and the shared cycle-rejection predicate.
 
 A dependency edge ``from_id -> to_id`` means "``from_id`` depends on (needs)
-``to_id``". Explicit user edges are stored in ``dependencies``. Plain leaf
-items inside the same non-root section also form a live implicit chain by
-current sibling order, but that chain is derived when evaluating graph
-semantics rather than persisted as rows. Root items and container siblings stay
-independent unless the user records an explicit ``>needs:`` edge.
-
-The ``dependencies.kind`` discriminator is retained for compatibility with the
-phase-1 schema and earlier phase work, but v1 creates user-authored
-``explicit`` edges only. Structural mutations call :func:`regenerate_group` to
-discard any stale ``implicit`` rows left by older code paths; the function
-deliberately does not write new edges from sibling order.
+``to_id``". User-authored dependencies and the automatic ordinary-leaf chain
+inside non-root sections are both persisted as ``kind='explicit'`` rows so the
+Details dependency UI can show and remove either kind. The storage-level
+``automatic_chain`` flag records ownership: structural repair may delete and
+recreate automatic rows, but it must never relabel or remove user rows.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+
+AutomaticEdge = tuple[str, str]
 
 
 def _child_ids_in_order(conn: sqlite3.Connection, parent_id: str | None) -> list[str]:
@@ -48,40 +44,60 @@ def _is_leaf(conn: sqlite3.Connection, item_id: str) -> bool:
     )
 
 
-def _implicit_previous_leaf_id(conn: sqlite3.Connection, item_id: str) -> str | None:
-    """Return the previous plain leaf in ``item_id``'s section, if any."""
-    row = conn.execute(
-        "SELECT parent_id FROM items WHERE id = ?", (item_id,)
-    ).fetchone()
-    if row is None or row["parent_id"] is None or not _is_leaf(conn, item_id):
-        return None
-
-    leaf_ids = [
+def _leaf_child_ids_in_order(
+    conn: sqlite3.Connection, parent_id: str | None
+) -> list[str]:
+    """Return ordinary leaf children of ``parent_id`` in sibling order."""
+    if parent_id is None:
+        return []
+    return [
         child_id
-        for child_id in _child_ids_in_order(conn, row["parent_id"])
+        for child_id in _child_ids_in_order(conn, parent_id)
         if _is_leaf(conn, child_id)
     ]
-    try:
-        index = leaf_ids.index(item_id)
-    except ValueError:
-        return None
-    return leaf_ids[index - 1] if index > 0 else None
 
 
-def _delete_group_implicit_edges(
-    conn: sqlite3.Connection, child_ids: list[str]
-) -> None:
-    """Delete stale implicit edges originating from one sibling group."""
-    if not child_ids:
-        return
-    placeholders = ",".join("?" for _ in child_ids)
-    conn.execute(
-        f"""
-        DELETE FROM dependencies
-        WHERE kind = 'implicit'
-          AND from_id IN ({placeholders})
+def _automatic_dependency_id(from_id: str, to_id: str) -> str:
+    """Return a deterministic id for a generated automatic chain edge."""
+    return f"auto-chain-{from_id}-{to_id}"
+
+
+def _dependency_exists(conn: sqlite3.Connection, from_id: str, to_id: str) -> bool:
+    """Return whether any dependency row already owns ``from_id -> to_id``."""
+    row = conn.execute(
+        "SELECT 1 FROM dependencies WHERE from_id = ? AND to_id = ?",
+        (from_id, to_id),
+    ).fetchone()
+    return row is not None
+
+
+def _automatic_dependency_exists(
+    conn: sqlite3.Connection, from_id: str, to_id: str
+) -> bool:
+    """Return whether ``from_id -> to_id`` is currently automatic-owned."""
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM dependencies
+        WHERE from_id = ? AND to_id = ? AND automatic_chain = 1
         """,
-        tuple(child_ids),
+        (from_id, to_id),
+    ).fetchone()
+    return row is not None
+
+
+def _insert_automatic_dependency(
+    conn: sqlite3.Connection, from_id: str, to_id: str
+) -> None:
+    """Insert an automatic explicit edge unless any row already owns the pair."""
+    if from_id == to_id or _dependency_exists(conn, from_id, to_id):
+        return
+    conn.execute(
+        """
+        INSERT INTO dependencies (id, from_id, to_id, kind, automatic_chain)
+        VALUES (?, ?, ?, 'explicit', 1)
+        """,
+        (_automatic_dependency_id(from_id, to_id), from_id, to_id),
     )
 
 
@@ -130,7 +146,7 @@ def _self_and_descendant_ids(conn: sqlite3.Connection, item_id: str) -> set[str]
 
 
 def _dependency_target_ids(conn: sqlite3.Connection, item_ids: list[str]) -> list[str]:
-    """Return explicit dependency targets originating from any supplied id."""
+    """Return stored dependency targets originating from any supplied id."""
     if not item_ids:
         return []
 
@@ -156,10 +172,6 @@ def _reachable_successor_ids(conn: sqlite3.Connection, item_id: str) -> set[str]
         successors.add(target_id)
         successors.update(_descendant_ids(conn, target_id))
 
-    implicit_target_id = _implicit_previous_leaf_id(conn, item_id)
-    if implicit_target_id is not None:
-        successors.add(implicit_target_id)
-
     return successors
 
 
@@ -168,9 +180,9 @@ def would_create_cycle(conn: sqlite3.Connection, from_id: str, to_id: str) -> bo
 
     True if ``from_id == to_id`` (a self-edge), or if ``to_id`` can already
     reach ``from_id`` or one of its descendants over the effective dependency
-    graph. Effective reachability includes explicit edges attached to the
-    current item or any ancestor section, and a reached container includes its
-    subtree because depending on a container waits for the whole container.
+    graph. Effective reachability includes stored edges attached to the current
+    item or any ancestor section, and a reached container includes its subtree
+    because depending on a container waits for the whole container.
     """
     if from_id == to_id:
         return True
@@ -196,14 +208,16 @@ def move_would_create_cycle(
     *,
     after_id: str | None = None,
     as_first_child: bool = False,
+    preserve_automatic_edges: Iterable[AutomaticEdge] = (),
 ) -> bool:
     """Return whether moving ``item_id`` would create a dependency cycle.
 
     The move is evaluated against the effective graph that would exist after
-    the structural change. Explicit dependency rows are preserved, inherited
+    the structural change. User-owned dependency rows are preserved, inherited
     section dependencies are recomputed through the prospective parent chain,
-    and plain leaf siblings inside non-root sections get prospective implicit
-    predecessor links from their new sibling order. No rows are written here.
+    and automatic sibling-chain rows are recalculated from the prospective
+    ordinary-leaf order. Existing automatic rows are ignored because structural
+    repair will delete and recreate them.
     """
     rows = {
         row["id"]: dict(row)
@@ -270,14 +284,20 @@ def move_would_create_cycle(
     def is_leaf_after(candidate_id: str) -> bool:
         return len(children_after.get(candidate_id, [])) == 0
 
-    implicit_targets_after: dict[str, set[str]] = {}
+    automatic_targets_after: dict[str, set[str]] = {}
+    preserved_by_source = {
+        from_id: to_id
+        for from_id, to_id in preserve_automatic_edges
+        if from_id in rows and to_id in rows
+    }
     for parent_id, child_ids in children_after.items():
         if parent_id is None:
             continue
         leaf_ids = [child_id for child_id in child_ids if is_leaf_after(child_id)]
         for previous_id, dependent_id in zip(leaf_ids, leaf_ids[1:]):
-            targets = implicit_targets_after.setdefault(dependent_id, set())
-            targets.add(previous_id)
+            target_id = preserved_by_source.get(dependent_id, previous_id)
+            targets = automatic_targets_after.setdefault(dependent_id, set())
+            targets.add(target_id)
 
     def dependency_targets(item_ids: list[str]) -> set[str]:
         if not item_ids:
@@ -287,7 +307,7 @@ def move_would_create_cycle(
             f"""
             SELECT DISTINCT to_id
             FROM dependencies
-            WHERE from_id IN ({placeholders})
+            WHERE automatic_chain = 0 AND from_id IN ({placeholders})
             """,
             tuple(item_ids),
         ).fetchall()
@@ -298,7 +318,7 @@ def move_would_create_cycle(
         for target_id in dependency_targets(self_and_ancestors_after(candidate_id)):
             successors.add(target_id)
             successors.update(descendants_after(target_id))
-        successors.update(implicit_targets_after.get(candidate_id, set()))
+        successors.update(automatic_targets_after.get(candidate_id, set()))
         return successors
 
     for start_id in rows:
@@ -316,19 +336,43 @@ def move_would_create_cycle(
     return False
 
 
-def regenerate_group(conn: sqlite3.Connection, parent_id: str | None) -> None:
-    """Discard stale generated edges for one parent's sibling group.
+def _automatic_edges_for_group(
+    conn: sqlite3.Connection,
+    parent_id: str | None,
+    preserve_automatic_edges: Iterable[AutomaticEdge] = (),
+) -> list[AutomaticEdge]:
+    """Return the automatic chain edges wanted for one current sibling group."""
+    if parent_id is None:
+        return []
 
-    Structural edits preserve explicit dependencies and do not derive new
-    dependencies from sibling order. This function is idempotent and safe to
-    call after create/delete/move operations; it only removes legacy
-    ``kind='implicit'`` rows originating from members of the affected group.
+    leaf_ids = _leaf_child_ids_in_order(conn, parent_id)
+    desired_by_source = {
+        dependent_id: previous_id
+        for previous_id, dependent_id in zip(leaf_ids, leaf_ids[1:])
+    }
+    leaf_set = set(leaf_ids)
+    for from_id, to_id in preserve_automatic_edges:
+        if from_id in leaf_set and to_id in leaf_set:
+            desired_by_source[from_id] = to_id
+    return list(desired_by_source.items())
+
+
+def regenerate_group(
+    conn: sqlite3.Connection,
+    parent_id: str | None,
+    *,
+    preserve_automatic_edges: Iterable[AutomaticEdge] = (),
+) -> None:
+    """Recreate automatic ordinary-leaf edges for one sibling group.
+
+    Only rows with ``automatic_chain=1`` are removed. Any existing user-owned
+    row for the same pair is preserved and prevents a duplicate automatic row.
     """
     if parent_id is None:
         conn.execute(
             """
             DELETE FROM dependencies
-            WHERE kind = 'implicit'
+            WHERE automatic_chain = 1
               AND from_id IN (
                 SELECT id FROM items WHERE parent_id IS NULL
               )
@@ -339,19 +383,25 @@ def regenerate_group(conn: sqlite3.Connection, parent_id: str | None) -> None:
     conn.execute(
         """
         DELETE FROM dependencies
-        WHERE kind = 'implicit'
+        WHERE automatic_chain = 1
           AND from_id IN (
             SELECT id FROM items WHERE parent_id = ?
           )
         """,
         (parent_id,),
     )
+    for from_id, to_id in _automatic_edges_for_group(
+        conn,
+        parent_id,
+        preserve_automatic_edges,
+    ):
+        _insert_automatic_dependency(conn, from_id, to_id)
 
 
 def regenerate_groups(
     conn: sqlite3.Connection, parent_ids: Iterable[str | None]
 ) -> None:
-    """Run legacy implicit-edge cleanup for several sibling groups."""
+    """Recreate automatic edges for several sibling groups."""
     seen: set[str | None] = set()
     for parent_id in parent_ids:
         if parent_id in seen:
@@ -361,5 +411,76 @@ def regenerate_groups(
 
 
 def regenerate_sibling_chain(conn: sqlite3.Connection, parent_id: str | None) -> None:
-    """Deprecated alias for :func:`regenerate_group` (legacy cleanup only)."""
+    """Deprecated alias for :func:`regenerate_group`."""
     regenerate_group(conn, parent_id)
+
+
+def automatic_preserve_edge_for_lower_target(
+    conn: sqlite3.Connection, from_id: str, to_id: str
+) -> AutomaticEdge | None:
+    """Return the target successor edge to preserve for a lower-target insert."""
+    placement = same_section_lower_leaf_dependency(conn, from_id, to_id)
+    if placement is None or placement["target_next_id"] is None:
+        return None
+    target_next_id = placement["target_next_id"]
+    if _automatic_dependency_exists(conn, target_next_id, to_id):
+        return (target_next_id, to_id)
+    return None
+
+
+def same_section_lower_leaf_dependency(
+    conn: sqlite3.Connection, from_id: str, to_id: str
+) -> dict[str, str | None] | None:
+    """Return placement info if ``to_id`` is a lower ordinary leaf sibling."""
+    rows = conn.execute(
+        """
+        SELECT id, parent_id
+        FROM items
+        WHERE id IN (?, ?)
+        """,
+        (from_id, to_id),
+    ).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    source = by_id.get(from_id)
+    target = by_id.get(to_id)
+    if (
+        source is None
+        or target is None
+        or source["parent_id"] is None
+        or source["parent_id"] != target["parent_id"]
+        or not _is_leaf(conn, from_id)
+        or not _is_leaf(conn, to_id)
+    ):
+        return None
+
+    leaf_ids = _leaf_child_ids_in_order(conn, source["parent_id"])
+    try:
+        source_index = leaf_ids.index(from_id)
+        target_index = leaf_ids.index(to_id)
+    except ValueError:
+        return None
+    if target_index <= source_index:
+        return None
+
+    target_next_id = (
+        leaf_ids[target_index + 1] if target_index + 1 < len(leaf_ids) else None
+    )
+    return {
+        "parent_id": source["parent_id"],
+        "target_next_id": target_next_id,
+    }
+
+
+def backfill_automatic_sibling_chains(conn: sqlite3.Connection) -> None:
+    """One-off upgrade: persist automatic edges for existing section leaves."""
+    conn.execute("DELETE FROM dependencies WHERE kind = 'implicit'")
+    parent_rows = conn.execute(
+        """
+        SELECT DISTINCT parent_id
+        FROM items
+        WHERE parent_id IS NOT NULL
+        ORDER BY parent_id
+        """
+    ).fetchall()
+    for row in parent_rows:
+        regenerate_group(conn, row["parent_id"])

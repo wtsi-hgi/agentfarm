@@ -109,6 +109,7 @@ export const treeDependencyEdgeSchema = z
   .object({
     id: z.string(),
     slug: z.string(),
+    automatic_chain: z.boolean().optional(),
   })
   .strict()
 

@@ -110,6 +110,16 @@ function outlinerItem(container: ParentNode, itemId: string) {
   return element
 }
 
+function itemInput(container: ParentNode, itemId: string) {
+  const input = outlinerItem(container, itemId).querySelector(
+    'input[aria-label="Item text"]'
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input: ${itemId}`)
+  }
+  return input
+}
+
 function button(element: ParentNode, ariaLabel: string) {
   const candidate = element.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(candidate instanceof HTMLButtonElement)) {
@@ -244,7 +254,7 @@ function LocalReorderHarness() {
   return React.createElement(Outliner, { items })
 }
 
-async function click(target: HTMLButtonElement) {
+async function click(target: HTMLElement) {
   await act(async () => {
     target.click()
   })
@@ -502,6 +512,190 @@ describe('Outliner reorder controls', () => {
     })
     expect(detailsPanel.textContent).toContain('Blocking section')
     expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('moves a leaf below a lower same-section dependency target immediately', async () => {
+    actionMocks.addDependency.mockResolvedValue({
+      id: 'auto-chain-a-c',
+      from_id: 'a',
+      to_id: 'c',
+      kind: 'explicit',
+    })
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'a',
+        title: 'A',
+        slug: 'a',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'b',
+        title: 'B',
+        slug: 'b',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['a'],
+        needs_edges: [
+          { id: 'auto-chain-b-a', slug: 'a', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'c',
+        title: 'C',
+        slug: 'c',
+        parent_id: 'section',
+        sort_order: 3,
+        needs: ['b'],
+        needs_edges: [
+          { id: 'auto-chain-c-b', slug: 'b', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'd',
+        title: 'D',
+        slug: 'd',
+        parent_id: 'section',
+        sort_order: 4,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-d-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+    ])
+    const transfer = dataTransfer()
+
+    await click(itemInput(container, 'a'))
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'c')),
+      'dragstart',
+      transfer
+    )
+    await dispatchDrag(
+      labelledElement(getDetailsPanel(container), 'Add dependency'),
+      'dragover',
+      transfer
+    )
+    await dispatchDrag(
+      labelledElement(getDetailsPanel(container), 'Add dependency'),
+      'drop',
+      transfer
+    )
+
+    expect(actionMocks.addDependency).toHaveBeenCalledWith({
+      from_id: 'a',
+      to_id: 'c',
+    })
+    expect(renderedItemIds(container)).toEqual(['section', 'b', 'c', 'a', 'd'])
+    await click(itemInput(container, 'd'))
+    expect(getDetailsPanel(container).textContent).toContain('>c')
+  })
+
+  it('does not resurrect a removed automatic dependency in an untouched section', async () => {
+    actionMocks.createItem.mockResolvedValue(
+      item({
+        id: 'e',
+        title: 'E',
+        slug: 'e',
+        parent_id: 'section-two',
+        sort_order: 1.5,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-e-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      })
+    )
+    actionMocks.deleteDependency.mockResolvedValue({
+      deleted: true,
+      id: 'auto-chain-b-a',
+    })
+    const container = await render([
+      item({
+        id: 'section-one',
+        title: 'Section one',
+        slug: 'section-one',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'a',
+        title: 'A',
+        slug: 'a',
+        parent_id: 'section-one',
+        sort_order: 1,
+      }),
+      item({
+        id: 'b',
+        title: 'B',
+        slug: 'b',
+        parent_id: 'section-one',
+        sort_order: 2,
+        needs: ['a'],
+        needs_edges: [
+          { id: 'auto-chain-b-a', slug: 'a', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'section-two',
+        title: 'Section two',
+        slug: 'section-two',
+        sort_order: 2,
+        actionable: false,
+      }),
+      item({
+        id: 'c',
+        title: 'C',
+        slug: 'c',
+        parent_id: 'section-two',
+        sort_order: 1,
+      }),
+      item({
+        id: 'd',
+        title: 'D',
+        slug: 'd',
+        parent_id: 'section-two',
+        sort_order: 2,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-d-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+    ])
+
+    await click(itemInput(container, 'b'))
+    await click(button(getDetailsPanel(container), 'Edit dependencies'))
+    await click(button(getDetailsPanel(container), 'Remove dependency A'))
+    await click(dialogButton('Confirm deletion'))
+
+    expect(getDetailsPanel(container).textContent).toContain(
+      'No explicit dependencies'
+    )
+
+    await click(button(outlinerItem(container, 'c'), 'Add sibling'))
+    await click(itemInput(container, 'b'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: 'section-two',
+      after_id: 'c',
+    })
+    expect(getDetailsPanel(container).textContent).toContain(
+      'No explicit dependencies'
+    )
+    expect(getDetailsPanel(container).textContent).not.toContain('>a')
   })
 
   it('reorders upward from the visible drag handle and persists the first-position move', async () => {

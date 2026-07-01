@@ -178,7 +178,7 @@ class DependencyCreate(BaseModel):
 
 
 class DependencyOut(BaseModel):
-    """Response model for an explicit dependency edge (spec: D1)."""
+    """Response model for a dependency edge visible in the Details UI."""
 
     id: str
     from_id: str
@@ -282,18 +282,19 @@ class TreeDependencyEdgeOut(BaseModel):
 
     id: str
     slug: str
+    automatic_chain: bool = False
 
 
 class TreeItemOut(ItemOut):
     """A single item as returned by GET ``/tree`` (spec: A3, extended by H1).
 
     Carries every :class:`ItemOut` field plus ``needs``: the *current* slugs of
-    this item's EXPLICIT (``>needs:``) dependency targets, resolved live from
-    each edge's ``to_id`` so a renamed target's label updates automatically
-    (Core domain rules / A3). Implicit (tree-derived) edges are not surfaced as
-    needs labels. ``needs_edges`` carries the matching explicit dependency edge
-    ids so clients that parse row text can reconcile removals through the
-    supported delete endpoint without guessing.
+    this item's visible ``>needs:`` dependency targets, resolved live from each
+    edge's ``to_id`` so a renamed target's label updates automatically (Core
+    domain rules / A3). Automatic ordinary-leaf chain rows are included because
+    they are persisted as removable explicit dependencies. ``needs_edges``
+    carries the matching dependency edge ids so clients that parse row text can
+    reconcile removals through the supported delete endpoint without guessing.
 
     ``actionable`` is the current work-now predicate from
     :func:`services.leverage.is_actionable`; ``complete`` is the recursive

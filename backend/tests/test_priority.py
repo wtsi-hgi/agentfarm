@@ -35,6 +35,15 @@ async def _post_dependency(client: AsyncClient, body: dict):
     return await client.post("/api/v1/dependencies", json=body)
 
 
+async def _ensure_dependency(client: AsyncClient, body: dict) -> None:
+    """Ensure an edge exists, accepting automatic-chain duplicates."""
+    created = await _post_dependency(client, body)
+    if created.status_code == 200:
+        return
+    assert created.status_code == 409
+    assert created.json() == {"detail": "dependency already exists"}
+
+
 async def _patch(client: AsyncClient, item_id: str, body: dict):
     return await client.patch(f"/api/v1/items/{item_id}", json=body)
 
@@ -224,8 +233,7 @@ async def _build_e1_setup(client: AsyncClient) -> dict[str, str]:
         {"from_id": ids["B3"], "to_id": ids["B2"]},
         {"from_id": ids["G2"], "to_id": ids["G1"]},
     ):
-        created = await _post_dependency(client, dependency)
-        assert created.status_code == 200
+        await _ensure_dependency(client, dependency)
     return ids
 
 
@@ -490,8 +498,7 @@ async def test_priority_weights_only_prompt_agent_downstream_double_e2(
             {"from_id": ids["H2"], "to_id": ids["H1"]},
             {"from_id": ids["I2"], "to_id": ids["I1"]},
         ):
-            created = await _post_dependency(client, dependency)
-            assert created.status_code == 200
+            await _ensure_dependency(client, dependency)
 
         response = await _priority(client)
 
@@ -714,12 +721,11 @@ async def test_downstream_excludes_completed_leaf_e4(fresh_db) -> None:
                 "state": "done",
             },
         )
-        created = await _post_dependency(
+        await _ensure_dependency(
             client,
             {"from_id": k2.json()["id"], "to_id": k1.json()["id"]},
         )
 
-    assert created.status_code == 200
     assert _downstream(fresh_db, k1.json()["id"]) == set()
     assert _score(fresh_db, k1.json()["id"]) == 0
 
@@ -759,8 +765,7 @@ async def test_downstream_follows_transitive_leaf_chain_e4(fresh_db) -> None:
             {"from_id": m2.json()["id"], "to_id": m1.json()["id"]},
             {"from_id": m3.json()["id"], "to_id": m2.json()["id"]},
         ):
-            created = await _post_dependency(client, dependency)
-            assert created.status_code == 200
+            await _ensure_dependency(client, dependency)
 
     assert _downstream(fresh_db, m1.json()["id"]) == {
         m2.json()["id"],
