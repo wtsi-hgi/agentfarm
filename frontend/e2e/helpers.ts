@@ -88,6 +88,33 @@ export async function createItem(
   return JSON.parse(body) as { id: string; title: string }
 }
 
+export async function deleteBackendItem(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string
+): Promise<void> {
+  const response = await request.delete(
+    `${backendBaseUrl}/api/v1/items/${itemId}`,
+    {
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const body = await response.text()
+  expect(response.ok() || response.status() === 404, body).toBeTruthy()
+}
+
+export async function deleteBackendItems(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemIds: readonly string[]
+): Promise<void> {
+  for (const itemId of [...itemIds].reverse()) {
+    await deleteBackendItem(request, sessionToken, itemId)
+  }
+}
+
 export async function gotoPath(page: Page, pathname: string) {
   let lastError: unknown = null
 

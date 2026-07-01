@@ -28,12 +28,6 @@ import { DestructiveConfirmationDialog } from '@/components/destructive-confirma
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import type { Comment, ItemActivity, TreeItem } from '@/lib/contracts'
 import { STATE_LABELS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
@@ -554,24 +548,18 @@ export function CommentsPanel({
     children: React.ReactNode
   }) {
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              disabled={disabled}
-              aria-label={label}
-              className="size-8 shrink-0"
-              onClick={onClick}
-            >
-              {children}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{label}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        disabled={disabled}
+        aria-label={label}
+        title={label}
+        className="size-8 shrink-0"
+        onClick={onClick}
+      >
+        {children}
+      </Button>
     )
   }
 

@@ -5,7 +5,7 @@ import {
   type Page,
 } from '@playwright/test'
 
-import { gotoPath, signInAs } from './helpers'
+import { deleteBackendItems, gotoPath, signInAs } from './helpers'
 
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
@@ -13,6 +13,10 @@ const backendBaseUrl =
 type ItemSummary = {
   id: string
   title: string
+}
+
+type TreeItemSummary = ItemSummary & {
+  parent_id: string | null
 }
 
 type VisibleItem = ItemSummary
@@ -56,6 +60,41 @@ async function patchItem(
   )
   const body = await response.text()
   expect(response.ok(), body).toBeTruthy()
+}
+
+async function backendTreeItems(
+  request: APIRequestContext,
+  sessionToken: string
+): Promise<TreeItemSummary[]> {
+  const response = await request.get(`${backendBaseUrl}/api/v1/tree`, {
+    headers: {
+      'x-agentfarm-session': sessionToken,
+    },
+  })
+  const body = await response.text()
+  expect(response.ok(), body).toBeTruthy()
+  return JSON.parse(body) as TreeItemSummary[]
+}
+
+async function waitForNewBackendItem(
+  request: APIRequestContext,
+  sessionToken: string,
+  knownItemIds: ReadonlySet<string>
+): Promise<TreeItemSummary | undefined> {
+  const deadline = Date.now() + 3_000
+  let latestItem: TreeItemSummary | undefined
+
+  while (Date.now() < deadline) {
+    latestItem = (await backendTreeItems(request, sessionToken)).find(
+      (item) => !knownItemIds.has(item.id)
+    )
+    if (latestItem) {
+      return latestItem
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  return latestItem
 }
 
 async function visibleItems(page: Page): Promise<VisibleItem[]> {
@@ -104,76 +143,116 @@ test.describe('root sibling creation order', () => {
   }, testInfo) => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Bug 2 root sibling ${Date.now()}`
-    const priorityRoot = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} priority anchor`,
-    })
-    const root = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} completed root`,
-    })
-    const completedChild = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} completed child`,
-      parent_id: root.id,
-    })
-    await patchItem(request, sessionToken, completedChild.id, { state: 'done' })
+    const cleanupItemIds: string[] = []
+    let createdBackendItemPromise: Promise<TreeItemSummary | undefined> | null =
+      null
 
-    await gotoPath(page, '/')
-
-    await expect
-      .poll(async () =>
-        orderedTitlesFor(await visibleItems(page), [
-          priorityRoot.id,
-          root.id,
-          completedChild.id,
-        ])
-      )
-      .toEqual([priorityRoot.title, root.title, completedChild.title])
-
-    const beforeCreateItems = await visibleItems(page)
-    const beforeCreateIds = new Set(beforeCreateItems.map((item) => item.id))
-    const createResponsePromise = page.waitForResponse((response) => {
-      const request = response.request()
-      return (
-        request.method() === 'POST' && new URL(response.url()).pathname === '/'
-      )
-    })
-    await page
-      .locator(`[data-outliner-item-id="${root.id}"]`)
-      .getByRole('button', { name: 'Add sibling' })
-      .click()
-    expect((await createResponsePromise).status()).toBe(200)
-
-    const afterCreateItems = await waitForNewVisibleItem(page, beforeCreateIds)
-    const createdItem = afterCreateItems.find(
-      (item) => !beforeCreateIds.has(item.id)
-    )
-    expect(createdItem?.title).toBe('New item')
-
-    if (
-      createdItem &&
-      afterCreateItems.findIndex((item) => item.id === createdItem.id) <
-        afterCreateItems.findIndex((item) => item.id === root.id)
-    ) {
-      await page.screenshot({
-        path: testInfo.outputPath('root-sibling-order-wrong.png'),
-        fullPage: true,
+    try {
+      const priorityRoot = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} priority anchor`,
       })
+      cleanupItemIds.push(priorityRoot.id)
+      const root = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} completed root`,
+      })
+      cleanupItemIds.push(root.id)
+      const completedChild = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} completed child`,
+        parent_id: root.id,
+      })
+      await patchItem(request, sessionToken, completedChild.id, {
+        state: 'done',
+      })
+
+      await gotoPath(page, '/')
+
+      await expect
+        .poll(async () =>
+          orderedTitlesFor(await visibleItems(page), [
+            priorityRoot.id,
+            root.id,
+            completedChild.id,
+          ])
+        )
+        .toEqual([priorityRoot.title, root.title, completedChild.title])
+
+      const beforeCreateItems = await visibleItems(page)
+      const beforeCreateIds = new Set(beforeCreateItems.map((item) => item.id))
+      const beforeBackendIds = new Set(
+        (await backendTreeItems(request, sessionToken)).map((item) => item.id)
+      )
+      createdBackendItemPromise = waitForNewBackendItem(
+        request,
+        sessionToken,
+        beforeBackendIds
+      )
+      const createResponsePromise = page.waitForResponse((response) => {
+        const request = response.request()
+        return (
+          request.method() === 'POST' &&
+          new URL(response.url()).pathname === '/'
+        )
+      })
+      await page
+        .locator(`[data-outliner-item-id="${root.id}"]`)
+        .getByRole('button', { name: 'Add sibling' })
+        .click()
+      expect((await createResponsePromise).status()).toBe(200)
+
+      const afterCreateItems = await waitForNewVisibleItem(
+        page,
+        beforeCreateIds
+      )
+      const createdItem = afterCreateItems.find(
+        (item) => !beforeCreateIds.has(item.id)
+      )
+      if (!createdItem) {
+        throw new Error(
+          `Expected a new visible item; saw ${afterCreateItems
+            .map((item) => item.title)
+            .join(' > ')}`
+        )
+      }
+      expect(createdItem.title).toBe('New item')
+      cleanupItemIds.push(createdItem.id)
+
+      if (
+        afterCreateItems.findIndex((item) => item.id === createdItem.id) <
+        afterCreateItems.findIndex((item) => item.id === root.id)
+      ) {
+        await page.screenshot({
+          path: testInfo.outputPath('root-sibling-order-wrong.png'),
+          fullPage: true,
+        })
+      }
+
+      const afterCreateOrder = orderedTitlesFor(afterCreateItems, [
+        priorityRoot.id,
+        root.id,
+        completedChild.id,
+        createdItem.id,
+      ])
+
+      expect(
+        afterCreateOrder,
+        `visible order after root Add sibling: ${afterCreateOrder.join(' > ')}`
+      ).toEqual([
+        priorityRoot.title,
+        root.title,
+        completedChild.title,
+        'New item',
+      ])
+    } finally {
+      if (createdBackendItemPromise) {
+        const createdBackendItem = await createdBackendItemPromise
+        if (
+          createdBackendItem &&
+          !cleanupItemIds.includes(createdBackendItem.id)
+        ) {
+          cleanupItemIds.push(createdBackendItem.id)
+        }
+      }
+      await deleteBackendItems(request, sessionToken, cleanupItemIds)
     }
-
-    const afterCreateOrder = orderedTitlesFor(afterCreateItems, [
-      priorityRoot.id,
-      root.id,
-      completedChild.id,
-      createdItem?.id ?? '',
-    ])
-
-    expect(
-      afterCreateOrder,
-      `visible order after root Add sibling: ${afterCreateOrder.join(' > ')}`
-    ).toEqual([
-      priorityRoot.title,
-      root.title,
-      completedChild.title,
-      'New item',
-    ])
   })
 })

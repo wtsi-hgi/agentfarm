@@ -6,12 +6,6 @@ import { Calendar, Flag, Filter, X } from 'lucide-react'
 import { createMarker, fetchChanges, fetchMarkers } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import type { Marker, MarkerChangeField } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
@@ -130,23 +124,17 @@ export function MarkerControls({
           placeholder="Marker"
           className="h-8 w-32"
         />
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                className="size-8"
-                aria-label="Use today as marker name"
-                onClick={() => setName(formatLocalDate(new Date()))}
-              >
-                <Calendar className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Use today</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="size-8"
+          aria-label="Use today as marker name"
+          title="Use today"
+          onClick={() => setName(formatLocalDate(new Date()))}
+        >
+          <Calendar className="size-3.5" aria-hidden="true" />
+        </Button>
         <Button
           type="submit"
           size="icon"

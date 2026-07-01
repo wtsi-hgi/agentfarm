@@ -9,7 +9,7 @@ import {
   type Page,
 } from '@playwright/test'
 
-import { gotoPath, signInAs } from './helpers'
+import { deleteBackendItems, gotoPath, signInAs } from './helpers'
 
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
@@ -98,160 +98,168 @@ test.describe('dependency details UI reproduction', () => {
   }, testInfo) => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Bug 2 dependency UI ${Date.now()}`
-    const dependentSection = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} dependent section`,
-    })
-    await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} dependent child`,
-      parent_id: dependentSection.id,
-    })
-    const blockingSection = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} blocking section`,
-    })
-    await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} blocking child`,
-      parent_id: blockingSection.id,
-    })
-    await createDependency(
-      request,
-      sessionToken,
-      dependentSection.id,
-      blockingSection.id
-    )
+    const cleanupRootIds: string[] = []
 
-    await gotoPath(page, '/')
-
-    const dependentRow = page.locator(
-      `[data-outliner-item-id="${dependentSection.id}"]`
-    )
-    const blockingRow = page.locator(
-      `[data-outliner-item-id="${blockingSection.id}"]`
-    )
-    await expect(
-      dependentRow.getByRole('textbox', { name: 'Item text' })
-    ).toHaveValue(dependentSection.title)
-    await expect(
-      blockingRow.getByRole('textbox', { name: 'Item text' })
-    ).toHaveValue(blockingSection.title)
-    await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`),
-      'Dependency labels belong in Details, not on item rows.'
-    ).toHaveCount(0)
-    await expect(dependentRow.getByLabel('Item readiness')).toHaveText(
-      'Waiting'
-    )
-
-    await dependentRow.getByRole('textbox', { name: 'Item text' }).click()
-    const detailsPanel = page.getByRole('complementary', {
-      name: 'Item details',
-    })
-    await expect(detailsPanel).toContainText(dependentSection.title)
-
-    await mkdir(path.dirname(screenshotPath), { recursive: true })
-    await page.screenshot({ path: screenshotPath, fullPage: true })
-    await testInfo.attach('dependency details UI', {
-      path: screenshotPath,
-      contentType: 'image/png',
-    })
-
-    const order = await visibleItemIds(page)
-    expect
-      .soft(
-        order.indexOf(blockingSection.id),
-        `dependent section should render after its explicit dependency; current order is ${order.join(
-          ' > '
-        )}`
-      )
-      .toBeLessThan(order.indexOf(dependentSection.id))
-
-    const dependenciesSection = detailsPanel.getByRole('region', {
-      name: 'Dependencies',
-    })
-    await expect
-      .soft(
-        dependenciesSection,
-        'Details should expose a Dependencies section for explicit edges.'
-      )
-      .toBeVisible()
-    await expect
-      .soft(
-        dependenciesSection.getByText(blockingSection.title),
-        'Details should list the current dependency target by title.'
-      )
-      .toBeVisible()
-    await expect
-      .soft(
-        dependenciesSection.getByText(`>${blockingSection.slug}`),
-        'Details should list the current dependency target slug.'
-      )
-      .toBeVisible()
-    await expect
-      .soft(
-        detailsPanel.getByRole('button', { name: /edit dependencies/i }),
-        'Details should provide an edit affordance for dependency removal.'
-      )
-      .toBeVisible()
-    await expect
-      .soft(
-        detailsPanel.getByLabel(/add dependency/i),
-        'Details should provide a direct drop target for dragging rows in as dependencies.'
-      )
-      .toBeVisible()
-
-    await detailsPanel
-      .getByRole('button', { name: /edit dependencies/i })
-      .click()
-    await detailsPanel
-      .getByRole('button', {
-        name: `Remove dependency ${blockingSection.title}`,
+    try {
+      const dependentSection = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} dependent section`,
       })
-      .click()
-    const confirmationDialog = page.getByRole('alertdialog')
-    await expect(confirmationDialog).toContainText('Remove dependency')
-    await expect(confirmationDialog).toContainText(blockingSection.title)
-    await expect(confirmationDialog).toContainText(`>${blockingSection.slug}`)
-    await expect(
-      dependenciesSection.getByText(`>${blockingSection.slug}`)
-    ).toBeVisible()
-    await confirmationDialog.getByRole('button', { name: 'Cancel' }).click()
-    await expect(confirmationDialog).toBeHidden()
-    await expect(
-      dependenciesSection.getByText(`>${blockingSection.slug}`)
-    ).toBeVisible()
-
-    await detailsPanel
-      .getByRole('button', {
-        name: `Remove dependency ${blockingSection.title}`,
+      cleanupRootIds.push(dependentSection.id)
+      await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} dependent child`,
+        parent_id: dependentSection.id,
       })
-      .click()
-    await page
-      .getByRole('alertdialog')
-      .getByRole('button', { name: 'Remove dependency' })
-      .click()
-    await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`)
-    ).toBeHidden()
-    await expect(
-      dependenciesSection.getByText('No explicit dependencies')
-    ).toBeVisible()
+      const blockingSection = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} blocking section`,
+      })
+      cleanupRootIds.push(blockingSection.id)
+      await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} blocking child`,
+        parent_id: blockingSection.id,
+      })
+      await createDependency(
+        request,
+        sessionToken,
+        dependentSection.id,
+        blockingSection.id
+      )
 
-    await detailsPanel
-      .getByRole('button', { name: /done editing dependencies/i })
-      .click()
-    await dragRowToAddDependency(
-      page,
-      blockingRow,
-      detailsPanel.getByLabel(/add dependency/i)
-    )
-    await expect(
-      dependentRow.getByText(`>${blockingSection.slug}`),
-      'Adding a dependency through Details should not reintroduce a row label.'
-    ).toHaveCount(0)
-    await expect(
-      dependenciesSection.getByText(blockingSection.title)
-    ).toBeVisible()
-    await expect(
-      dependenciesSection.getByText(`>${blockingSection.slug}`)
-    ).toBeVisible()
+      await gotoPath(page, '/')
+
+      const dependentRow = page.locator(
+        `[data-outliner-item-id="${dependentSection.id}"]`
+      )
+      const blockingRow = page.locator(
+        `[data-outliner-item-id="${blockingSection.id}"]`
+      )
+      await expect(
+        dependentRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(dependentSection.title)
+      await expect(
+        blockingRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(blockingSection.title)
+      await expect(
+        dependentRow.getByText(`>${blockingSection.slug}`),
+        'Dependency labels belong in Details, not on item rows.'
+      ).toHaveCount(0)
+      await expect(dependentRow.getByLabel('Item readiness')).toHaveText(
+        'Waiting'
+      )
+
+      await dependentRow.getByRole('textbox', { name: 'Item text' }).click()
+      const detailsPanel = page.getByRole('complementary', {
+        name: 'Item details',
+      })
+      await expect(detailsPanel).toContainText(dependentSection.title)
+
+      await mkdir(path.dirname(screenshotPath), { recursive: true })
+      await page.screenshot({ path: screenshotPath, fullPage: true })
+      await testInfo.attach('dependency details UI', {
+        path: screenshotPath,
+        contentType: 'image/png',
+      })
+
+      const order = await visibleItemIds(page)
+      expect
+        .soft(
+          order.indexOf(blockingSection.id),
+          `dependent section should render after its explicit dependency; current order is ${order.join(
+            ' > '
+          )}`
+        )
+        .toBeLessThan(order.indexOf(dependentSection.id))
+
+      const dependenciesSection = detailsPanel.getByRole('region', {
+        name: 'Dependencies',
+      })
+      await expect
+        .soft(
+          dependenciesSection,
+          'Details should expose a Dependencies section for explicit edges.'
+        )
+        .toBeVisible()
+      await expect
+        .soft(
+          dependenciesSection.getByText(blockingSection.title),
+          'Details should list the current dependency target by title.'
+        )
+        .toBeVisible()
+      await expect
+        .soft(
+          dependenciesSection.getByText(`>${blockingSection.slug}`),
+          'Details should list the current dependency target slug.'
+        )
+        .toBeVisible()
+      await expect
+        .soft(
+          detailsPanel.getByRole('button', { name: /edit dependencies/i }),
+          'Details should provide an edit affordance for dependency removal.'
+        )
+        .toBeVisible()
+      await expect
+        .soft(
+          detailsPanel.getByLabel(/add dependency/i),
+          'Details should provide a direct drop target for dragging rows in as dependencies.'
+        )
+        .toBeVisible()
+
+      await detailsPanel
+        .getByRole('button', { name: /edit dependencies/i })
+        .click()
+      await detailsPanel
+        .getByRole('button', {
+          name: `Remove dependency ${blockingSection.title}`,
+        })
+        .click()
+      const confirmationDialog = page.getByRole('alertdialog')
+      await expect(confirmationDialog).toContainText('Remove dependency')
+      await expect(confirmationDialog).toContainText(blockingSection.title)
+      await expect(confirmationDialog).toContainText(`>${blockingSection.slug}`)
+      await expect(
+        dependenciesSection.getByText(`>${blockingSection.slug}`)
+      ).toBeVisible()
+      await confirmationDialog.getByRole('button', { name: 'Cancel' }).click()
+      await expect(confirmationDialog).toBeHidden()
+      await expect(
+        dependenciesSection.getByText(`>${blockingSection.slug}`)
+      ).toBeVisible()
+
+      await detailsPanel
+        .getByRole('button', {
+          name: `Remove dependency ${blockingSection.title}`,
+        })
+        .click()
+      await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Remove dependency' })
+        .click()
+      await expect(
+        dependentRow.getByText(`>${blockingSection.slug}`)
+      ).toBeHidden()
+      await expect(
+        dependenciesSection.getByText('No explicit dependencies')
+      ).toBeVisible()
+
+      await detailsPanel
+        .getByRole('button', { name: /done editing dependencies/i })
+        .click()
+      await dragRowToAddDependency(
+        page,
+        blockingRow,
+        detailsPanel.getByLabel(/add dependency/i)
+      )
+      await expect(
+        dependentRow.getByText(`>${blockingSection.slug}`),
+        'Adding a dependency through Details should not reintroduce a row label.'
+      ).toHaveCount(0)
+      await expect(
+        dependenciesSection.getByText(blockingSection.title)
+      ).toBeVisible()
+      await expect(
+        dependenciesSection.getByText(`>${blockingSection.slug}`)
+      ).toBeVisible()
+    } finally {
+      await deleteBackendItems(request, sessionToken, cleanupRootIds)
+    }
   })
 })

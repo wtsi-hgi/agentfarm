@@ -8,7 +8,7 @@ import {
   type Page,
 } from '@playwright/test'
 
-import { gotoPath, signInAs } from './helpers'
+import { deleteBackendItem, gotoPath, signInAs } from './helpers'
 
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
@@ -94,72 +94,80 @@ test.describe('filtered hierarchy reproduction', () => {
   }, testInfo) => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Bug 3 filtered hierarchy ${Date.now()}`
-    const root = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} root`,
-    })
-    const section = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} section`,
-      parent_id: root.id,
-    })
-    const readyChild = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} ready child`,
-      parent_id: section.id,
-    })
-    const waitingChild = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} waiting child`,
-      parent_id: section.id,
-      after_id: readyChild.id,
-      state: 'feedback',
-    })
+    let root: ItemSummary | undefined
 
-    await gotoPath(page, '/')
+    try {
+      root = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} root`,
+      })
+      const section = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} section`,
+        parent_id: root.id,
+      })
+      const readyChild = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} ready child`,
+        parent_id: section.id,
+      })
+      const waitingChild = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} waiting child`,
+        parent_id: section.id,
+        after_id: readyChild.id,
+        state: 'feedback',
+      })
 
-    await page.getByRole('button', { name: 'Show up next work' }).click()
-    await expect(
-      page.locator(`[data-outliner-item-id="${readyChild.id}"]`)
-    ).toBeVisible()
-    await mkdir(screenshotDir, { recursive: true })
-    await page.screenshot({ path: upNextScreenshotPath, fullPage: true })
-    await testInfo.attach('Up Next missing hierarchy', {
-      path: upNextScreenshotPath,
-      contentType: 'image/png',
-    })
-    const upNextItems = fixtureItems(await visibleItems(page), titlePrefix)
+      await gotoPath(page, '/')
 
-    await page.getByRole('button', { name: 'Show follow up work' }).click()
-    await expect(
-      page.locator(`[data-outliner-item-id="${waitingChild.id}"]`)
-    ).toBeVisible()
-    await page.screenshot({ path: followUpScreenshotPath, fullPage: true })
-    await testInfo.attach('Follow Up missing hierarchy', {
-      path: followUpScreenshotPath,
-      contentType: 'image/png',
-    })
-    const followUpItems = fixtureItems(await visibleItems(page), titlePrefix)
+      await page.getByRole('button', { name: 'Show up next work' }).click()
+      await expect(
+        page.locator(`[data-outliner-item-id="${readyChild.id}"]`)
+      ).toBeVisible()
+      await mkdir(screenshotDir, { recursive: true })
+      await page.screenshot({ path: upNextScreenshotPath, fullPage: true })
+      await testInfo.attach('Up Next missing hierarchy', {
+        path: upNextScreenshotPath,
+        contentType: 'image/png',
+      })
+      const upNextItems = fixtureItems(await visibleItems(page), titlePrefix)
 
-    expect
-      .soft(
-        upNextItems.map((item) => item.title),
-        `Up Next rendered: ${describeItems(upNextItems)}`
-      )
-      .toEqual([root.title, section.title, readyChild.title])
-    expect
-      .soft(
-        upNextItems.map((item) => item.paddingLeft),
-        `Up Next rendered: ${describeItems(upNextItems)}`
-      )
-      .toEqual(['0rem', '1.25rem', '2.5rem'])
-    expect
-      .soft(
-        followUpItems.map((item) => item.title),
-        `Follow Up rendered: ${describeItems(followUpItems)}`
-      )
-      .toEqual([root.title, section.title, waitingChild.title])
-    expect
-      .soft(
-        followUpItems.map((item) => item.paddingLeft),
-        `Follow Up rendered: ${describeItems(followUpItems)}`
-      )
-      .toEqual(['0rem', '1.25rem', '2.5rem'])
+      await page.getByRole('button', { name: 'Show follow up work' }).click()
+      await expect(
+        page.locator(`[data-outliner-item-id="${waitingChild.id}"]`)
+      ).toBeVisible()
+      await page.screenshot({ path: followUpScreenshotPath, fullPage: true })
+      await testInfo.attach('Follow Up missing hierarchy', {
+        path: followUpScreenshotPath,
+        contentType: 'image/png',
+      })
+      const followUpItems = fixtureItems(await visibleItems(page), titlePrefix)
+
+      expect
+        .soft(
+          upNextItems.map((item) => item.title),
+          `Up Next rendered: ${describeItems(upNextItems)}`
+        )
+        .toEqual([root.title, section.title, readyChild.title])
+      expect
+        .soft(
+          upNextItems.map((item) => item.paddingLeft),
+          `Up Next rendered: ${describeItems(upNextItems)}`
+        )
+        .toEqual(['0rem', '1.25rem', '2.5rem'])
+      expect
+        .soft(
+          followUpItems.map((item) => item.title),
+          `Follow Up rendered: ${describeItems(followUpItems)}`
+        )
+        .toEqual([root.title, section.title, waitingChild.title])
+      expect
+        .soft(
+          followUpItems.map((item) => item.paddingLeft),
+          `Follow Up rendered: ${describeItems(followUpItems)}`
+        )
+        .toEqual(['0rem', '1.25rem', '2.5rem'])
+    } finally {
+      if (root) {
+        await deleteBackendItem(request, sessionToken, root.id)
+      }
+    }
   })
 })
