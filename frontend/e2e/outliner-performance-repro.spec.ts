@@ -39,6 +39,23 @@ async function createBackendItem(
   return JSON.parse(body) as TreeItemSummary
 }
 
+async function deleteBackendItem(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string
+): Promise<void> {
+  const response = await request.delete(
+    `${backendBaseUrl}/api/v1/items/${itemId}`,
+    {
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const body = await response.text()
+  expect(response.ok() || response.status() === 404, body).toBeTruthy()
+}
+
 async function seedLargeSection(
   request: APIRequestContext,
   sessionToken: string,
@@ -48,11 +65,16 @@ async function seedLargeSection(
     title: `${titlePrefix} root`,
     parent_id: null,
   })
-  for (let index = 0; index < childItemCount; index += 1) {
-    await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} child ${String(index + 1).padStart(2, '0')}`,
-      parent_id: root.id,
-    })
+  try {
+    for (let index = 0; index < childItemCount; index += 1) {
+      await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} child ${String(index + 1).padStart(2, '0')}`,
+        parent_id: root.id,
+      })
+    }
+  } catch (error) {
+    await deleteBackendItem(request, sessionToken, root.id)
+    throw error
   }
   return root
 }
@@ -74,28 +96,39 @@ test.describe('many-item outliner editing', () => {
 
     const sessionToken = await signInAs(page)
     const titlePrefix = `Many item editing ${Date.now()}`
-    await seedLargeSection(request, sessionToken, titlePrefix)
+    let root: TreeItemSummary | undefined
 
-    await gotoPath(page, '/')
-    const itemInputs = await waitForRenderedItemCount(page, childItemCount + 1)
-    const firstChildInput = itemInputs.nth(1)
-    const savedTitle = `${titlePrefix} saved`
+    try {
+      root = await seedLargeSection(request, sessionToken, titlePrefix)
 
-    await firstChildInput.click()
-    await firstChildInput.fill(savedTitle)
+      await gotoPath(page, '/')
+      const itemInputs = await waitForRenderedItemCount(
+        page,
+        childItemCount + 1
+      )
+      const firstChildInput = itemInputs.nth(1)
+      const savedTitle = `${titlePrefix} saved`
 
-    const responsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url())
-      return url.pathname === '/' && response.request().method() === 'POST'
-    })
-    await firstChildInput.press('Enter')
-    const response = await responsePromise
+      await firstChildInput.click()
+      await firstChildInput.fill(savedTitle)
 
-    expect(response.status()).toBe(200)
-    await expect(firstChildInput).toBeEnabled()
-    await expect(firstChildInput).toHaveValue(savedTitle)
-    await expect
-      .poll(async () => itemInputs.count())
-      .toBeGreaterThanOrEqual(childItemCount + 1)
+      const responsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return url.pathname === '/' && response.request().method() === 'POST'
+      })
+      await firstChildInput.press('Enter')
+      const response = await responsePromise
+
+      expect(response.status()).toBe(200)
+      await expect(firstChildInput).toBeEnabled()
+      await expect(firstChildInput).toHaveValue(savedTitle)
+      await expect
+        .poll(async () => itemInputs.count())
+        .toBeGreaterThanOrEqual(childItemCount + 1)
+    } finally {
+      if (root) {
+        await deleteBackendItem(request, sessionToken, root.id)
+      }
+    }
   })
 })

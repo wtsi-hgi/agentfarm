@@ -46,7 +46,7 @@ async function deleteBackendItem(
     }
   )
   const body = await response.text()
-  expect(response.ok(), body).toBeTruthy()
+  expect(response.ok() || response.status() === 404, body).toBeTruthy()
 }
 
 test.describe('section state menu reproduction', () => {
@@ -56,50 +56,58 @@ test.describe('section state menu reproduction', () => {
   }) => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Bug 1 section state ${Date.now()}`
-    const section = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} section`,
-      state: 'feedback',
-    })
-    const child = await createBackendItem(request, sessionToken, {
-      title: `${titlePrefix} child`,
-      parent_id: section.id,
-    })
+    let section: ItemSummary | undefined
 
-    await gotoPath(page, '/')
+    try {
+      section = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} section`,
+        state: 'feedback',
+      })
+      const child = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} child`,
+        parent_id: section.id,
+      })
 
-    const sectionRow = page.locator(`[data-outliner-item-id="${section.id}"]`)
-    const childRow = page.locator(`[data-outliner-item-id="${child.id}"]`)
-    await expect(
-      sectionRow.getByRole('textbox', { name: 'Item text' })
-    ).toHaveValue(section.title)
-    await expect(
-      childRow.getByRole('textbox', { name: 'Item text' })
-    ).toHaveValue(child.title)
-    await expect(
-      sectionRow.getByRole('button', { name: 'Collapse item' })
-    ).toBeVisible()
+      await gotoPath(page, '/')
 
-    const sectionStateMenu = sectionRow.getByRole('combobox', {
-      name: 'Item state',
-    })
-    await expect(sectionStateMenu).toHaveCount(0)
-    await expect(
-      childRow.getByRole('combobox', { name: 'Item state' })
-    ).toBeVisible()
-    await expect(
-      sectionRow.getByRole('checkbox', { name: 'Mark item done' })
-    ).toBeVisible()
+      const sectionRow = page.locator(`[data-outliner-item-id="${section.id}"]`)
+      const childRow = page.locator(`[data-outliner-item-id="${child.id}"]`)
+      await expect(
+        sectionRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(section.title)
+      await expect(
+        childRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(child.title)
+      await expect(
+        sectionRow.getByRole('button', { name: 'Collapse item' })
+      ).toBeVisible()
 
-    await page.getByRole('button', { name: 'Show follow up work' }).click()
+      const sectionStateMenu = sectionRow.getByRole('combobox', {
+        name: 'Item state',
+      })
+      await expect(sectionStateMenu).toHaveCount(0)
+      await expect(
+        childRow.getByRole('combobox', { name: 'Item state' })
+      ).toBeVisible()
+      await expect(
+        sectionRow.getByRole('checkbox', { name: 'Mark item done' })
+      ).toBeVisible()
 
-    await expect(sectionRow).toHaveCount(0)
-    await expect(childRow).toHaveCount(0)
+      await page.getByRole('button', { name: 'Show follow up work' }).click()
 
-    await deleteBackendItem(request, sessionToken, child.id)
-    await gotoPath(page, '/')
+      await expect(sectionRow).toHaveCount(0)
+      await expect(childRow).toHaveCount(0)
 
-    await expect(sectionRow).toBeVisible()
-    await expect(sectionStateMenu).toBeVisible()
-    await expect(sectionStateMenu).toHaveValue('feedback')
+      await deleteBackendItem(request, sessionToken, child.id)
+      await gotoPath(page, '/')
+
+      await expect(sectionRow).toBeVisible()
+      await expect(sectionStateMenu).toBeVisible()
+      await expect(sectionStateMenu).toHaveValue('feedback')
+    } finally {
+      if (section) {
+        await deleteBackendItem(request, sessionToken, section.id)
+      }
+    }
   })
 })
