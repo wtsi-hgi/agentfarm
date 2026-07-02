@@ -228,7 +228,7 @@ export function OutlinerRow({
           checked={checkedDone}
           disabled={pending}
           onChange={handleDoneChange}
-          className="border-border bg-background text-foreground focus-visible:ring-ring accent-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
       <div className="flex size-8 items-center justify-center">
