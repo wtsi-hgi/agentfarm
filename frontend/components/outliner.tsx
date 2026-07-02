@@ -2982,46 +2982,6 @@ export function Outliner({
     window.addEventListener('mouseup', handleMouseUp, true)
   }
 
-  function startMouseDrag(
-    item: TreeItem,
-    event: React.MouseEvent<HTMLElement>
-  ) {
-    beginCoordinateDrag(item, event)
-  }
-
-  React.useEffect(() => {
-    function handleDocumentMouseDown(event: MouseEvent) {
-      if (event.button !== 0 || event.ctrlKey || event.metaKey) {
-        return
-      }
-
-      const dragHandle = document
-        .elementsFromPoint(event.clientX, event.clientY)
-        .map((element) => element.closest('button[aria-label="Drag item"]'))
-        .find(
-          (element): element is HTMLButtonElement =>
-            element instanceof HTMLButtonElement
-        )
-      if (!dragHandle || dragHandle.disabled) {
-        return
-      }
-
-      const row = dragHandle.closest<HTMLElement>('[data-outliner-item-id]')
-      const itemId = row?.dataset.outlinerItemId
-      const item = itemId ? itemsById.get(itemId) : undefined
-      if (!item) {
-        return
-      }
-
-      beginCoordinateDrag(item, event)
-    }
-
-    document.addEventListener('mousedown', handleDocumentMouseDown, true)
-    return () => {
-      document.removeEventListener('mousedown', handleDocumentMouseDown, true)
-    }
-  })
-
   async function createRoot(title: string) {
     const created = await createFirstRoot(title, mutationActions)
     setSessionNewlyAddedIds((current) => new Set(current).add(created.id))
@@ -3102,7 +3062,7 @@ export function Outliner({
                           target instanceof Element &&
                           target.closest('button[aria-label="Drag item"]')
                         ) {
-                          startMouseDrag(item, event)
+                          beginCoordinateDrag(item, event)
                         }
                       }}
                       onDragOver={(event) => {
