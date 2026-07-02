@@ -39,6 +39,13 @@ type RowSnapshot = ItemSummary & {
   top: number
 }
 
+type RowGeometry = ItemSummary & {
+  dragHandleLeft: number
+  ghost: boolean
+  inputLeft: number
+  rowTop: number
+}
+
 type TreeItemSummary = ItemSummary & {
   parent_id: string | null
 }
@@ -150,6 +157,75 @@ async function fixtureArrowCounts(
   )
 }
 
+function itemRow(page: Page, itemId: string) {
+  return page.locator(`[data-outliner-item-id="${itemId}"]`)
+}
+
+async function itemRowGeometry(
+  page: Page,
+  itemId: string
+): Promise<RowGeometry> {
+  return itemRow(page, itemId).evaluate((row) => {
+    const element = row as HTMLElement
+    const input = element.querySelector<HTMLInputElement>(
+      'input[aria-label="Item text"]'
+    )
+    const dragHandle = element.querySelector<HTMLElement>(
+      'button[aria-label="Drag item"]'
+    )
+    if (!input || !dragHandle) {
+      throw new Error(`Missing visible row controls for ${itemId}`)
+    }
+
+    const inputBox = input.getBoundingClientRect()
+    const dragHandleBox = dragHandle.getBoundingClientRect()
+    const rowBox = element.getBoundingClientRect()
+    return {
+      dragHandleLeft: dragHandleBox.left,
+      ghost: element.dataset.dragPreview === 'true',
+      id: element.dataset.outlinerItemId ?? itemId,
+      inputLeft: inputBox.left,
+      rowTop: rowBox.top,
+      title: input.value,
+    }
+  })
+}
+
+async function dragPreviewOver(
+  page: Page,
+  draggedItemId: string,
+  targetItemId: string,
+  clientY: number
+) {
+  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
+  await itemRow(page, draggedItemId)
+    .getByRole('button', { name: 'Drag item' })
+    .dispatchEvent('dragstart', { dataTransfer })
+  await itemRow(page, targetItemId).dispatchEvent('dragenter', {
+    clientY,
+    dataTransfer,
+  })
+  await itemRow(page, targetItemId).dispatchEvent('dragover', {
+    clientY,
+    dataTransfer,
+  })
+  await expect(itemRow(page, draggedItemId)).toHaveAttribute(
+    'data-drag-preview',
+    'true'
+  )
+  return dataTransfer
+}
+
+async function endDrag(
+  page: Page,
+  draggedItemId: string,
+  dataTransfer: unknown
+) {
+  await itemRow(page, draggedItemId)
+    .getByRole('button', { name: 'Drag item' })
+    .dispatchEvent('dragend', { dataTransfer })
+}
+
 function titles(rows: readonly RowSnapshot[]): string[] {
   return rows.map((row) => row.title)
 }
@@ -231,12 +307,8 @@ test.describe('item row reorder affordance', () => {
           )}`
         )
       }
-      const targetRow = page.locator(
-        `[data-outliner-item-id="${targetRowSnapshot.id}"]`
-      )
-      const draggedRow = page.locator(
-        `[data-outliner-item-id="${draggedRowSnapshot.id}"]`
-      )
+      const targetRow = itemRow(page, targetRowSnapshot.id)
+      const draggedRow = itemRow(page, draggedRowSnapshot.id)
 
       const targetBox = await targetRow.boundingBox()
       expect(targetBox).not.toBeNull()
@@ -329,6 +401,246 @@ test.describe('item row reorder affordance', () => {
     } finally {
       if (parent) {
         await deleteBackendItem(request, sessionToken, parent.id)
+      }
+    }
+  })
+
+  test('shows the dragged row ghost indented under the hovered parent middle zone', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Bug 4 middle-zone indent preview ${Date.now()}`
+    let parent: ItemSummary | undefined
+    let dragged: ItemSummary | undefined
+
+    try {
+      parent = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} parent`,
+      })
+      const existingChild = await createBackendItem(request, sessionToken, {
+        parent_id: parent.id,
+        title: `${titlePrefix} existing child`,
+      })
+      dragged = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} dragged root`,
+      })
+
+      await gotoPath(page, '/')
+
+      const parentRow = itemRow(page, parent.id)
+      await expect(
+        parentRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(parent.title)
+      await expect(
+        itemRow(page, existingChild.id).getByRole('textbox', {
+          name: 'Item text',
+        })
+      ).toHaveValue(existingChild.title)
+      await expect(
+        itemRow(page, dragged.id).getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(dragged.title)
+
+      const parentBox = await parentRow.boundingBox()
+      if (!parentBox) {
+        throw new Error('Expected parent row to be visible before drag')
+      }
+
+      const dataTransfer = await dragPreviewOver(
+        page,
+        dragged.id,
+        parent.id,
+        parentBox.y + parentBox.height / 2
+      )
+
+      try {
+        const parentGeometry = await itemRowGeometry(page, parent.id)
+        const ghostGeometry = await itemRowGeometry(page, dragged.id)
+        const childGeometry = await itemRowGeometry(page, existingChild.id)
+
+        expect
+          .soft(
+            ghostGeometry.ghost,
+            `dragged row should render as the visible preview ghost; geometry=${JSON.stringify(
+              ghostGeometry
+            )}`
+          )
+          .toBe(true)
+        expect
+          .soft(
+            ghostGeometry.rowTop,
+            `middle-zone preview should insert the ghost directly under the hovered parent; parent=${JSON.stringify(
+              parentGeometry
+            )} ghost=${JSON.stringify(ghostGeometry)} child=${JSON.stringify(
+              childGeometry
+            )}`
+          )
+          .toBeGreaterThan(parentGeometry.rowTop)
+        expect.soft(ghostGeometry.rowTop).toBeLessThan(childGeometry.rowTop)
+        expect
+          .soft(
+            Math.abs(
+              ghostGeometry.dragHandleLeft - childGeometry.dragHandleLeft
+            ),
+            `ghost handle should align with a real child indentation level; ghost=${JSON.stringify(
+              ghostGeometry
+            )} child=${JSON.stringify(childGeometry)}`
+          )
+          .toBeLessThan(2)
+        expect
+          .soft(
+            ghostGeometry.dragHandleLeft - parentGeometry.dragHandleLeft,
+            `ghost handle should be visibly indented from its hovered parent; parent=${JSON.stringify(
+              parentGeometry
+            )} ghost=${JSON.stringify(ghostGeometry)}`
+          )
+          .toBeGreaterThan(12)
+        expect
+          .soft(
+            Math.abs(ghostGeometry.inputLeft - childGeometry.inputLeft),
+            `ghost text should align with the child row text at the target level; ghost=${JSON.stringify(
+              ghostGeometry
+            )} child=${JSON.stringify(childGeometry)}`
+          )
+          .toBeLessThan(2)
+      } finally {
+        await endDrag(page, dragged.id, dataTransfer)
+        await dataTransfer.dispose()
+      }
+    } finally {
+      if (dragged) {
+        await deleteBackendItem(request, sessionToken, dragged.id)
+      }
+      if (parent) {
+        await deleteBackendItem(request, sessionToken, parent.id)
+      }
+    }
+  })
+
+  test('shows the dragged row ghost at the desired sibling level while outdenting', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Bug 4 outdent preview ${Date.now()}`
+    let section: ItemSummary | undefined
+    let desiredLevelSibling: ItemSummary | undefined
+
+    try {
+      section = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} section`,
+      })
+      const childParent = await createBackendItem(request, sessionToken, {
+        parent_id: section.id,
+        title: `${titlePrefix} child parent`,
+      })
+      const nested = await createBackendItem(request, sessionToken, {
+        parent_id: childParent.id,
+        title: `${titlePrefix} nested dragged`,
+      })
+      desiredLevelSibling = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} desired root sibling`,
+      })
+
+      await gotoPath(page, '/')
+
+      const desiredSiblingRow = itemRow(page, desiredLevelSibling.id)
+      await expect(
+        desiredSiblingRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(desiredLevelSibling.title)
+      await expect(
+        itemRow(page, nested.id).getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(nested.title)
+
+      const nestedBeforeDrag = await itemRowGeometry(page, nested.id)
+      const childParentBeforeDrag = await itemRowGeometry(page, childParent.id)
+      const desiredSiblingBox = await desiredSiblingRow.boundingBox()
+      if (!desiredSiblingBox) {
+        throw new Error(
+          'Expected desired-level sibling row to be visible before drag'
+        )
+      }
+
+      const dataTransfer = await dragPreviewOver(
+        page,
+        nested.id,
+        desiredLevelSibling.id,
+        desiredSiblingBox.y + 4
+      )
+
+      try {
+        const desiredSiblingGeometry = await itemRowGeometry(
+          page,
+          desiredLevelSibling.id
+        )
+        const ghostGeometry = await itemRowGeometry(page, nested.id)
+
+        expect
+          .soft(
+            ghostGeometry.ghost,
+            `nested row should render as the visible preview ghost; geometry=${JSON.stringify(
+              ghostGeometry
+            )}`
+          )
+          .toBe(true)
+        expect
+          .soft(
+            ghostGeometry.rowTop,
+            `top-zone preview should place the outdented ghost next to the desired-level sibling; sibling=${JSON.stringify(
+              desiredSiblingGeometry
+            )} ghost=${JSON.stringify(ghostGeometry)}`
+          )
+          .toBeLessThan(desiredSiblingGeometry.rowTop)
+        expect
+          .soft(
+            Math.abs(
+              ghostGeometry.dragHandleLeft -
+                desiredSiblingGeometry.dragHandleLeft
+            ),
+            `ghost handle should align with the target root-level sibling while outdenting; sibling=${JSON.stringify(
+              desiredSiblingGeometry
+            )} ghost=${JSON.stringify(ghostGeometry)}`
+          )
+          .toBeLessThan(2)
+        expect
+          .soft(
+            Math.abs(
+              ghostGeometry.inputLeft - desiredSiblingGeometry.inputLeft
+            ),
+            `ghost text should align with the desired sibling level while outdenting; sibling=${JSON.stringify(
+              desiredSiblingGeometry
+            )} ghost=${JSON.stringify(ghostGeometry)}`
+          )
+          .toBeLessThan(2)
+        expect
+          .soft(
+            childParentBeforeDrag.dragHandleLeft -
+              desiredSiblingGeometry.dragHandleLeft,
+            `fixture should include a visible nested-to-root outdent distance; child parent=${JSON.stringify(
+              childParentBeforeDrag
+            )} root sibling=${JSON.stringify(desiredSiblingGeometry)}`
+          )
+          .toBeGreaterThan(12)
+        expect
+          .soft(
+            nestedBeforeDrag.dragHandleLeft - ghostGeometry.dragHandleLeft,
+            `the preview ghost should move left from its original nested indentation; before=${JSON.stringify(
+              nestedBeforeDrag
+            )} ghost=${JSON.stringify(ghostGeometry)}`
+          )
+          .toBeGreaterThan(24)
+      } finally {
+        await endDrag(page, nested.id, dataTransfer)
+        await dataTransfer.dispose()
+      }
+    } finally {
+      if (desiredLevelSibling) {
+        await deleteBackendItem(request, sessionToken, desiredLevelSibling.id)
+      }
+      if (section) {
+        await deleteBackendItem(request, sessionToken, section.id)
       }
     }
   })

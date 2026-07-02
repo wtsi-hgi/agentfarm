@@ -6,8 +6,6 @@ import {
   ChevronRight,
   CornerDownLeft,
   GripVertical,
-  IndentDecrease,
-  IndentIncrease,
   MessagesSquare,
   NotebookText,
   Trash2,
@@ -362,30 +360,6 @@ export function OutlinerRow({
             strokeWidth={hasPromptResponseEntries ? 2.75 : 2}
             aria-hidden="true"
           />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Indent item"
-          title="Indent"
-          disabled={pending}
-          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: false })}
-        >
-          <IndentIncrease className="size-3.5" aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Outdent item"
-          title="Outdent"
-          disabled={pending}
-          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: true })}
-        >
-          <IndentDecrease className="size-3.5" aria-hidden="true" />
         </Button>
         <Button
           type="button"

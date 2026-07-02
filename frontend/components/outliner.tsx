@@ -98,7 +98,7 @@ type AfterMoveTarget = {
 
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
-type DropPosition = 'before' | 'after'
+type DropPosition = 'before' | 'inside' | 'after'
 
 type DragPreview = {
   draggedItemId: string
@@ -1301,7 +1301,16 @@ function dropPosition(event: React.DragEvent<HTMLElement>): DropPosition {
     return 'after'
   }
 
-  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  const offsetY = event.clientY - rect.top
+  const beforeThreshold = rect.height * 0.25
+  const afterThreshold = rect.height * 0.75
+  if (offsetY < beforeThreshold) {
+    return 'before'
+  }
+  if (offsetY > afterThreshold) {
+    return 'after'
+  }
+  return 'inside'
 }
 
 function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
@@ -1378,16 +1387,28 @@ function applyDragPreviewToChildren(
   }
 
   const [removedItem] = sourceSiblings.splice(sourceIndex, 1)
+  if (!removedItem) {
+    return
+  }
+
+  if (preview.position === 'inside') {
+    const destinationSiblings = children.get(targetItem.id) ?? []
+    destinationSiblings.splice(0, 0, {
+      ...removedItem,
+      parent_id: targetItem.id,
+    })
+    children.set(targetItem.id, destinationSiblings)
+    return
+  }
+
   const destinationParentId = targetItem.parent_id
   const destinationSiblings = children.get(destinationParentId) ?? []
   const targetIndex = destinationSiblings.findIndex(
     (sibling) => sibling.id === targetItem.id
   )
 
-  if (!removedItem || targetIndex < 0) {
-    if (removedItem) {
-      sourceSiblings.splice(sourceIndex, 0, removedItem)
-    }
+  if (targetIndex < 0) {
+    sourceSiblings.splice(sourceIndex, 0, removedItem)
     return
   }
 
@@ -2260,6 +2281,14 @@ export function Outliner({
         ? current
         : nextPreview
     )
+    if (position === 'inside') {
+      setExpandedIds((current) => {
+        if (current.has(targetItemId)) {
+          return current
+        }
+        return new Set(current).add(targetItemId)
+      })
+    }
     return true
   }
 
@@ -2278,8 +2307,14 @@ export function Outliner({
       return
     }
 
-    const targetParentId = targetItem.parent_id
-    if (position === 'before') {
+    let targetParentId = targetItem.parent_id
+    if (position === 'inside') {
+      targetParentId = targetItem.id
+      await mutationActions.moveItem(draggedItem.id, {
+        new_parent_id: targetParentId,
+        position: 'first',
+      })
+    } else if (position === 'before') {
       const siblings = orderedSiblings(activeItems, targetParentId).filter(
         (sibling) => sibling.id !== draggedItem.id
       )

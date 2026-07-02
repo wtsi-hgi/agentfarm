@@ -175,6 +175,18 @@ function dragHandle(element: ParentNode) {
   return button(element, 'Drag item')
 }
 
+function rowContent(container: ParentNode, itemId: string) {
+  const content = outlinerItem(container, itemId).firstElementChild
+  if (!(content instanceof HTMLElement)) {
+    throw new Error(`Missing row content: ${itemId}`)
+  }
+  return content
+}
+
+function rowIndent(container: ParentNode, itemId: string) {
+  return rowContent(container, itemId).style.paddingLeft
+}
+
 function renderedItemIds(container: ParentNode) {
   return Array.from(
     container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
@@ -913,5 +925,134 @@ describe('Outliner reorder controls', () => {
         'button[aria-label="Move item up"]'
       )
     ).toBeNull()
+  })
+
+  it('removes row indent and outdent buttons from the primary row controls', async () => {
+    const container = await render([
+      item({ id: 'first', title: 'First', sort_order: 1 }),
+      item({ id: 'second', title: 'Second', sort_order: 2 }),
+    ])
+    const firstRow = outlinerItem(container, 'first')
+
+    expect(
+      firstRow.querySelector('button[aria-label="Indent item"]')
+    ).toBeNull()
+    expect(
+      firstRow.querySelector('button[aria-label="Outdent item"]')
+    ).toBeNull()
+  })
+
+  it('previews and persists dragging a root under the hovered row as an indented child', async () => {
+    const container = await render([
+      item({ id: 'section', title: 'Section', sort_order: 1 }),
+      item({ id: 'loose', title: 'Loose item', sort_order: 2 }),
+    ])
+    const sectionRow = outlinerItem(container, 'section')
+    const looseRow = outlinerItem(container, 'loose')
+    const transfer = dataTransfer()
+    stubRect(sectionRow, 100, 160)
+
+    await dispatchDrag(dragHandle(looseRow), 'dragstart', transfer)
+    await dispatchDrag(sectionRow, 'dragover', transfer, { clientY: 130 })
+
+    expect(outlinerItem(container, 'loose').dataset.dragPreview).toBe('true')
+    expect(renderedItemIds(container)).toEqual(['section', 'loose'])
+    expect(rowIndent(container, 'loose')).toBe('1.25rem')
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+
+    await dispatchDrag(sectionRow, 'drop', transfer, { clientY: 130 })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('loose', {
+      new_parent_id: 'section',
+      position: 'first',
+    })
+  })
+
+  it('previews and persists outdenting beside a row at the desired indentation level', async () => {
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'child',
+        title: 'Child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'nested',
+        title: 'Nested',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+      item({ id: 'next-root', title: 'Next root', sort_order: 2 }),
+    ])
+    const sectionRow = outlinerItem(container, 'section')
+    const nestedRow = outlinerItem(container, 'nested')
+    const transfer = dataTransfer()
+    stubRect(sectionRow, 100, 160)
+
+    await dispatchDrag(dragHandle(nestedRow), 'dragstart', transfer)
+    await dispatchDrag(sectionRow, 'dragover', transfer, { clientY: 154 })
+
+    expect(outlinerItem(container, 'nested').dataset.dragPreview).toBe('true')
+    expect(renderedItemIds(container)).toEqual([
+      'section',
+      'child',
+      'nested',
+      'next-root',
+    ])
+    expect(rowIndent(container, 'nested')).toBe('0rem')
+
+    await dispatchDrag(sectionRow, 'drop', transfer, { clientY: 154 })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('nested', {
+      new_parent_id: null,
+      position: 'after',
+      after_id: 'section',
+    })
+  })
+
+  it('keeps the ghost at the candidate indentation level for same-parent reorders', async () => {
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first-child',
+        title: 'First child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second-child',
+        title: 'Second child',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+    ])
+    const firstChildRow = outlinerItem(container, 'first-child')
+    const secondChildRow = outlinerItem(container, 'second-child')
+    const transfer = dataTransfer()
+    stubRect(firstChildRow, 100, 160)
+
+    await dispatchDrag(dragHandle(secondChildRow), 'dragstart', transfer)
+    await dispatchDrag(firstChildRow, 'dragover', transfer, { clientY: 104 })
+
+    expect(outlinerItem(container, 'second-child').dataset.dragPreview).toBe(
+      'true'
+    )
+    expect(renderedItemIds(container)).toEqual([
+      'section',
+      'second-child',
+      'first-child',
+    ])
+    expect(rowIndent(container, 'second-child')).toBe('1.25rem')
   })
 })
