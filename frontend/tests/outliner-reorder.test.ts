@@ -446,6 +446,128 @@ describe('Outliner reorder controls', () => {
     await flushReact()
   })
 
+  it('adds exactly one sibling from a row with automatic dependencies without a removal confirmation', async () => {
+    actionMocks.createItem.mockResolvedValue(
+      item({
+        id: 'created-sibling',
+        title: 'New item',
+        slug: 'created-sibling',
+        parent_id: 'section',
+        sort_order: 3,
+      })
+    )
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first',
+        title: 'First child',
+        slug: 'first-child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['first-child'],
+        needs_edges: [
+          {
+            id: 'auto-chain-second-first',
+            slug: 'first-child',
+            automatic_chain: true,
+          },
+        ],
+        actionable: false,
+      }),
+    ])
+
+    await click(button(outlinerItem(container, 'second'), 'Add sibling'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(actionMocks.createItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: 'section',
+      after_id: 'second',
+    })
+    expect(
+      renderedItemIds(container).filter(
+        (itemId) => itemId === 'created-sibling'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('persists dragging a row with automatic dependencies without a removal confirmation', async () => {
+    actionMocks.moveItem.mockResolvedValue(
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 1,
+        needs: [],
+        needs_edges: [],
+      })
+    )
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first',
+        title: 'First child',
+        slug: 'first-child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['first-child'],
+        needs_edges: [
+          {
+            id: 'auto-chain-second-first',
+            slug: 'first-child',
+            automatic_chain: true,
+          },
+        ],
+        actionable: false,
+      }),
+    ])
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+    await dispatchDrag(firstRow, 'drop', transfer, { clientY: 105 })
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(actionMocks.moveItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
+      new_parent_id: 'section',
+      position: 'first',
+    })
+  })
+
   it('keeps drag-and-drop reorders anchored after the target item', async () => {
     const container = await render([
       item({ id: 'first', title: 'First', sort_order: 1 }),

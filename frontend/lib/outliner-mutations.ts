@@ -97,7 +97,10 @@ function removedDependencies(
 ): RemovedDependency[] {
   const existingNeeds = new Set(item.needs)
   return item.needs_edges.filter(
-    (edge) => existingNeeds.has(edge.slug) && !requestedNeeds.has(edge.slug)
+    (edge) =>
+      edge.automatic_chain !== true &&
+      existingNeeds.has(edge.slug) &&
+      !requestedNeeds.has(edge.slug)
   )
 }
 
