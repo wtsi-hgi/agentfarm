@@ -993,6 +993,108 @@ describe('Outliner reorder controls', () => {
     expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
   })
 
+  it('marks the dragged row original slot and reports when hovering back there', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    const originalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(originalSlot).toBeInstanceOf(HTMLElement)
+    expect(originalSlot?.getAttribute('aria-label')).toBe(
+      'Original position for Second'
+    )
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+    await dispatchDrag(originalSlot as HTMLElement, 'drop', transfer)
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'second')),
+      'dragstart',
+      transfer
+    )
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+    const activeOriginalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(activeOriginalSlot).toBeInstanceOf(HTMLElement)
+
+    await dispatchDrag(activeOriginalSlot as HTMLElement, 'dragover', transfer)
+
+    const markerReturnTarget = container.querySelector(
+      '[data-drag-return-target="second"]'
+    )
+    expect(markerReturnTarget).toBeInstanceOf(HTMLElement)
+    expect(markerReturnTarget?.getAttribute('aria-label')).toBe(
+      'Drop to return Second to its original position'
+    )
+
+    await dispatchDrag(outlinerItem(container, 'first'), 'dragover', transfer, {
+      clientY: 135,
+    })
+
+    const returnTarget = container.querySelector(
+      '[data-drag-return-target="second"]'
+    )
+    expect(returnTarget).toBeInstanceOf(HTMLElement)
+    expect(returnTarget?.getAttribute('aria-label')).toBe(
+      'Drop to return Second to its original position'
+    )
+  })
+
+  it('uses hidden siblings when deciding whether a drag preview returned to origin', async () => {
+    const container = await renderElement(
+      React.createElement(Outliner, {
+        hiddenItemIds: ['hidden'],
+        items: [
+          item({ id: 'first', title: 'First', sort_order: 1 }),
+          item({ id: 'second', title: 'Second', sort_order: 2 }),
+          item({ id: 'hidden', title: 'Hidden', sort_order: 3 }),
+          item({ id: 'third', title: 'Third', sort_order: 4 }),
+        ],
+      })
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const thirdRow = outlinerItem(container, 'third')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+    stubRect(thirdRow, 180, 220)
+
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    const originalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(originalSlot).toBeInstanceOf(HTMLElement)
+
+    await dispatchDrag(thirdRow, 'dragover', transfer, { clientY: 185 })
+
+    expect(
+      container.querySelector('[data-drag-return-target="second"]')
+    ).toBeNull()
+
+    await dispatchDrag(originalSlot as HTMLElement, 'dragover', transfer)
+
+    expect(
+      container.querySelector('[data-drag-return-target="second"]')
+    ).toBeInstanceOf(HTMLElement)
+  })
+
   it('renders the outliner and details surface without invalid DOM nesting warnings', async () => {
     const consoleError = vi
       .spyOn(console, 'error')

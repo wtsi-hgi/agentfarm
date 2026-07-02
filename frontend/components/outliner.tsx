@@ -111,6 +111,20 @@ type DragPreview = {
   position: DropPosition
 }
 
+type DragSlot = {
+  depth: number
+  draggedItemId: string
+  nextItemId: string | null
+  preview: DragPreview | null
+  title: string
+}
+
+type DragStructuralSlot = {
+  parentId: string | null
+  previousSiblingId: string | null
+  nextItemId: string | null
+}
+
 type FocusRequest = {
   itemId: string
   requestId: number
@@ -1426,12 +1440,137 @@ function applyDragPreviewToChildren(
   children.set(destinationParentId, destinationSiblings)
 }
 
+function dragStructuralSlotFromChildren(
+  children: ChildMap,
+  draggedItemId: string
+): DragStructuralSlot | null {
+  for (const [parentId, siblings] of children.entries()) {
+    const index = siblings.findIndex((sibling) => sibling.id === draggedItemId)
+    if (index < 0) {
+      continue
+    }
+
+    return {
+      parentId,
+      previousSiblingId: siblings[index - 1]?.id ?? null,
+      nextItemId: siblings[index + 1]?.id ?? null,
+    }
+  }
+  return null
+}
+
+function dragStructuralSlot(
+  items: TreeItem[],
+  draggedItemId: string,
+  preview?: DragPreview | null
+): DragStructuralSlot | null {
+  const children = localChildrenByParent(items)
+  applyDragPreviewToChildren(children, items, preview)
+  return dragStructuralSlotFromChildren(children, draggedItemId)
+}
+
+function dragPreviewForStructuralSlot(
+  draggedItemId: string,
+  slot: DragStructuralSlot
+): DragPreview | null {
+  if (slot.nextItemId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.nextItemId,
+      position: 'before',
+    }
+  }
+  if (slot.previousSiblingId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.previousSiblingId,
+      position: 'after',
+    }
+  }
+  if (slot.parentId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.parentId,
+      position: 'inside',
+    }
+  }
+  return null
+}
+
+function dragSlotFromRows(
+  rows: readonly VisibleOutlinerRow[],
+  draggedItemId: string,
+  draggedSubtreeIds: ReadonlySet<string>,
+  structuralSlot: DragStructuralSlot | null
+): DragSlot | null {
+  const draggedIndex = rows.findIndex((row) => row.item.id === draggedItemId)
+  const draggedRow = rows[draggedIndex]
+  if (!draggedRow || !structuralSlot) {
+    return null
+  }
+
+  const nextRow = rows
+    .slice(draggedIndex + 1)
+    .find((row) => !draggedSubtreeIds.has(row.item.id))
+
+  return {
+    depth: draggedRow.depth,
+    draggedItemId,
+    nextItemId: nextRow?.item.id ?? null,
+    preview: dragPreviewForStructuralSlot(draggedItemId, structuralSlot),
+    title: draggedRow.item.title,
+  }
+}
+
+function dragSlotsMatch(
+  origin: DragStructuralSlot,
+  current: DragStructuralSlot
+): boolean {
+  return (
+    origin.parentId === current.parentId &&
+    origin.previousSiblingId === current.previousSiblingId &&
+    origin.nextItemId === current.nextItemId
+  )
+}
+
 function firstAvailableItemId(
   items: TreeItem[],
   unavailableItemIds: ReadonlySet<string>
 ) {
   return (
     items.find((candidate) => !unavailableItemIds.has(candidate.id))?.id ?? null
+  )
+}
+
+type DragOriginSlotMarkerProps = {
+  onDragOver: React.DragEventHandler<HTMLDivElement>
+  onDrop: React.DragEventHandler<HTMLDivElement>
+  slot: DragSlot
+}
+
+function DragOriginSlotMarker({
+  onDragOver,
+  onDrop,
+  slot,
+}: DragOriginSlotMarkerProps) {
+  return (
+    <div
+      data-drag-origin-slot={slot.draggedItemId}
+      aria-label={`Original position for ${slot.title}`}
+      className="bg-amber-500/5 px-2 py-1"
+      style={{
+        paddingLeft: `calc(${slot.depth * 1.25}rem + 2.5rem)`,
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <div
+        aria-hidden="true"
+        className="rounded-sm border border-dashed border-amber-500/70 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-200"
+      >
+        Original position
+      </div>
+    </div>
   )
 }
 
@@ -1833,6 +1972,73 @@ export function Outliner({
       selectedView,
     ]
   )
+  const dragOriginRows = React.useMemo(() => {
+    if (!dragPreview) {
+      return []
+    }
+
+    return visibleOutlinerRows(activeItems, expandedIds, {
+      hiddenItemIds: mergedHiddenItemIds,
+      leverageSort: selectedView !== 'tree' ? true : leverageSort,
+      localSiblingAnchorIds,
+      newlyAddedIds: mergedNewlyAddedIds,
+      priorityItems: effectivePriorityItems,
+      view: selectedView,
+    })
+  }, [
+    activeItems,
+    dragPreview,
+    effectivePriorityItems,
+    expandedIds,
+    localSiblingAnchorIds,
+    mergedHiddenItemIds,
+    leverageSort,
+    mergedNewlyAddedIds,
+    selectedView,
+  ])
+  const dragSubtreeIds = React.useMemo(
+    () =>
+      dragPreview
+        ? collectSubtreeItemIds(activeItems, dragPreview.draggedItemId)
+        : new Set<string>(),
+    [activeItems, dragPreview]
+  )
+  const dragOriginStructuralSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragStructuralSlot(activeItems, dragPreview.draggedItemId)
+        : null,
+    [activeItems, dragPreview]
+  )
+  const dragCurrentStructuralSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragStructuralSlot(
+            activeItems,
+            dragPreview.draggedItemId,
+            dragPreview
+          )
+        : null,
+    [activeItems, dragPreview]
+  )
+  const dragOriginSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragSlotFromRows(
+            dragOriginRows,
+            dragPreview.draggedItemId,
+            dragSubtreeIds,
+            dragOriginStructuralSlot
+          )
+        : null,
+    [dragOriginRows, dragOriginStructuralSlot, dragPreview, dragSubtreeIds]
+  )
+  const isDragReturnTarget =
+    dragOriginStructuralSlot !== null &&
+    dragCurrentStructuralSlot !== null &&
+    dragSlotsMatch(dragOriginStructuralSlot, dragCurrentStructuralSlot)
+  const dragOriginMarker =
+    dragOriginSlot && !isDragReturnTarget ? dragOriginSlot : null
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -2341,6 +2547,31 @@ export function Outliner({
     return true
   }
 
+  function handleDragOriginSlotDragOver(
+    event: React.DragEvent<HTMLDivElement>,
+    slot: DragSlot
+  ) {
+    if (slot.preview) {
+      updateDragPreview(
+        slot.preview.draggedItemId,
+        slot.preview.targetItemId,
+        slot.preview.position
+      )
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleDragOriginSlotDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    slot: DragSlot
+  ) {
+    event.preventDefault()
+    clearDragState()
+    requestItemFocus(slot.draggedItemId)
+    setSelectedItemId(slot.draggedItemId)
+  }
+
   async function moveDragged(
     draggedItemId: string,
     targetItemId: string,
@@ -2457,93 +2688,128 @@ export function Outliner({
                         text: draftResetRequest.text,
                       }
                     : null
+                const returningDraggedItem =
+                  isDragReturnTarget && dragPreview?.draggedItemId === item.id
 
                 return (
-                  <div
-                    key={item.id}
-                    data-outliner-item-id={item.id}
-                    tabIndex={-1}
-                    onDragOver={(event) => {
-                      const draggedId =
-                        draggingItemId ||
-                        event.dataTransfer.getData('text/plain') ||
-                        null
-                      if (!draggedId || draggedId === item.id) {
-                        return
-                      }
-
-                      const position = dropPosition(event)
-                      if (updateDragPreview(draggedId, item.id, position)) {
-                        event.preventDefault()
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      const draggedId =
-                        draggingItemId ||
-                        event.dataTransfer.getData('text/plain') ||
-                        null
-                      const position = dropPosition(event)
-                      clearDragState()
-                      if (draggedId) {
-                        void moveDragged(draggedId, item.id, position)
-                      }
-                    }}
-                    className={cn(
-                      'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-                      focusedItemId === item.id && 'bg-accent/60',
-                      dragPreview?.draggedItemId === item.id
-                        ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
-                        : draggingItemId === item.id && 'opacity-60'
-                    )}
-                    data-drag-preview={
-                      dragPreview?.draggedItemId === item.id
-                        ? 'true'
-                        : undefined
-                    }
-                  >
-                    <OutlinerRow
-                      item={item}
-                      depth={depth}
-                      hasChildren={hasChildren}
-                      collapsed={collapsed}
-                      displayReadiness={displayReadiness}
-                      selected={selectedItemId === item.id}
-                      onToggle={toggle}
-                      onSelect={(itemId) => setSelectedItemId(itemId)}
-                      onSubmitText={submitText}
-                      onCreateSibling={createSibling}
-                      onKeyboardCommand={runKeyboardCommand}
-                      onDelete={requestItemDelete}
-                      onKeyboardReorder={reorderFromDragHandleKeyboard}
-                      onChangeState={changeItemState}
-                      onChangeDone={changeItemDone}
-                      onOpenNotes={openNotes}
-                      onOpenPromptTimeline={openPromptTimeline}
-                      draftResetRequest={rowDraftResetRequest}
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = 'move'
-                        event.dataTransfer.setData('text/plain', item.id)
-                        setDraggingItemId(item.id)
-                        setDragPreview(null)
-                      }}
-                      onDragEnd={clearDragState}
-                    />
-                    {filteredOutNewlyAdded ? (
-                      <div
-                        className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
-                        style={{
-                          paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
-                        }}
-                      >
-                        added this session, currently filtered out
-                      </div>
+                  <React.Fragment key={item.id}>
+                    {dragOriginMarker?.nextItemId === item.id ? (
+                      <DragOriginSlotMarker
+                        slot={dragOriginMarker}
+                        onDragOver={(event) =>
+                          handleDragOriginSlotDragOver(event, dragOriginMarker)
+                        }
+                        onDrop={(event) =>
+                          handleDragOriginSlotDrop(event, dragOriginMarker)
+                        }
+                      />
                     ) : null}
-                  </div>
+                    <div
+                      data-outliner-item-id={item.id}
+                      tabIndex={-1}
+                      onDragOver={(event) => {
+                        const draggedId =
+                          draggingItemId ||
+                          event.dataTransfer.getData('text/plain') ||
+                          null
+                        if (!draggedId || draggedId === item.id) {
+                          return
+                        }
+
+                        const position = dropPosition(event)
+                        if (updateDragPreview(draggedId, item.id, position)) {
+                          event.preventDefault()
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        const draggedId =
+                          draggingItemId ||
+                          event.dataTransfer.getData('text/plain') ||
+                          null
+                        const position = dropPosition(event)
+                        clearDragState()
+                        if (draggedId) {
+                          void moveDragged(draggedId, item.id, position)
+                        }
+                      }}
+                      className={cn(
+                        'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                        focusedItemId === item.id && 'bg-accent/60',
+                        dragPreview?.draggedItemId === item.id
+                          ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+                          : draggingItemId === item.id && 'opacity-60',
+                        returningDraggedItem &&
+                          'bg-emerald-500/10 ring-emerald-500/60'
+                      )}
+                      data-drag-preview={
+                        dragPreview?.draggedItemId === item.id
+                          ? 'true'
+                          : undefined
+                      }
+                      data-drag-return-target={
+                        returningDraggedItem ? item.id : undefined
+                      }
+                      aria-label={
+                        returningDraggedItem
+                          ? `Drop to return ${item.title} to its original position`
+                          : undefined
+                      }
+                    >
+                      <OutlinerRow
+                        item={item}
+                        depth={depth}
+                        hasChildren={hasChildren}
+                        collapsed={collapsed}
+                        displayReadiness={displayReadiness}
+                        selected={selectedItemId === item.id}
+                        onToggle={toggle}
+                        onSelect={(itemId) => setSelectedItemId(itemId)}
+                        onSubmitText={submitText}
+                        onCreateSibling={createSibling}
+                        onKeyboardCommand={runKeyboardCommand}
+                        onDelete={requestItemDelete}
+                        onKeyboardReorder={reorderFromDragHandleKeyboard}
+                        onChangeState={changeItemState}
+                        onChangeDone={changeItemDone}
+                        onOpenNotes={openNotes}
+                        onOpenPromptTimeline={openPromptTimeline}
+                        draftResetRequest={rowDraftResetRequest}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', item.id)
+                          setDraggingItemId(item.id)
+                          setDragPreview(null)
+                        }}
+                        onDragEnd={clearDragState}
+                      />
+                      {filteredOutNewlyAdded ? (
+                        <div
+                          className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
+                          style={{
+                            paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+                          }}
+                        >
+                          added this session, currently filtered out
+                        </div>
+                      ) : null}
+                    </div>
+                  </React.Fragment>
                 )
               }
             )
           )}
+          {dragOriginMarker?.nextItemId === null ? (
+            <DragOriginSlotMarker
+              slot={dragOriginMarker}
+              onDragOver={(event) =>
+                handleDragOriginSlotDragOver(event, dragOriginMarker)
+              }
+              onDrop={(event) =>
+                handleDragOriginSlotDrop(event, dragOriginMarker)
+              }
+            />
+          ) : null}
         </div>
         <CommentsPanel
           item={selectedItem}
