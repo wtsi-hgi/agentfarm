@@ -22,6 +22,13 @@ type RenderedIconState = {
   surfaceBackgroundColor: string
 }
 
+type IconTreatmentEvidence = {
+  backgroundDistance: number
+  iconDistance: number
+  notes: RenderedIconState
+  promptResponse: RenderedIconState
+}
+
 function alphaFromToken(token: string | undefined): number {
   if (!token) {
     return 1
@@ -316,6 +323,44 @@ function expectAvailableIconToBePerceptible(
   expect(colorDistance(activeBackground, inactiveBackground)).toBeGreaterThan(6)
 }
 
+function iconTreatmentEvidence(
+  notes: RenderedIconState,
+  promptResponse: RenderedIconState
+): IconTreatmentEvidence {
+  return {
+    backgroundDistance: colorDistance(
+      visibleButtonBackground(notes),
+      visibleButtonBackground(promptResponse)
+    ),
+    iconDistance: colorDistance(
+      parseCssColor(notes.iconColor),
+      parseCssColor(promptResponse.iconColor)
+    ),
+    notes,
+    promptResponse,
+  }
+}
+
+function expectAvailableTreatmentsToMatch(
+  notes: RenderedIconState,
+  promptResponse: RenderedIconState
+) {
+  const evidence = iconTreatmentEvidence(notes, promptResponse)
+
+  expect(
+    evidence.iconDistance,
+    `Expected prompt/response available icon colour to match notes available icon colour. Evidence: ${JSON.stringify(
+      evidence
+    )}`
+  ).toBeLessThanOrEqual(8)
+  expect(
+    evidence.backgroundDistance,
+    `Expected prompt/response available button background to match notes available button background. Evidence: ${JSON.stringify(
+      evidence
+    )}`
+  ).toBeLessThanOrEqual(4)
+}
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`marks row note and prompt icons as available in ${colorScheme} mode`, async ({
     page,
@@ -405,3 +450,87 @@ for (const colorScheme of ['light', 'dark'] as const) {
     }
   })
 }
+
+test('uses the same available treatment for notes and prompts on a row that has both', async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: 'light' })
+  const sessionToken = await signInAs(page)
+  const createdItemIds: string[] = []
+
+  try {
+    const suffix = `combined-${Date.now()}`
+    const plain = await createItem(
+      request,
+      sessionToken,
+      `Plain combined icon row ${suffix}`
+    )
+    createdItemIds.push(plain.id)
+    const withNotesAndPrompt = await createItem(
+      request,
+      sessionToken,
+      `Notes and prompt icon row ${suffix}`
+    )
+    createdItemIds.push(withNotesAndPrompt.id)
+
+    await createNote(
+      request,
+      sessionToken,
+      withNotesAndPrompt.id,
+      'Available note'
+    )
+    await createPromptResponseEntry(
+      request,
+      sessionToken,
+      withNotesAndPrompt.id,
+      'prompt',
+      'Available prompt'
+    )
+
+    await gotoPath(page, '/')
+
+    const plainRow = page.locator(`[data-outliner-item-id="${plain.id}"]`)
+    const activeRow = page.locator(
+      `[data-outliner-item-id="${withNotesAndPrompt.id}"]`
+    )
+    await expect(plainRow).toBeVisible()
+    await expect(activeRow).toBeVisible()
+
+    const plainNotesButton = plainRow.getByRole('button', {
+      name: 'Open notes',
+    })
+    const activeNotesButton = activeRow.getByRole('button', {
+      name: 'Open notes',
+    })
+    const activeTimelineButton = activeRow.getByRole('button', {
+      name: 'Open prompt/response timeline',
+    })
+
+    await expect(activeNotesButton).toHaveAccessibleDescription(
+      'Notes available'
+    )
+    await expect(activeTimelineButton).toHaveAccessibleDescription(
+      'Prompt/response entries available'
+    )
+
+    const screenshotPath = testInfo.outputPath('notes-and-prompts-row.png')
+    await activeRow.screenshot({ path: screenshotPath })
+    await testInfo.attach('notes-and-prompts-row', {
+      path: screenshotPath,
+      contentType: 'image/png',
+    })
+
+    const activeNotesState = await renderedIconState(activeNotesButton)
+    expectAvailableIconToBePerceptible(
+      activeNotesState,
+      await renderedIconState(plainNotesButton)
+    )
+    expectAvailableTreatmentsToMatch(
+      activeNotesState,
+      await renderedIconState(activeTimelineButton)
+    )
+  } finally {
+    await deleteBackendItems(request, sessionToken, createdItemIds)
+  }
+})

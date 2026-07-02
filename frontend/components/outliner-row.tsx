@@ -30,6 +30,9 @@ export const MODE_COLOUR_MAP = {
   spec: 'border-l-violet-500',
 } satisfies Record<Mode, string>
 
+const AVAILABLE_ENTRY_BUTTON_CLASS =
+  'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
+
 function selectedState(value: string): State | null {
   return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
 }
@@ -309,8 +312,7 @@ export function OutlinerRow({
           size="icon"
           className={cn(
             'size-8 transition-colors',
-            hasNotes &&
-              'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
+            hasNotes && AVAILABLE_ENTRY_BUTTON_CLASS
           )}
           aria-label="Open notes"
           aria-description={hasNotes ? 'Notes available' : 'No notes available'}
@@ -334,8 +336,7 @@ export function OutlinerRow({
           size="icon"
           className={cn(
             'size-8 transition-colors',
-            hasPromptResponseEntries &&
-              'bg-cyan-500/10 text-cyan-700 hover:bg-cyan-500/15 dark:text-cyan-300 dark:hover:bg-cyan-500/20'
+            hasPromptResponseEntries && AVAILABLE_ENTRY_BUTTON_CLASS
           )}
           aria-label="Open prompt/response timeline"
           aria-description={
