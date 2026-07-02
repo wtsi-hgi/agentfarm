@@ -75,10 +75,14 @@ export async function signInAs(
 export async function createItem(
   request: APIRequestContext,
   sessionToken: string,
-  title: string
+  title: string,
+  options: {
+    parent_id?: string | null
+    state?: string
+  } = {}
 ) {
   const response = await request.post(`${backendBaseUrl}/api/v1/items`, {
-    data: { title },
+    data: { title, ...options },
     headers: {
       'x-agentfarm-session': sessionToken,
     },
@@ -86,6 +90,51 @@ export async function createItem(
   const body = await response.text()
   expect(response.ok(), body).toBeTruthy()
   return JSON.parse(body) as { id: string; title: string }
+}
+
+export async function createNote(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string,
+  body: string
+) {
+  const response = await request.post(
+    `${backendBaseUrl}/api/v1/items/${itemId}/notes`,
+    {
+      data: { body },
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const responseBody = await response.text()
+  expect(response.ok(), responseBody).toBeTruthy()
+  return JSON.parse(responseBody) as { id: string; item_id: string }
+}
+
+export async function createPromptResponseEntry(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string,
+  kind: 'prompt' | 'response',
+  body: string
+) {
+  const response = await request.post(
+    `${backendBaseUrl}/api/v1/items/${itemId}/prompt-responses`,
+    {
+      data: { kind, body },
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const responseBody = await response.text()
+  expect(response.ok(), responseBody).toBeTruthy()
+  return JSON.parse(responseBody) as {
+    id: string
+    item_id: string
+    kind: 'prompt' | 'response'
+  }
 }
 
 export async function deleteBackendItem(

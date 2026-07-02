@@ -97,6 +97,20 @@ def _explicit_needs_edges_by_item(
     return edges_by_item
 
 
+def _item_ids_with_notes(conn: sqlite3.Connection) -> set[str]:
+    """Return item ids that already have one or more dated notes."""
+    rows = conn.execute("SELECT DISTINCT item_id FROM item_notes").fetchall()
+    return {row["item_id"] for row in rows}
+
+
+def _item_ids_with_prompt_response_entries(conn: sqlite3.Connection) -> set[str]:
+    """Return item ids that already have one or more prompt/response entries."""
+    rows = conn.execute(
+        "SELECT DISTINCT item_id FROM prompt_response_entries"
+    ).fetchall()
+    return {row["item_id"] for row in rows}
+
+
 def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether an item with ``item_id`` exists."""
     row = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
@@ -473,6 +487,10 @@ async def get_tree(
     """
     projection = leverage.build_projection(conn)
     needs_edges_by_item = _explicit_needs_edges_by_item(conn)
+    item_ids_with_notes = _item_ids_with_notes(conn)
+    item_ids_with_prompt_response_entries = _item_ids_with_prompt_response_entries(
+        conn,
+    )
     result: list[TreeItemOut] = []
     for item_id in projection.tree_order_ids():
         row = projection.item_rows.get(item_id)
@@ -487,6 +505,10 @@ async def get_tree(
                 needs_edges=needs_edges,
                 actionable=projection.is_actionable(item_id),
                 complete=projection.is_complete(item_id),
+                has_notes=item_id in item_ids_with_notes,
+                has_prompt_response_entries=(
+                    item_id in item_ids_with_prompt_response_entries
+                ),
             )
         )
     return result

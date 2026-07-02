@@ -6,9 +6,8 @@ import {
   ChevronRight,
   CornerDownLeft,
   GripVertical,
-  IndentDecrease,
-  IndentIncrease,
   MessagesSquare,
+  NotebookText,
   Trash2,
 } from 'lucide-react'
 
@@ -18,8 +17,8 @@ import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import {
   STATE_OPTIONS,
+  type ItemReadiness,
   isExternalWaitingItem,
-  itemReadiness,
 } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +30,9 @@ export const MODE_COLOUR_MAP = {
   spec: 'border-l-violet-500',
 } satisfies Record<Mode, string>
 
+const AVAILABLE_ENTRY_BUTTON_CLASS =
+  'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
+
 function selectedState(value: string): State | null {
   return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
 }
@@ -40,6 +42,7 @@ type OutlinerRowProps = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
+  displayReadiness: ItemReadiness
   selected?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
@@ -54,6 +57,7 @@ type OutlinerRowProps = {
   onKeyboardReorder: (item: TreeItem, direction: 'up' | 'down') => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
+  onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
   onDragEnd?: React.DragEventHandler<HTMLButtonElement>
@@ -65,6 +69,7 @@ export function OutlinerRow({
   depth,
   hasChildren,
   collapsed,
+  displayReadiness,
   selected = false,
   onToggle,
   onSelect,
@@ -75,6 +80,7 @@ export function OutlinerRow({
   onKeyboardReorder,
   onChangeState,
   onChangeDone,
+  onOpenNotes,
   onOpenPromptTimeline,
   onDragStart,
   onDragEnd,
@@ -184,9 +190,10 @@ export function OutlinerRow({
   }
 
   const checkedDone = item.state === 'done'
-  const readiness = itemReadiness(item, { ignoreState: hasChildren })
-  const displayDone = readiness === 'done'
-  const displayReady = readiness === 'ready'
+  const displayDone = displayReadiness === 'done'
+  const displayReady = displayReadiness === 'ready'
+  const hasNotes = item.has_notes
+  const hasPromptResponseEntries = item.has_prompt_response_entries
 
   return (
     <div
@@ -211,7 +218,7 @@ export function OutlinerRow({
         aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         title="Drag"
         disabled={pending}
-        draggable={!pending}
+        draggable={false}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
@@ -225,7 +232,7 @@ export function OutlinerRow({
           checked={checkedDone}
           disabled={pending}
           onChange={handleDoneChange}
-          className="border-border bg-background text-foreground focus-visible:ring-ring accent-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
       <div className="flex size-8 items-center justify-center">
@@ -304,40 +311,57 @@ export function OutlinerRow({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-8"
+          className={cn(
+            'size-8 transition-colors',
+            hasNotes && AVAILABLE_ENTRY_BUTTON_CLASS
+          )}
+          aria-label="Open notes"
+          aria-description={hasNotes ? 'Notes available' : 'No notes available'}
+          data-available={hasNotes ? 'true' : 'false'}
+          title={hasNotes ? 'Notes available' : 'Notes'}
+          disabled={pending}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenNotes(item)
+          }}
+        >
+          <NotebookText
+            className="size-3.5"
+            strokeWidth={hasNotes ? 2.75 : 2}
+            aria-hidden="true"
+          />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn(
+            'size-8 transition-colors',
+            hasPromptResponseEntries && AVAILABLE_ENTRY_BUTTON_CLASS
+          )}
           aria-label="Open prompt/response timeline"
-          title="Prompt/response timeline"
+          aria-description={
+            hasPromptResponseEntries
+              ? 'Prompt/response entries available'
+              : 'No prompt/response entries available'
+          }
+          data-available={hasPromptResponseEntries ? 'true' : 'false'}
+          title={
+            hasPromptResponseEntries
+              ? 'Prompt/response entries available'
+              : 'Prompt/response timeline'
+          }
           disabled={pending}
           onClick={(event) => {
             event.stopPropagation()
             onOpenPromptTimeline(item)
           }}
         >
-          <MessagesSquare className="size-3.5" aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Indent item"
-          title="Indent"
-          disabled={pending}
-          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: false })}
-        >
-          <IndentIncrease className="size-3.5" aria-hidden="true" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Outdent item"
-          title="Outdent"
-          disabled={pending}
-          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: true })}
-        >
-          <IndentDecrease className="size-3.5" aria-hidden="true" />
+          <MessagesSquare
+            className="size-3.5"
+            strokeWidth={hasPromptResponseEntries ? 2.75 : 2}
+            aria-hidden="true"
+          />
         </Button>
         <Button
           type="button"

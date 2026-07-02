@@ -148,6 +148,18 @@ class CommentUpdate(BaseModel):
     body: str
 
 
+class NoteCreate(BaseModel):
+    """Request body for recording an item note."""
+
+    body: str
+
+
+class NoteUpdate(BaseModel):
+    """Request body for editing an item note."""
+
+    body: str
+
+
 class PromptResponseEntryCreate(BaseModel):
     """Request body for recording an item prompt or response timeline entry."""
 
@@ -192,6 +204,17 @@ class CommentOut(BaseModel):
     id: str
     item_id: str
     author: str
+    body: str
+    created_at: str
+    updated_at: str
+
+
+class NoteOut(BaseModel):
+    """Response model for a dated item note."""
+
+    id: str
+    item_id: str
+    created_by: str
     body: str
     created_at: str
     updated_at: str
@@ -300,9 +323,13 @@ class TreeItemOut(ItemOut):
     :func:`services.leverage.is_actionable`; ``complete`` is the recursive
     structural predicate from :func:`services.tree.is_complete` (H1). These
     are display/projection flags only: GET ``/tree`` still returns every item.
+    ``has_notes`` and ``has_prompt_response_entries`` tell the outliner whether
+    a row already has dated notes or agent timeline records to open.
     """
 
     needs: list[str]
     needs_edges: list[TreeDependencyEdgeOut]
     actionable: bool
     complete: bool
+    has_notes: bool
+    has_prompt_response_entries: bool

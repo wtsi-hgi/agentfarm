@@ -31,6 +31,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
@@ -54,6 +56,24 @@ function renderedItemIds(element: React.ReactElement) {
   return Array.from(
     document.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
   ).map((row) => row.dataset.outlinerItemId)
+}
+
+function renderedDocument(element: React.ReactElement) {
+  return new JSDOM(renderToStaticMarkup(element)).window.document
+}
+
+function itemActionButton(
+  document: Document,
+  itemId: string,
+  ariaLabel: string
+) {
+  const button = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label="${ariaLabel}"]`
+  )
+  if (!(button instanceof document.defaultView!.HTMLButtonElement)) {
+    throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
+  }
+  return button
 }
 
 describe('Outliner', () => {
@@ -82,6 +102,57 @@ describe('Outliner', () => {
     expect(
       visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
     ).toEqual(['prompt', 'review'])
+  })
+
+  it('describes row note and prompt availability to assistive technology', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({ id: 'plain', title: 'Plain work' }),
+          item({
+            id: 'noted',
+            title: 'Noted work',
+            sort_order: 2,
+            has_notes: true,
+          }),
+          item({
+            id: 'prompted',
+            title: 'Prompted work',
+            sort_order: 3,
+            has_prompt_response_entries: true,
+          }),
+        ],
+      })
+    )
+
+    const plainNotes = itemActionButton(document, 'plain', 'Open notes')
+    const activeNotes = itemActionButton(document, 'noted', 'Open notes')
+    const plainTimeline = itemActionButton(
+      document,
+      'plain',
+      'Open prompt/response timeline'
+    )
+    const activeTimeline = itemActionButton(
+      document,
+      'prompted',
+      'Open prompt/response timeline'
+    )
+
+    expect(activeNotes.getAttribute('aria-description')).toBe('Notes available')
+    expect(plainNotes.getAttribute('aria-description')).toBe(
+      'No notes available'
+    )
+    expect(activeNotes.getAttribute('data-available')).toBe('true')
+    expect(plainNotes.getAttribute('data-available')).toBe('false')
+
+    expect(activeTimeline.getAttribute('aria-description')).toBe(
+      'Prompt/response entries available'
+    )
+    expect(plainTimeline.getAttribute('aria-description')).toBe(
+      'No prompt/response entries available'
+    )
+    expect(activeTimeline.getAttribute('data-available')).toBe('true')
+    expect(plainTimeline.getAttribute('data-available')).toBe('false')
   })
 
   it('displays an explicit sibling section dependency before its waiting section', () => {
@@ -392,11 +463,126 @@ describe('Outliner', () => {
       visibleOutlinerRows(items, expandedIds, {
         leverageSort: true,
         priorityItems,
+        view: 'up-next',
       })
         .filter((row) => priorityItems.some((item) => item.id === row.item.id))
         .map((row) => row.item.id)
     ).toEqual(['a1', 'b1', 'g1'])
     expect(items).toEqual(before)
+  })
+
+  it('keeps manual tree order when priority ranks prefer different roots, sections, and children', () => {
+    const items = [
+      item({
+        id: 'root-a',
+        title: 'Root A',
+        actionable: false,
+        sort_order: 1,
+      }),
+      item({
+        id: 'root-a-child-one',
+        title: 'Root A child one',
+        parent_id: 'root-a',
+        sort_order: 1,
+      }),
+      item({
+        id: 'root-b',
+        title: 'Root B',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'section-one',
+        title: 'Section one',
+        actionable: false,
+        parent_id: 'root-b',
+        sort_order: 1,
+      }),
+      item({
+        id: 'section-two',
+        title: 'Section two',
+        actionable: false,
+        parent_id: 'root-b',
+        sort_order: 2,
+      }),
+      item({
+        id: 'section-two-child-one',
+        title: 'Section two child one',
+        parent_id: 'section-two',
+        sort_order: 1,
+      }),
+      item({
+        id: 'section-two-child-two',
+        title: 'Section two child two',
+        parent_id: 'section-two',
+        sort_order: 2,
+      }),
+      item({
+        id: 'loose-root-b-child',
+        title: 'Loose root B child',
+        parent_id: 'root-b',
+        sort_order: 3,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(
+        items,
+        new Set(['root-a', 'root-b', 'section-one', 'section-two']),
+        {
+          leverageSort: true,
+          priorityItems: [
+            { id: 'section-two-child-two', rank: 1 },
+            { id: 'loose-root-b-child', rank: 2 },
+            { id: 'root-a-child-one', rank: 3 },
+          ],
+        }
+      ).map((row) => row.item.id)
+    ).toEqual([
+      'root-a',
+      'root-a-child-one',
+      'root-b',
+      'section-one',
+      'section-two',
+      'section-two-child-one',
+      'section-two-child-two',
+      'loose-root-b-child',
+    ])
+  })
+
+  it('keeps a moved completed root section above open roots in Tree when priority data exists', () => {
+    const items = [
+      item({
+        id: 'completed-root',
+        title: 'Completed root section',
+        actionable: false,
+        complete: true,
+        state: 'done',
+        sort_order: 1,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'completed-root-child',
+        title: 'Completed root child',
+        parent_id: 'completed-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'open-root',
+        title: 'Open root',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['completed-root']), {
+        leverageSort: true,
+        priorityItems: [
+          { id: 'open-root', rank: 1 },
+          { id: 'completed-root-child', rank: 2 },
+        ],
+      }).map((row) => row.item.id)
+    ).toEqual(['completed-root', 'completed-root-child', 'open-root'])
   })
 
   it('keeps a section leaf chain in sort order during priority projection', () => {
@@ -432,7 +618,7 @@ describe('Outliner', () => {
     ).toEqual(['section', 'first', 'second'])
   })
 
-  it('keeps done rows at the end of priority projection without breaking a section chain', () => {
+  it('keeps done rows out of up-next priority projection without breaking section context', () => {
     const items = [
       item({
         id: 'section',
@@ -471,8 +657,9 @@ describe('Outliner', () => {
           { id: 'ready', rank: 2 },
           { id: 'second', rank: 3 },
         ],
+        view: 'up-next',
       }).map((row) => row.item.id)
-    ).toEqual(['ready', 'section', 'first', 'second'])
+    ).toEqual(['ready', 'section', 'second'])
   })
 
   it('ignores a section stored abandoned state for marker filtering and priority projection', () => {
@@ -521,7 +708,7 @@ describe('Outliner', () => {
     ).toEqual(['section', 'urgent-child', 'ready-root'])
   })
 
-  it('ranks unranked done rows after unranked not-done rows in priority projection', () => {
+  it('keeps manual root order in Tree when an unranked done row precedes an open row', () => {
     const items = [
       item({
         id: 'done',
@@ -543,7 +730,7 @@ describe('Outliner', () => {
         leverageSort: true,
         priorityItems: [],
       }).map((row) => row.item.id)
-    ).toEqual(['open', 'done'])
+    ).toEqual(['done', 'open'])
   })
 
   it('keeps collapsed child data available for expansion', () => {

@@ -37,6 +37,7 @@ type CommentsPanelProps = {
   allItems?: readonly TreeItem[]
   activityRefreshKey?: number
   className?: string
+  coordinateDependencyDropActive?: boolean
   draggingItemId?: string | null
   onAddDependency?: (fromId: string, toId: string) => Promise<void>
   onRemoveDependency?: (dependencyId: string) => Promise<void>
@@ -77,6 +78,7 @@ export function CommentsPanel({
   allItems = [],
   activityRefreshKey = 0,
   className,
+  coordinateDependencyDropActive = false,
   draggingItemId = null,
   onAddDependency,
   onRemoveDependency,
@@ -618,13 +620,21 @@ export function CommentsPanel({
   }
 
   function renderDependencyDropTarget(compact = false) {
+    const dependencyDropTargetActive =
+      dependencyDropActive || coordinateDependencyDropActive
+
     return (
       <div
         aria-label="Add dependency"
+        data-coordinate-dependency-drop-active={
+          coordinateDependencyDropActive ? 'true' : undefined
+        }
+        data-dependency-drop-target={item ? 'true' : undefined}
+        data-dependency-source-id={item?.id}
         className={cn(
           'border-border bg-background text-muted-foreground flex items-center gap-2 rounded-md border border-dashed transition-colors',
           compact ? 'h-8 min-w-0 px-2 text-xs' : 'min-h-10 p-2 text-sm',
-          dependencyDropActive && 'border-foreground text-foreground',
+          dependencyDropTargetActive && 'border-foreground text-foreground',
           (!item || savingDependency) && 'cursor-not-allowed opacity-60'
         )}
         onDragEnter={(event) => {

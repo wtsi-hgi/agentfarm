@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS comments (
   updated_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_notes (
+  id          TEXT PRIMARY KEY,
+  item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  created_by  TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS prompt_response_entries (
   id          TEXT PRIMARY KEY,
   item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -100,3 +109,9 @@ CREATE INDEX IF NOT EXISTS idx_dependencies_kind_from
 
 CREATE INDEX IF NOT EXISTS idx_dependencies_auto_chain_from
   ON dependencies(automatic_chain, from_id);
+
+CREATE INDEX IF NOT EXISTS idx_item_notes_item_created
+  ON item_notes(item_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_response_entries_item_created
+  ON prompt_response_entries(item_id, created_at, id);

@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "items",
     "dependencies",
     "comments",
+    "item_notes",
     "prompt_response_entries",
     "item_state_changes",
     "markers",
@@ -35,6 +36,12 @@ EXPECTED_INDEXES = {
     "idx_dependencies_to",
     "idx_dependencies_kind_from",
     "idx_dependencies_auto_chain_from",
+    "idx_item_notes_item_created",
+    "idx_prompt_response_entries_item_created",
+}
+EXPECTED_INDEX_COLUMNS = {
+    "idx_item_notes_item_created": ["item_id", "created_at", "id"],
+    "idx_prompt_response_entries_item_created": ["item_id", "created_at", "id"],
 }
 
 
@@ -58,6 +65,13 @@ def _index_names(db_path: Path) -> set[str]:
             """
         ).fetchall()
     return {row["name"] for row in rows}
+
+
+def _index_columns(db_path: Path, index_name: str) -> list[str]:
+    """Return the indexed columns for ``index_name`` in order."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(f"PRAGMA index_info({index_name})").fetchall()
+    return [row["name"] for row in rows]
 
 
 def _insert_item(conn: sqlite3.Connection, item_id: str) -> None:
@@ -116,6 +130,10 @@ def test_migration_creates_projection_indexes(tmp_path) -> None:
     apply_migrations(db_path)
 
     assert _index_names(db_path) == EXPECTED_INDEXES
+    assert {
+        index_name: _index_columns(db_path, index_name)
+        for index_name in EXPECTED_INDEX_COLUMNS
+    } == EXPECTED_INDEX_COLUMNS
 
 
 def test_migration_creates_parent_directory(tmp_path) -> None:
@@ -305,6 +323,36 @@ def test_migration_backfills_automatic_leaf_chain_once(tmp_path) -> None:
     assert [row["id"] for row in migrations] == ["20260701_automatic_sibling_chain"]
 
 
+def test_migration_records_run_once_marker_in_legacy_timestamped_table(
+    tmp_path,
+) -> None:
+    """Existing DBs may have a non-null timestamp on migration markers."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+              id TEXT PRIMARY KEY,
+              applied_at TEXT NOT NULL
+            )
+            """
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, applied_at
+            FROM schema_migrations
+            WHERE id = '20260701_automatic_sibling_chain'
+            """
+        ).fetchone()
+
+    assert row is not None
+    assert row["applied_at"]
+
+
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:
     """Every connection enforces PRAGMA foreign_keys = ON (default is OFF)."""
     db_path = tmp_path / "agentfarm.db"
@@ -416,6 +464,39 @@ def test_delete_item_cascades_to_prompt_response_entries(tmp_path) -> None:
         remaining = conn.execute(
             "SELECT COUNT(*) FROM prompt_response_entries"
         ).fetchone()[0]
+
+    assert remaining == 0
+
+
+def test_delete_item_cascades_to_notes(tmp_path) -> None:
+    """Deleting an item removes its dated notes."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        _insert_item(conn, "item-a")
+        conn.execute(
+            """
+            INSERT INTO item_notes (
+                id, item_id, created_by, body, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "note-1",
+                "item-a",
+                "alice",
+                "# Note",
+                "2026-01-01T00:00:00.000000Z",
+                "2026-01-01T00:00:00.000000Z",
+            ),
+        )
+
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM items WHERE id = ?", ("item-a",))
+
+    with get_connection(db_path) as conn:
+        remaining = conn.execute("SELECT COUNT(*) FROM item_notes").fetchone()[0]
 
     assert remaining == 0
 

@@ -16,6 +16,8 @@ import {
 } from '@/app/actions'
 import { CommentsPanel } from '@/components/comments-panel'
 import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
+import type { ItemDialogBreadcrumb } from '@/components/item-dialog-heading'
+import { ItemNotesDialog } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
 import { OutlinerRow } from '@/components/outliner-row'
 import {
@@ -50,7 +52,11 @@ import {
   type RowMutationActions,
   type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
-import { isExternalWaitingItem } from '@/lib/state-metadata'
+import {
+  type ItemReadiness,
+  isExternalWaitingItem,
+  itemReadiness,
+} from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -58,6 +64,7 @@ export type VisibleOutlinerRow = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
+  displayReadiness: ItemReadiness
   filteredOutNewlyAdded: boolean
 }
 
@@ -96,12 +103,49 @@ type AfterMoveTarget = {
 
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
-type DropPosition = 'before' | 'after'
+type DropPosition = 'before' | 'inside' | 'after'
 
 type DragPreview = {
   draggedItemId: string
   targetItemId: string
   position: DropPosition
+}
+
+type DragSlot = {
+  depth: number
+  draggedItemId: string
+  nextItemId: string | null
+  preview: DragPreview | null
+  title: string
+}
+
+type DragStructuralSlot = {
+  parentId: string | null
+  previousSiblingId: string | null
+  nextItemId: string | null
+}
+
+type PointerDragRow = {
+  bottom: number
+  height: number
+  id: string
+  top: number
+}
+
+type CoordinateDragStartEvent = {
+  button: number
+  clientX: number
+  clientY: number
+  ctrlKey: boolean
+  metaKey: boolean
+  preventDefault: () => void
+  stopPropagation: () => void
+}
+
+type CoordinateDependencyDropTarget = {
+  fromId: string
+  toId: string
+  valid: boolean
 }
 
 type FocusRequest = {
@@ -381,6 +425,8 @@ function treeItemFromSavedItem(savedItem: Item): TreeItem {
       !isExternalWaitingItem(savedItem) &&
       !savedItem.blocked_external,
     complete,
+    has_notes: false,
+    has_prompt_response_entries: false,
   }
 }
 
@@ -684,6 +730,8 @@ function mergeSavedItem(
           ...merged,
           needs: item.needs,
           needs_edges: item.needs_edges,
+          has_notes: item.has_notes,
+          has_prompt_response_entries: item.has_prompt_response_entries,
         }
       }
       if (!oldSlug || oldSlug === savedItem.slug) {
@@ -700,6 +748,42 @@ function mergeSavedItem(
       }
     })
   )
+}
+
+function markItemContentAvailability(
+  items: TreeItem[],
+  itemId: string,
+  availability: Partial<
+    Pick<TreeItem, 'has_notes' | 'has_prompt_response_entries'>
+  >
+): TreeItem[] {
+  let changed = false
+  const nextItems = items.map((item) => {
+    if (item.id !== itemId) {
+      return item
+    }
+
+    const hasNotes = availability.has_notes ?? item.has_notes
+    const hasPromptResponseEntries =
+      availability.has_prompt_response_entries ??
+      item.has_prompt_response_entries
+
+    if (
+      item.has_notes === hasNotes &&
+      item.has_prompt_response_entries === hasPromptResponseEntries
+    ) {
+      return item
+    }
+
+    changed = true
+    return {
+      ...item,
+      has_notes: hasNotes,
+      has_prompt_response_entries: hasPromptResponseEntries,
+    }
+  })
+
+  return changed ? nextItems : items
 }
 
 function appendSavedItem(
@@ -952,6 +1036,7 @@ function makeChildMap(
 
   const priorityRanks = makePriorityRanks(order.priorityItems)
   const view = order.view ?? 'tree'
+  const usePriorityRanks = order.leverageSort === true && view !== 'tree'
   const bestRankCache = new Map<string, number>()
 
   function bestPriorityRank(item: TreeItem): number {
@@ -1121,10 +1206,12 @@ function makeChildMap(
 
   function sortSectionUnits(units: TreeItem[][]) {
     units.sort((a, b) => {
-      const rankA = unitPriorityRank(a)
-      const rankB = unitPriorityRank(b)
-      if (rankA !== rankB) {
-        return rankA - rankB
+      if (usePriorityRanks) {
+        const rankA = unitPriorityRank(a)
+        const rankB = unitPriorityRank(b)
+        if (rankA !== rankB) {
+          return rankA - rankB
+        }
       }
 
       const completeOrder = unitDoneOrder(a, b)
@@ -1150,10 +1237,16 @@ function makeChildMap(
     }
 
     if (parentId === null) {
-      siblings.sort(priorityOrder)
+      siblings.sort(usePriorityRanks ? priorityOrder : treeOrder)
       if (view === 'tree') {
         applyLocalSiblingAnchors(siblings)
       }
+      applyExplicitSectionDependencyOrder(siblings)
+      continue
+    }
+
+    if (!usePriorityRanks) {
+      siblings.sort(treeOrder)
       applyExplicitSectionDependencyOrder(siblings)
       continue
     }
@@ -1195,6 +1288,28 @@ function collectionToSet(collection: IdCollection | undefined): Set<string> {
   return isIdSet(collection) ? new Set(collection) : new Set(collection)
 }
 
+function itemAncestorBreadcrumbs(
+  item: TreeItem | null,
+  itemsById: ReadonlyMap<string, TreeItem>
+): ItemDialogBreadcrumb[] {
+  const ancestors: ItemDialogBreadcrumb[] = []
+  const visited = new Set<string>()
+  let parentId = item?.parent_id ?? null
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = itemsById.get(parentId)
+    if (!parent) {
+      break
+    }
+
+    ancestors.push({ id: parent.id, title: parent.title })
+    parentId = parent.parent_id
+  }
+
+  return ancestors.reverse()
+}
+
 function orderedSiblings(items: TreeItem[], parentId: string | null) {
   return items
     .filter((item) => item.parent_id === parentId)
@@ -1231,13 +1346,31 @@ function precedingSiblingId(items: TreeItem[], item: TreeItem): string | null {
   return index > 0 ? (siblings[index - 1]?.id ?? null) : null
 }
 
-function dropPosition(event: React.DragEvent<HTMLElement>): DropPosition {
-  const rect = event.currentTarget.getBoundingClientRect()
+function dropPositionFromRect(
+  clientY: number,
+  rect: Pick<DOMRect, 'height' | 'top'>
+): DropPosition {
   if (rect.height <= 0) {
     return 'after'
   }
 
-  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  const offsetY = clientY - rect.top
+  const beforeThreshold = rect.height * 0.25
+  const afterThreshold = rect.height * 0.75
+  if (offsetY < beforeThreshold) {
+    return 'before'
+  }
+  if (offsetY > afterThreshold) {
+    return 'after'
+  }
+  return 'inside'
+}
+
+function dropPosition(event: React.DragEvent<HTMLElement>): DropPosition {
+  return dropPositionFromRect(
+    event.clientY,
+    event.currentTarget.getBoundingClientRect()
+  )
 }
 
 function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
@@ -1314,16 +1447,28 @@ function applyDragPreviewToChildren(
   }
 
   const [removedItem] = sourceSiblings.splice(sourceIndex, 1)
+  if (!removedItem) {
+    return
+  }
+
+  if (preview.position === 'inside') {
+    const destinationSiblings = children.get(targetItem.id) ?? []
+    destinationSiblings.splice(0, 0, {
+      ...removedItem,
+      parent_id: targetItem.id,
+    })
+    children.set(targetItem.id, destinationSiblings)
+    return
+  }
+
   const destinationParentId = targetItem.parent_id
   const destinationSiblings = children.get(destinationParentId) ?? []
   const targetIndex = destinationSiblings.findIndex(
     (sibling) => sibling.id === targetItem.id
   )
 
-  if (!removedItem || targetIndex < 0) {
-    if (removedItem) {
-      sourceSiblings.splice(sourceIndex, 0, removedItem)
-    }
+  if (targetIndex < 0) {
+    sourceSiblings.splice(sourceIndex, 0, removedItem)
     return
   }
 
@@ -1336,12 +1481,137 @@ function applyDragPreviewToChildren(
   children.set(destinationParentId, destinationSiblings)
 }
 
+function dragStructuralSlotFromChildren(
+  children: ChildMap,
+  draggedItemId: string
+): DragStructuralSlot | null {
+  for (const [parentId, siblings] of children.entries()) {
+    const index = siblings.findIndex((sibling) => sibling.id === draggedItemId)
+    if (index < 0) {
+      continue
+    }
+
+    return {
+      parentId,
+      previousSiblingId: siblings[index - 1]?.id ?? null,
+      nextItemId: siblings[index + 1]?.id ?? null,
+    }
+  }
+  return null
+}
+
+function dragStructuralSlot(
+  items: TreeItem[],
+  draggedItemId: string,
+  preview?: DragPreview | null
+): DragStructuralSlot | null {
+  const children = localChildrenByParent(items)
+  applyDragPreviewToChildren(children, items, preview)
+  return dragStructuralSlotFromChildren(children, draggedItemId)
+}
+
+function dragPreviewForStructuralSlot(
+  draggedItemId: string,
+  slot: DragStructuralSlot
+): DragPreview | null {
+  if (slot.nextItemId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.nextItemId,
+      position: 'before',
+    }
+  }
+  if (slot.previousSiblingId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.previousSiblingId,
+      position: 'after',
+    }
+  }
+  if (slot.parentId) {
+    return {
+      draggedItemId,
+      targetItemId: slot.parentId,
+      position: 'inside',
+    }
+  }
+  return null
+}
+
+function dragSlotFromRows(
+  rows: readonly VisibleOutlinerRow[],
+  draggedItemId: string,
+  draggedSubtreeIds: ReadonlySet<string>,
+  structuralSlot: DragStructuralSlot | null
+): DragSlot | null {
+  const draggedIndex = rows.findIndex((row) => row.item.id === draggedItemId)
+  const draggedRow = rows[draggedIndex]
+  if (!draggedRow || !structuralSlot) {
+    return null
+  }
+
+  const nextRow = rows
+    .slice(draggedIndex + 1)
+    .find((row) => !draggedSubtreeIds.has(row.item.id))
+
+  return {
+    depth: draggedRow.depth,
+    draggedItemId,
+    nextItemId: nextRow?.item.id ?? null,
+    preview: dragPreviewForStructuralSlot(draggedItemId, structuralSlot),
+    title: draggedRow.item.title,
+  }
+}
+
+function dragSlotsMatch(
+  origin: DragStructuralSlot,
+  current: DragStructuralSlot
+): boolean {
+  return (
+    origin.parentId === current.parentId &&
+    origin.previousSiblingId === current.previousSiblingId &&
+    origin.nextItemId === current.nextItemId
+  )
+}
+
 function firstAvailableItemId(
   items: TreeItem[],
   unavailableItemIds: ReadonlySet<string>
 ) {
   return (
     items.find((candidate) => !unavailableItemIds.has(candidate.id))?.id ?? null
+  )
+}
+
+type DragOriginSlotMarkerProps = {
+  onDragOver: React.DragEventHandler<HTMLDivElement>
+  onDrop: React.DragEventHandler<HTMLDivElement>
+  slot: DragSlot
+}
+
+function DragOriginSlotMarker({
+  onDragOver,
+  onDrop,
+  slot,
+}: DragOriginSlotMarkerProps) {
+  return (
+    <div
+      data-drag-origin-slot={slot.draggedItemId}
+      aria-label={`Original position for ${slot.title}`}
+      className="bg-amber-500/5 px-2 py-1"
+      style={{
+        paddingLeft: `calc(${slot.depth * 1.25}rem + 2.5rem)`,
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <div
+        aria-hidden="true"
+        className="rounded-sm border border-dashed border-amber-500/70 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-200"
+      >
+        Original position
+      </div>
+    </div>
   )
 }
 
@@ -1362,11 +1632,42 @@ export function visibleOutlinerRows(
     {
       collapsed: boolean
       directlyVisible: boolean
+      displayReadiness: ItemReadiness
       filteredOutNewlyAdded: boolean
       hasChildren: boolean
     }
   >()
+  const displayReadinessCache = new Map<string, ItemReadiness>()
   const visibleDescendantCache = new Map<string, boolean>()
+
+  function displayReadiness(item: TreeItem): ItemReadiness {
+    const cached = displayReadinessCache.get(item.id)
+    if (cached) {
+      return cached
+    }
+
+    const childItems = children.get(item.id) ?? []
+    if (childItems.length === 0) {
+      const readiness = itemReadiness(item)
+      displayReadinessCache.set(item.id, readiness)
+      return readiness
+    }
+
+    let readiness: ItemReadiness = 'done'
+    for (const child of childItems) {
+      const childReadiness = displayReadiness(child)
+      if (childReadiness === 'ready') {
+        displayReadinessCache.set(item.id, 'ready')
+        return 'ready'
+      }
+      if (childReadiness === 'waiting') {
+        readiness = 'waiting'
+      }
+    }
+
+    displayReadinessCache.set(item.id, readiness)
+    return readiness
+  }
 
   function projection(item: TreeItem) {
     const cached = projectionCache.get(item.id)
@@ -1390,6 +1691,7 @@ export function visibleOutlinerRows(
     const projected = {
       collapsed,
       directlyVisible,
+      displayReadiness: displayReadiness(item),
       filteredOutNewlyAdded,
       hasChildren,
     }
@@ -1413,8 +1715,13 @@ export function visibleOutlinerRows(
 
   function visitTree(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
-        projection(item)
+      const {
+        collapsed,
+        directlyVisible,
+        displayReadiness,
+        filteredOutNewlyAdded,
+        hasChildren,
+      } = projection(item)
 
       if (directlyVisible) {
         rows.push({
@@ -1422,6 +1729,7 @@ export function visibleOutlinerRows(
           depth,
           hasChildren,
           collapsed,
+          displayReadiness,
           filteredOutNewlyAdded,
         })
       }
@@ -1434,8 +1742,13 @@ export function visibleOutlinerRows(
 
   function visitFiltered(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
-        projection(item)
+      const {
+        collapsed,
+        directlyVisible,
+        displayReadiness,
+        filteredOutNewlyAdded,
+        hasChildren,
+      } = projection(item)
       const visible = directlyVisible || hasVisibleDescendant(item)
 
       if (!visible) {
@@ -1447,6 +1760,7 @@ export function visibleOutlinerRows(
         depth,
         hasChildren,
         collapsed,
+        displayReadiness,
         filteredOutNewlyAdded,
       })
 
@@ -1497,6 +1811,7 @@ export function Outliner({
   const [timelineItemId, setTimelineItemId] = React.useState<string | null>(
     null
   )
+  const [notesItemId, setNotesItemId] = React.useState<string | null>(null)
   const [pendingDependencyRemoval, setPendingDependencyRemoval] =
     React.useState<PendingDependencyRemoval | null>(null)
   const [draftResetRequest, setDraftResetRequest] =
@@ -1514,6 +1829,11 @@ export function Outliner({
     null
   )
   const [dragPreview, setDragPreview] = React.useState<DragPreview | null>(null)
+  const [coordinateDependencyDropActive, setCoordinateDependencyDropActive] =
+    React.useState(false)
+  const dragPreviewRef = React.useRef<DragPreview | null>(null)
+  const coordinateDragActiveRef = React.useRef(false)
+  const suppressNextNativeDropRef = React.useRef(false)
   const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
     () => new Map<string, State>()
   )
@@ -1556,6 +1876,28 @@ export function Outliner({
       )
     })
   }, [])
+
+  const updateNotesAvailability = React.useCallback(
+    (itemId: string, hasNotes: boolean) => {
+      setLocalItems((current) =>
+        markItemContentAvailability(current, itemId, {
+          has_notes: hasNotes,
+        })
+      )
+    },
+    []
+  )
+
+  const updatePromptResponseAvailability = React.useCallback(
+    (itemId: string, hasEntries: boolean) => {
+      setLocalItems((current) =>
+        markItemContentAvailability(current, itemId, {
+          has_prompt_response_entries: hasEntries,
+        })
+      )
+    },
+    []
+  )
 
   const activeItems = React.useMemo(
     () => localItems.filter((item) => !locallyDeletedItemIds.has(item.id)),
@@ -1676,12 +2018,88 @@ export function Outliner({
       selectedView,
     ]
   )
+  const dragOriginRows = React.useMemo(() => {
+    if (!dragPreview) {
+      return []
+    }
+
+    return visibleOutlinerRows(activeItems, expandedIds, {
+      hiddenItemIds: mergedHiddenItemIds,
+      leverageSort: selectedView !== 'tree' ? true : leverageSort,
+      localSiblingAnchorIds,
+      newlyAddedIds: mergedNewlyAddedIds,
+      priorityItems: effectivePriorityItems,
+      view: selectedView,
+    })
+  }, [
+    activeItems,
+    dragPreview,
+    effectivePriorityItems,
+    expandedIds,
+    localSiblingAnchorIds,
+    mergedHiddenItemIds,
+    leverageSort,
+    mergedNewlyAddedIds,
+    selectedView,
+  ])
+  const dragSubtreeIds = React.useMemo(
+    () =>
+      dragPreview
+        ? collectSubtreeItemIds(activeItems, dragPreview.draggedItemId)
+        : new Set<string>(),
+    [activeItems, dragPreview]
+  )
+  const dragOriginStructuralSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragStructuralSlot(activeItems, dragPreview.draggedItemId)
+        : null,
+    [activeItems, dragPreview]
+  )
+  const dragCurrentStructuralSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragStructuralSlot(
+            activeItems,
+            dragPreview.draggedItemId,
+            dragPreview
+          )
+        : null,
+    [activeItems, dragPreview]
+  )
+  const dragOriginSlot = React.useMemo(
+    () =>
+      dragPreview
+        ? dragSlotFromRows(
+            dragOriginRows,
+            dragPreview.draggedItemId,
+            dragSubtreeIds,
+            dragOriginStructuralSlot
+          )
+        : null,
+    [dragOriginRows, dragOriginStructuralSlot, dragPreview, dragSubtreeIds]
+  )
+  const isDragReturnTarget =
+    dragOriginStructuralSlot !== null &&
+    dragCurrentStructuralSlot !== null &&
+    dragSlotsMatch(dragOriginStructuralSlot, dragCurrentStructuralSlot)
+  const dragOriginMarker =
+    dragOriginSlot && !isDragReturnTarget ? dragOriginSlot : null
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
   const timelineItem = timelineItemId
     ? (itemsById.get(timelineItemId) ?? null)
     : null
+  const notesItem = notesItemId ? (itemsById.get(notesItemId) ?? null) : null
+  const timelineItemAncestors = React.useMemo(
+    () => itemAncestorBreadcrumbs(timelineItem, itemsById),
+    [itemsById, timelineItem]
+  )
+  const notesItemAncestors = React.useMemo(
+    () => itemAncestorBreadcrumbs(notesItem, itemsById),
+    [itemsById, notesItem]
+  )
 
   React.useEffect(() => {
     if (selectedItemId && itemsById.has(selectedItemId)) {
@@ -1823,6 +2241,9 @@ export function Outliner({
     const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
     setLocallyDeletedItemIds(unavailableIds)
     setTimelineItemId((current) =>
+      current && deletedIds.has(current) ? null : current
+    )
+    setNotesItemId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
@@ -1973,6 +2394,11 @@ export function Outliner({
     setTimelineItemId(item.id)
   }
 
+  function openNotes(item: TreeItem) {
+    setSelectedItemId(item.id)
+    setNotesItemId(item.id)
+  }
+
   function closePendingDependencyRemoval() {
     const pending = pendingDependencyRemoval
     const wasConfirmed = confirmedDependencyRemovalRef.current
@@ -2110,21 +2536,31 @@ export function Outliner({
     await changeItemState(item, await restoredStateForDoneItem(item))
   }
 
-  async function addExplicitDependency(fromId: string, toId: string) {
+  function canAddExplicitDependency(fromId: string, toId: string): boolean {
     const source = itemsById.get(fromId)
     const target = itemsById.get(toId)
-    if (
-      !source ||
-      !target ||
-      source.id === target.id ||
-      source.needs_edges.some((edge) => edge.slug === target.slug)
-    ) {
+
+    return Boolean(
+      source &&
+      target &&
+      source.id !== target.id &&
+      !source.needs_edges.some((edge) => edge.slug === target.slug)
+    )
+  }
+
+  async function addExplicitDependency(fromId: string, toId: string) {
+    if (!canAddExplicitDependency(fromId, toId)) {
+      return
+    }
+
+    const source = itemsById.get(fromId)
+    if (!source) {
       return
     }
 
     await mutationActions.createDependency({
       from_id: source.id,
-      to_id: target.id,
+      to_id: toId,
     })
     setSelectedItemId(source.id)
   }
@@ -2135,7 +2571,9 @@ export function Outliner({
 
   function clearDragState() {
     setDraggingItemId(null)
+    dragPreviewRef.current = null
     setDragPreview(null)
+    setCoordinateDependencyDropActive(false)
   }
 
   function updateDragPreview(
@@ -2145,10 +2583,12 @@ export function Outliner({
   ): boolean {
     const nextPreview = { draggedItemId, targetItemId, position }
     if (!resolveDragPreviewItems(activeItems, nextPreview)) {
+      dragPreviewRef.current = null
       setDragPreview(null)
       return false
     }
 
+    dragPreviewRef.current = nextPreview
     setDragPreview((current) =>
       current?.draggedItemId === draggedItemId &&
       current.targetItemId === targetItemId &&
@@ -2156,7 +2596,40 @@ export function Outliner({
         ? current
         : nextPreview
     )
+    if (position === 'inside') {
+      setExpandedIds((current) => {
+        if (current.has(targetItemId)) {
+          return current
+        }
+        return new Set(current).add(targetItemId)
+      })
+    }
     return true
+  }
+
+  function handleDragOriginSlotDragOver(
+    event: React.DragEvent<HTMLDivElement>,
+    slot: DragSlot
+  ) {
+    if (slot.preview) {
+      updateDragPreview(
+        slot.preview.draggedItemId,
+        slot.preview.targetItemId,
+        slot.preview.position
+      )
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  function handleDragOriginSlotDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    slot: DragSlot
+  ) {
+    event.preventDefault()
+    clearDragState()
+    requestItemFocus(slot.draggedItemId)
+    setSelectedItemId(slot.draggedItemId)
   }
 
   async function moveDragged(
@@ -2174,8 +2647,14 @@ export function Outliner({
       return
     }
 
-    const targetParentId = targetItem.parent_id
-    if (position === 'before') {
+    let targetParentId = targetItem.parent_id
+    if (position === 'inside') {
+      targetParentId = targetItem.id
+      await mutationActions.moveItem(draggedItem.id, {
+        new_parent_id: targetParentId,
+        position: 'first',
+      })
+    } else if (position === 'before') {
       const siblings = orderedSiblings(activeItems, targetParentId).filter(
         (sibling) => sibling.id !== draggedItem.id
       )
@@ -2212,6 +2691,295 @@ export function Outliner({
     }
     requestItemFocus(draggedItem.id)
     setSelectedItemId(draggedItem.id)
+  }
+
+  function dragPreviewReturnsToOrigin(preview: DragPreview): boolean {
+    const originSlot = dragStructuralSlot(activeItems, preview.draggedItemId)
+    const currentSlot = dragStructuralSlot(
+      activeItems,
+      preview.draggedItemId,
+      preview
+    )
+    return (
+      originSlot !== null &&
+      currentSlot !== null &&
+      dragSlotsMatch(originSlot, currentSlot)
+    )
+  }
+
+  function updatePreviewFromDraggedRowPosition(
+    draggedItemId: string,
+    position: DropPosition
+  ): boolean {
+    const currentDragPreview = dragPreviewRef.current ?? dragPreview
+    if (currentDragPreview?.draggedItemId !== draggedItemId) {
+      return false
+    }
+
+    const rowIndex = rows.findIndex((row) => row.item.id === draggedItemId)
+    if (rowIndex < 0) {
+      return true
+    }
+
+    if (position === 'after') {
+      const nextRow = rows
+        .slice(rowIndex + 1)
+        .find((row) => !dragSubtreeIds.has(row.item.id))
+      if (nextRow) {
+        updateDragPreview(draggedItemId, nextRow.item.id, 'after')
+      }
+    }
+
+    return true
+  }
+
+  function updatePreviewFromDraggedRow(
+    event: React.DragEvent<HTMLElement>,
+    draggedItemId: string
+  ): boolean {
+    return updatePreviewFromDraggedRowPosition(
+      draggedItemId,
+      dropPosition(event)
+    )
+  }
+
+  function coordinateDependencyDropTargetAtPoint(
+    draggedItemId: string,
+    clientX: number,
+    clientY: number
+  ): CoordinateDependencyDropTarget | null {
+    const dropTarget = document
+      .elementsFromPoint(clientX, clientY)
+      .map((element) =>
+        element.closest<HTMLElement>('[data-dependency-drop-target="true"]')
+      )
+      .find((element): element is HTMLElement => element instanceof HTMLElement)
+
+    if (!dropTarget) {
+      return null
+    }
+
+    const fromId = dropTarget.dataset.dependencySourceId ?? ''
+    return {
+      fromId,
+      toId: draggedItemId,
+      valid: canAddExplicitDependency(fromId, draggedItemId),
+    }
+  }
+
+  function updateCoordinateDependencyDropTarget(
+    draggedItemId: string,
+    clientX: number,
+    clientY: number
+  ): CoordinateDependencyDropTarget | null {
+    const dependencyDropTarget = coordinateDependencyDropTargetAtPoint(
+      draggedItemId,
+      clientX,
+      clientY
+    )
+    setCoordinateDependencyDropActive(Boolean(dependencyDropTarget?.valid))
+    return dependencyDropTarget?.valid ? dependencyDropTarget : null
+  }
+
+  function updatePointerDragPreview(
+    draggedItemId: string,
+    clientX: number,
+    clientY: number,
+    initialRows: readonly PointerDragRow[]
+  ): boolean {
+    const currentRows = currentPointerDragRows()
+    const hitTestRows =
+      currentRows.length > 0 ? currentRows : Array.from(initialRows)
+    const visibleRows = hitTestRows.filter((row) => row.id !== draggedItemId)
+    if (visibleRows.length > 0) {
+      const firstRow = visibleRows[0]
+      if (!firstRow) {
+        return false
+      }
+      const containingRow = visibleRows.find(
+        (row) => clientY >= row.top && clientY <= row.bottom
+      )
+      const targetRow =
+        containingRow ??
+        visibleRows.reduce((closest, row) => {
+          const closestDistance =
+            clientY < closest.top
+              ? closest.top - clientY
+              : clientY > closest.bottom
+                ? clientY - closest.bottom
+                : 0
+          const rowDistance =
+            clientY < row.top
+              ? row.top - clientY
+              : clientY > row.bottom
+                ? clientY - row.bottom
+                : 0
+          return rowDistance < closestDistance ? row : closest
+        }, firstRow)
+      const position =
+        clientY < targetRow.top
+          ? 'before'
+          : clientY > targetRow.bottom
+            ? 'after'
+            : dropPositionFromRect(clientY, targetRow)
+
+      return updateDragPreview(draggedItemId, targetRow.id, position)
+    }
+
+    const element = document.elementFromPoint(clientX, clientY)
+    const row = element?.closest<HTMLElement>('[data-outliner-item-id]')
+    const targetItemId = row?.dataset.outlinerItemId
+    if (!row || !targetItemId) {
+      return false
+    }
+
+    const position = dropPositionFromRect(clientY, row.getBoundingClientRect())
+    if (targetItemId === draggedItemId) {
+      return updatePreviewFromDraggedRowPosition(draggedItemId, position)
+    }
+
+    return updateDragPreview(draggedItemId, targetItemId, position)
+  }
+
+  function currentPointerDragRows(): PointerDragRow[] {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+    ).flatMap((row): PointerDragRow[] => {
+      const id = row.dataset.outlinerItemId
+      if (!id) {
+        return []
+      }
+      const box = row.getBoundingClientRect()
+      return [
+        {
+          bottom: box.bottom,
+          height: box.height,
+          id,
+          top: box.top,
+        },
+      ]
+    })
+  }
+
+  function finishCoordinateDrag(itemId: string) {
+    const currentDragPreview = dragPreviewRef.current
+    const returnsToOrigin =
+      currentDragPreview !== null &&
+      dragPreviewReturnsToOrigin(currentDragPreview)
+    clearDragState()
+    if (currentDragPreview && !returnsToOrigin) {
+      void moveDragged(
+        currentDragPreview.draggedItemId,
+        currentDragPreview.targetItemId,
+        currentDragPreview.position
+      )
+    } else {
+      requestItemFocus(itemId)
+      setSelectedItemId(itemId)
+    }
+  }
+
+  function beginCoordinateDrag(
+    item: TreeItem,
+    event: CoordinateDragStartEvent
+  ) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey) {
+      return
+    }
+    if (coordinateDragActiveRef.current) {
+      return
+    }
+
+    coordinateDragActiveRef.current = true
+    event.preventDefault()
+    event.stopPropagation()
+
+    const startX = event.clientX
+    const startY = event.clientY
+    const initialRows = currentPointerDragRows()
+    let started = false
+
+    const start = () => {
+      if (started) {
+        return
+      }
+      started = true
+      setDraggingItemId(item.id)
+      dragPreviewRef.current = null
+      setDragPreview(null)
+      setCoordinateDependencyDropActive(false)
+    }
+
+    const cleanup = () => {
+      window.removeEventListener('mousemove', handleMouseMove, true)
+      window.removeEventListener('mouseup', handleMouseUp, true)
+      coordinateDragActiveRef.current = false
+    }
+
+    function handleMouseMove(mouseEvent: MouseEvent) {
+      const moved =
+        Math.abs(mouseEvent.clientX - startX) > 4 ||
+        Math.abs(mouseEvent.clientY - startY) > 4
+      if (!started && !moved) {
+        return
+      }
+
+      start()
+      mouseEvent.preventDefault()
+      if (
+        updateCoordinateDependencyDropTarget(
+          item.id,
+          mouseEvent.clientX,
+          mouseEvent.clientY
+        )
+      ) {
+        dragPreviewRef.current = null
+        setDragPreview(null)
+        return
+      }
+
+      updatePointerDragPreview(
+        item.id,
+        mouseEvent.clientX,
+        mouseEvent.clientY,
+        initialRows
+      )
+    }
+
+    function handleMouseUp(mouseEvent: MouseEvent) {
+      cleanup()
+      if (!started) {
+        return
+      }
+
+      mouseEvent.preventDefault()
+      const dependencyDropTarget = updateCoordinateDependencyDropTarget(
+        item.id,
+        mouseEvent.clientX,
+        mouseEvent.clientY
+      )
+      if (dependencyDropTarget) {
+        clearDragState()
+        if (dependencyDropTarget.valid) {
+          void addExplicitDependency(
+            dependencyDropTarget.fromId,
+            dependencyDropTarget.toId
+          )
+        }
+        return
+      }
+
+      updatePointerDragPreview(
+        item.id,
+        mouseEvent.clientX,
+        mouseEvent.clientY,
+        initialRows
+      )
+      finishCoordinateDrag(item.id)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove, true)
+    window.addEventListener('mouseup', handleMouseUp, true)
   }
 
   async function createRoot(title: string) {
@@ -2259,6 +3027,7 @@ export function Outliner({
                 depth,
                 hasChildren,
                 collapsed,
+                displayReadiness,
                 filteredOutNewlyAdded,
               }) => {
                 const rowDraftResetRequest =
@@ -2268,96 +3037,177 @@ export function Outliner({
                         text: draftResetRequest.text,
                       }
                     : null
+                const returningDraggedItem =
+                  isDragReturnTarget && dragPreview?.draggedItemId === item.id
 
                 return (
-                  <div
-                    key={item.id}
-                    data-outliner-item-id={item.id}
-                    tabIndex={-1}
-                    onDragOver={(event) => {
-                      const draggedId =
-                        draggingItemId ||
-                        event.dataTransfer.getData('text/plain') ||
-                        null
-                      if (!draggedId || draggedId === item.id) {
-                        return
-                      }
-
-                      const position = dropPosition(event)
-                      if (updateDragPreview(draggedId, item.id, position)) {
-                        event.preventDefault()
-                      }
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault()
-                      const draggedId =
-                        draggingItemId ||
-                        event.dataTransfer.getData('text/plain') ||
-                        null
-                      const position = dropPosition(event)
-                      clearDragState()
-                      if (draggedId) {
-                        void moveDragged(draggedId, item.id, position)
-                      }
-                    }}
-                    className={cn(
-                      'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-                      focusedItemId === item.id && 'bg-accent/60',
-                      dragPreview?.draggedItemId === item.id
-                        ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
-                        : draggingItemId === item.id && 'opacity-60'
-                    )}
-                    data-drag-preview={
-                      dragPreview?.draggedItemId === item.id
-                        ? 'true'
-                        : undefined
-                    }
-                  >
-                    <OutlinerRow
-                      item={item}
-                      depth={depth}
-                      hasChildren={hasChildren}
-                      collapsed={collapsed}
-                      selected={selectedItemId === item.id}
-                      onToggle={toggle}
-                      onSelect={(itemId) => setSelectedItemId(itemId)}
-                      onSubmitText={submitText}
-                      onCreateSibling={createSibling}
-                      onKeyboardCommand={runKeyboardCommand}
-                      onDelete={requestItemDelete}
-                      onKeyboardReorder={reorderFromDragHandleKeyboard}
-                      onChangeState={changeItemState}
-                      onChangeDone={changeItemDone}
-                      onOpenPromptTimeline={openPromptTimeline}
-                      draftResetRequest={rowDraftResetRequest}
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = 'move'
-                        event.dataTransfer.setData('text/plain', item.id)
-                        setDraggingItemId(item.id)
-                        setDragPreview(null)
-                      }}
-                      onDragEnd={clearDragState}
-                    />
-                    {filteredOutNewlyAdded ? (
-                      <div
-                        className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
-                        style={{
-                          paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
-                        }}
-                      >
-                        added this session, currently filtered out
-                      </div>
+                  <React.Fragment key={item.id}>
+                    {dragOriginMarker?.nextItemId === item.id ? (
+                      <DragOriginSlotMarker
+                        slot={dragOriginMarker}
+                        onDragOver={(event) =>
+                          handleDragOriginSlotDragOver(event, dragOriginMarker)
+                        }
+                        onDrop={(event) =>
+                          handleDragOriginSlotDrop(event, dragOriginMarker)
+                        }
+                      />
                     ) : null}
-                  </div>
+                    <div
+                      data-outliner-item-id={item.id}
+                      tabIndex={-1}
+                      onMouseDownCapture={(event) => {
+                        const target = event.target
+                        if (
+                          target instanceof Element &&
+                          target.closest('button[aria-label="Drag item"]')
+                        ) {
+                          beginCoordinateDrag(item, event)
+                        }
+                      }}
+                      onDragOver={(event) => {
+                        const draggedId =
+                          draggingItemId ||
+                          event.dataTransfer.getData('text/plain') ||
+                          null
+                        if (!draggedId || draggedId === item.id) {
+                          if (draggedId && !returningDraggedItem) {
+                            const acceptsPreviewDrop =
+                              updatePreviewFromDraggedRow(event, draggedId)
+                            if (acceptsPreviewDrop) {
+                              event.preventDefault()
+                              event.dataTransfer.dropEffect = 'move'
+                            }
+                          }
+                          return
+                        }
+
+                        const position = dropPosition(event)
+                        if (updateDragPreview(draggedId, item.id, position)) {
+                          event.preventDefault()
+                          event.dataTransfer.dropEffect = 'move'
+                        }
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        if (suppressNextNativeDropRef.current) {
+                          suppressNextNativeDropRef.current = false
+                          return
+                        }
+                        const draggedId =
+                          draggingItemId ||
+                          event.dataTransfer.getData('text/plain') ||
+                          null
+                        const currentDragPreview = dragPreviewRef.current
+                        const returnsToOrigin =
+                          currentDragPreview !== null &&
+                          dragPreviewReturnsToOrigin(currentDragPreview)
+                        const returningDrop =
+                          returnsToOrigin && item.id === draggedId
+                        const previewDrop =
+                          currentDragPreview?.draggedItemId === draggedId &&
+                          !returningDrop
+                            ? currentDragPreview
+                            : null
+                        const targetItemId =
+                          previewDrop?.targetItemId ?? item.id
+                        const position =
+                          previewDrop?.position ?? dropPosition(event)
+                        clearDragState()
+                        if (draggedId && !returningDrop) {
+                          void moveDragged(draggedId, targetItemId, position)
+                        }
+                      }}
+                      className={cn(
+                        'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                        focusedItemId === item.id && 'bg-accent/60',
+                        dragPreview?.draggedItemId === item.id
+                          ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+                          : draggingItemId === item.id && 'opacity-60',
+                        returningDraggedItem &&
+                          'bg-emerald-500/10 ring-emerald-500/60'
+                      )}
+                      data-drag-preview={
+                        dragPreview?.draggedItemId === item.id
+                          ? 'true'
+                          : undefined
+                      }
+                      data-drag-return-target={
+                        returningDraggedItem ? item.id : undefined
+                      }
+                      aria-label={
+                        returningDraggedItem
+                          ? `Drop to return ${item.title} to its original position`
+                          : undefined
+                      }
+                    >
+                      <OutlinerRow
+                        item={item}
+                        depth={depth}
+                        hasChildren={hasChildren}
+                        collapsed={collapsed}
+                        displayReadiness={displayReadiness}
+                        selected={selectedItemId === item.id}
+                        onToggle={toggle}
+                        onSelect={(itemId) => setSelectedItemId(itemId)}
+                        onSubmitText={submitText}
+                        onCreateSibling={createSibling}
+                        onKeyboardCommand={runKeyboardCommand}
+                        onDelete={requestItemDelete}
+                        onKeyboardReorder={reorderFromDragHandleKeyboard}
+                        onChangeState={changeItemState}
+                        onChangeDone={changeItemDone}
+                        onOpenNotes={openNotes}
+                        onOpenPromptTimeline={openPromptTimeline}
+                        draftResetRequest={rowDraftResetRequest}
+                        onDragStart={(event) => {
+                          if (coordinateDragActiveRef.current) {
+                            event.preventDefault()
+                            suppressNextNativeDropRef.current = true
+                            return
+                          }
+                          suppressNextNativeDropRef.current = false
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', item.id)
+                          setDraggingItemId(item.id)
+                          dragPreviewRef.current = null
+                          setDragPreview(null)
+                        }}
+                        onDragEnd={clearDragState}
+                      />
+                      {filteredOutNewlyAdded ? (
+                        <div
+                          className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
+                          style={{
+                            paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+                          }}
+                        >
+                          added this session, currently filtered out
+                        </div>
+                      ) : null}
+                    </div>
+                  </React.Fragment>
                 )
               }
             )
           )}
+          {dragOriginMarker?.nextItemId === null ? (
+            <DragOriginSlotMarker
+              slot={dragOriginMarker}
+              onDragOver={(event) =>
+                handleDragOriginSlotDragOver(event, dragOriginMarker)
+              }
+              onDrop={(event) =>
+                handleDragOriginSlotDrop(event, dragOriginMarker)
+              }
+            />
+          ) : null}
         </div>
         <CommentsPanel
           item={selectedItem}
           allItems={activeItems}
           activityRefreshKey={detailRefreshKey}
+          coordinateDependencyDropActive={coordinateDependencyDropActive}
           draggingItemId={draggingItemId}
           className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
           onAddDependency={addExplicitDependency}
@@ -2407,8 +3257,16 @@ export function Outliner({
         }}
       />
       <PromptResponseTimelineDialog
+        ancestors={timelineItemAncestors}
         item={timelineItem}
         onClose={() => setTimelineItemId(null)}
+        onAvailabilityChange={updatePromptResponseAvailability}
+      />
+      <ItemNotesDialog
+        ancestors={notesItemAncestors}
+        item={notesItem}
+        onClose={() => setNotesItemId(null)}
+        onAvailabilityChange={updateNotesAvailability}
       />
     </div>
   )

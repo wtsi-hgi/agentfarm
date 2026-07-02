@@ -50,7 +50,7 @@ test.describe('details panel scroll reproduction', () => {
 
       await gotoPath(page, '/')
 
-      const selectedItem = seededItems[47]
+      const selectedItem = seededItems[0]
       const selectedRow = page.locator(
         `[data-outliner-item-id="${selectedItem.id}"]`
       )

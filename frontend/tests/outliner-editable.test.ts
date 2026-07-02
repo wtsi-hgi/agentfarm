@@ -38,6 +38,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
@@ -108,6 +110,31 @@ describe('editable outliner behaviours', () => {
     )
 
     expect(actions.patchItem).not.toHaveBeenCalled()
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
+  })
+
+  it('does not require confirmation or deletion when automatic dependency text is omitted', async () => {
+    const current = item({
+      id: 'current',
+      title: 'Ship login',
+      needs: ['previous-sibling'],
+      needs_edges: [
+        {
+          id: 'auto-chain-current-previous',
+          slug: 'previous-sibling',
+          automatic_chain: true,
+        },
+      ],
+    })
+    const actions = mutationActions()
+
+    await submitRowText(current, 'Ship better login', actions)
+
+    expect(actions.patchItem).toHaveBeenCalledTimes(1)
+    expect(actions.patchItem).toHaveBeenCalledWith('current', {
+      title: 'Ship better login',
+    })
     expect(actions.createDependency).not.toHaveBeenCalled()
     expect(actions.deleteDependency).not.toHaveBeenCalled()
   })

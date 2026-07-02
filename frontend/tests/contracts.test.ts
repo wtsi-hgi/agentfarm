@@ -14,6 +14,8 @@ import {
   markerListSchema,
   markerSchema,
   messageResponseSchema,
+  noteListSchema,
+  noteSchema,
   notImplementedResponseSchema,
   priorityResponseSchema,
   promptResponseEntryListSchema,
@@ -233,9 +235,11 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     needs_edges: [{ id: 'dep-1', slug: 'build-api' }],
     actionable: true,
     complete: false,
+    has_notes: false,
+    has_prompt_response_entries: true,
   }
 
-  it('parses tree items with needs, edge ids, and work-now flags', () => {
+  it('parses tree items with needs, edge ids, work flags, and content flags', () => {
     expect(treeSchema.parse([validTreeItem])).toEqual([validTreeItem])
   })
 
@@ -251,6 +255,18 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     const { needs_edges: _needsEdges, ...withoutNeedsEdges } = validTreeItem
 
     const result = treeSchema.safeParse([withoutNeedsEdges])
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects tree items missing content availability flags', () => {
+    const {
+      has_notes: _hasNotes,
+      has_prompt_response_entries: _hasPromptResponseEntries,
+      ...withoutContentFlags
+    } = validTreeItem
+
+    const result = treeSchema.safeParse([withoutContentFlags])
 
     expect(result.success).toBe(false)
   })
@@ -353,6 +369,28 @@ describe('prompt/response timeline contracts', () => {
     const { body: _body, ...withoutBody } = entry
 
     expect(promptResponseEntrySchema.safeParse(withoutBody).success).toBe(false)
+  })
+})
+
+describe('note contracts', () => {
+  const note = {
+    id: 'note-1',
+    item_id: 'item-1',
+    created_by: 'alice',
+    body: '## Decision\n- use notes',
+    created_at: '2026-07-02T09:00:00.000000Z',
+    updated_at: '2026-07-02T09:05:00.000000Z',
+  }
+
+  it('parses Note payloads and lists', () => {
+    expect(noteSchema.parse(note)).toEqual(note)
+    expect(noteListSchema.parse([note])).toEqual([note])
+  })
+
+  it('rejects notes without edit timestamps', () => {
+    const { updated_at: _updatedAt, ...withoutUpdatedAt } = note
+
+    expect(noteSchema.safeParse(withoutUpdatedAt).success).toBe(false)
   })
 })
 

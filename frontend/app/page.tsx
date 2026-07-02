@@ -26,6 +26,15 @@ function isUnauthorizedError(error: unknown): boolean {
   return (error as { status: unknown }).status === 401
 }
 
+function countLeafItems(items: readonly TreeItem[]): number {
+  const sectionItemIds = new Set(
+    items
+      .map((item) => item.parent_id)
+      .filter((parentId): parentId is string => parentId !== null)
+  )
+  return items.filter((item) => !sectionItemIds.has(item.id)).length
+}
+
 async function fetchProtectedHomeData(): Promise<HomeProtectedData> {
   try {
     const [items, priorityItems, markers] = await Promise.all([
@@ -51,12 +60,13 @@ export default async function Home() {
   const { authorized, items, markers, priorityItems } = session
     ? await fetchProtectedHomeData()
     : { authorized: false, items: [], markers: [], priorityItems: [] }
+  const leafItemCount = countLeafItems(items)
 
   const metrics = authorized ? (
     <dl className="text-muted-foreground grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:text-right">
       <div>
         <dt className="text-xs uppercase">Items</dt>
-        <dd className="text-foreground font-medium">{items.length}</dd>
+        <dd className="text-foreground font-medium">{leafItemCount}</dd>
       </div>
       <div>
         <dt className="text-xs uppercase">Priority</dt>

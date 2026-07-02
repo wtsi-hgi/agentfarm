@@ -1,6 +1,37 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type APIRequestContext } from '@playwright/test'
 
 import { createItem, gotoPath, signInAs } from './helpers'
+
+const backendBaseUrl =
+  process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
+
+type TreeCountItem = {
+  id: string
+  parent_id: string | null
+}
+
+function countLeafItems(items: readonly TreeCountItem[]): number {
+  const sectionItemIds = new Set(
+    items
+      .map((item) => item.parent_id)
+      .filter((parentId): parentId is string => parentId !== null)
+  )
+  return items.filter((item) => !sectionItemIds.has(item.id)).length
+}
+
+async function backendLeafItemCount(
+  request: APIRequestContext,
+  sessionToken: string
+): Promise<number> {
+  const response = await request.get(`${backendBaseUrl}/api/v1/tree`, {
+    headers: {
+      'x-agentfarm-session': sessionToken,
+    },
+  })
+  const body = await response.text()
+  expect(response.ok(), body).toBeTruthy()
+  return countLeafItems(JSON.parse(body) as TreeCountItem[])
+}
 
 async function fillAndSubmitLoginForm(page: Parameters<typeof signInAs>[0]) {
   await page.getByLabel('Username').fill('playwright-owner')
@@ -85,6 +116,62 @@ test.describe('Agent Farm app shell', () => {
       .toBe(true)
     await expect(page.getByText('Items')).toBeVisible()
     await expect(page.getByText('Ready').first()).toBeVisible()
+  })
+
+  test('counts only leaf items in the app shell item metric', async ({
+    page,
+    request,
+  }, testInfo) => {
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Item count section repro ${Date.now()}`
+    const section = await createItem(
+      request,
+      sessionToken,
+      `${titlePrefix} section`
+    )
+
+    try {
+      await createItem(request, sessionToken, `${titlePrefix} first leaf`, {
+        parent_id: section.id,
+      })
+      await createItem(request, sessionToken, `${titlePrefix} second leaf`, {
+        parent_id: section.id,
+      })
+      const expectedLeafItemCount = await backendLeafItemCount(
+        request,
+        sessionToken
+      )
+
+      await gotoPath(page, '/')
+
+      const itemMetric = page
+        .locator('header dl div')
+        .filter({ has: page.locator('dt', { hasText: 'Items' }) })
+        .locator('dd')
+
+      await expect(
+        page.locator(`[data-outliner-item-id="${section.id}"]`)
+      ).toBeVisible()
+      await expect(itemMetric).toBeVisible()
+
+      const screenshotPath = testInfo.outputPath('item-count-section-repro.png')
+      await page.screenshot({
+        fullPage: true,
+        path: screenshotPath,
+      })
+      await testInfo.attach('item-count-section-repro', {
+        path: screenshotPath,
+        contentType: 'image/png',
+      })
+
+      await expect(itemMetric).toHaveText(String(expectedLeafItemCount))
+    } finally {
+      await request.delete(`${backendBaseUrl}/api/v1/items/${section.id}`, {
+        headers: {
+          'x-agentfarm-session': sessionToken,
+        },
+      })
+    }
   })
 
   test('shows only the sign-in box after signing out', async ({ page }) => {

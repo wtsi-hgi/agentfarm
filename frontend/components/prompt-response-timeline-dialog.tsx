@@ -7,6 +7,10 @@ import {
   createPromptResponseEntry,
   fetchPromptResponseEntries,
 } from '@/app/actions'
+import {
+  ItemDialogHeading,
+  type ItemDialogBreadcrumb,
+} from '@/components/item-dialog-heading'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type {
@@ -17,8 +21,10 @@ import type {
 import { cn } from '@/lib/utils'
 
 type PromptResponseTimelineDialogProps = {
+  ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void
+  onAvailabilityChange?: (itemId: string, hasEntries: boolean) => void
 }
 
 function formatTimestamp(timestamp: string) {
@@ -51,8 +57,10 @@ function sortedEntries(entries: readonly PromptResponseEntry[]) {
 }
 
 export function PromptResponseTimelineDialog({
+  ancestors = [],
   item,
   onClose,
+  onAvailabilityChange,
 }: PromptResponseTimelineDialogProps) {
   const titleId = React.useId()
   const itemId = item?.id ?? null
@@ -80,6 +88,7 @@ export function PromptResponseTimelineDialog({
       const loadedEntries = await fetchPromptResponseEntries(requestedItemId)
       if (currentItemId.current === requestedItemId) {
         setEntries(sortedEntries(loadedEntries))
+        onAvailabilityChange?.(requestedItemId, loadedEntries.length > 0)
       }
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
@@ -90,7 +99,7 @@ export function PromptResponseTimelineDialog({
         setLoading(false)
       }
     }
-  }, [itemId])
+  }, [itemId, onAvailabilityChange])
 
   React.useEffect(() => {
     void loadEntries()
@@ -128,6 +137,7 @@ export function PromptResponseTimelineDialog({
         return
       }
       setEntries((current) => sortedEntries([...current, created]))
+      onAvailabilityChange?.(requestedItemId, true)
       setDraft('')
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
@@ -158,12 +168,11 @@ export function PromptResponseTimelineDialog({
               <MessagesSquare className="size-4" aria-hidden="true" />
               Agent timeline
             </div>
-            <h2
-              id={titleId}
-              className="text-foreground mt-1 truncate text-lg font-semibold"
-            >
-              {item.title}
-            </h2>
+            <ItemDialogHeading
+              ancestors={ancestors}
+              item={item}
+              titleId={titleId}
+            />
           </div>
           <Button
             type="button"

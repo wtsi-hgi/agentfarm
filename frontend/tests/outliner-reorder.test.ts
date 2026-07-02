@@ -14,15 +14,18 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createNote: vi.fn(),
   createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
   editComment: vi.fn(),
+  editNote: vi.fn(),
   fetchChanges: vi.fn(),
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
@@ -55,6 +58,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 type MoveInput =
@@ -168,6 +173,18 @@ function dialogButton(ariaLabel: string) {
 
 function dragHandle(element: ParentNode) {
   return button(element, 'Drag item')
+}
+
+function rowContent(container: ParentNode, itemId: string) {
+  const content = outlinerItem(container, itemId).firstElementChild
+  if (!(content instanceof HTMLElement)) {
+    throw new Error(`Missing row content: ${itemId}`)
+  }
+  return content
+}
+
+function rowIndent(container: ParentNode, itemId: string) {
+  return rowContent(container, itemId).style.paddingLeft
 }
 
 function renderedItemIds(container: ParentNode) {
@@ -305,6 +322,25 @@ async function dispatchDrag(
   await flushReact()
 }
 
+async function dispatchMouse(
+  target: EventTarget,
+  type: string,
+  init: { button?: number; clientX?: number; clientY?: number } = {}
+) {
+  await act(async () => {
+    target.dispatchEvent(
+      new MouseEvent(type, {
+        bubbles: true,
+        button: init.button ?? 0,
+        cancelable: true,
+        clientX: init.clientX ?? 0,
+        clientY: init.clientY ?? 0,
+      })
+    )
+  })
+  await flushReact()
+}
+
 function stubRect(element: HTMLElement, top: number, bottom: number) {
   const rect = {
     x: 0,
@@ -324,6 +360,42 @@ function stubRect(element: HTMLElement, top: number, bottom: number) {
   })
 }
 
+function stubElementsFromPoint(
+  elementsAtPoint: (clientX: number, clientY: number) => Element[]
+) {
+  const hadOwnElementsFromPoint = Object.prototype.hasOwnProperty.call(
+    document,
+    'elementsFromPoint'
+  )
+  const hadElementsFromPoint = 'elementsFromPoint' in document
+  const originalElementsFromPoint = document.elementsFromPoint
+
+  Object.defineProperty(document, 'elementsFromPoint', {
+    configurable: true,
+    value: vi.fn((clientX: number, clientY: number) =>
+      elementsAtPoint(clientX, clientY)
+    ),
+  })
+
+  return () => {
+    if (hadOwnElementsFromPoint) {
+      Object.defineProperty(document, 'elementsFromPoint', {
+        configurable: true,
+        value: originalElementsFromPoint,
+      })
+      return
+    }
+
+    Reflect.deleteProperty(document, 'elementsFromPoint')
+    if (hadElementsFromPoint && !('elementsFromPoint' in document)) {
+      Object.defineProperty(document, 'elementsFromPoint', {
+        configurable: true,
+        value: originalElementsFromPoint,
+      })
+    }
+  }
+}
+
 describe('Outliner reorder controls', () => {
   beforeEach(() => {
     ;(
@@ -340,15 +412,18 @@ describe('Outliner reorder controls', () => {
       at: '2026-06-29T00:00:00.000000Z',
       created_at: '2026-06-29T00:00:00.000000Z',
     })
+    actionMocks.createNote.mockResolvedValue({})
     actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteDependency.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
+    actionMocks.editNote.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
     actionMocks.fetchComments.mockResolvedValue([])
     actionMocks.fetchItemActivity.mockResolvedValue([])
     actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchNotes.mockResolvedValue([])
     actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
@@ -424,6 +499,128 @@ describe('Outliner reorder controls', () => {
       await createdItemPromise
     })
     await flushReact()
+  })
+
+  it('adds exactly one sibling from a row with automatic dependencies without a removal confirmation', async () => {
+    actionMocks.createItem.mockResolvedValue(
+      item({
+        id: 'created-sibling',
+        title: 'New item',
+        slug: 'created-sibling',
+        parent_id: 'section',
+        sort_order: 3,
+      })
+    )
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first',
+        title: 'First child',
+        slug: 'first-child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['first-child'],
+        needs_edges: [
+          {
+            id: 'auto-chain-second-first',
+            slug: 'first-child',
+            automatic_chain: true,
+          },
+        ],
+        actionable: false,
+      }),
+    ])
+
+    await click(button(outlinerItem(container, 'second'), 'Add sibling'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(actionMocks.createItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: 'section',
+      after_id: 'second',
+    })
+    expect(
+      renderedItemIds(container).filter(
+        (itemId) => itemId === 'created-sibling'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('persists dragging a row with automatic dependencies without a removal confirmation', async () => {
+    actionMocks.moveItem.mockResolvedValue(
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 1,
+        needs: [],
+        needs_edges: [],
+      })
+    )
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first',
+        title: 'First child',
+        slug: 'first-child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second',
+        title: 'Second child',
+        slug: 'second-child',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['first-child'],
+        needs_edges: [
+          {
+            id: 'auto-chain-second-first',
+            slug: 'first-child',
+            automatic_chain: true,
+          },
+        ],
+        actionable: false,
+      }),
+    ])
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+    await dispatchDrag(firstRow, 'drop', transfer, { clientY: 105 })
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(actionMocks.moveItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
+      new_parent_id: 'section',
+      position: 'first',
+    })
   })
 
   it('keeps drag-and-drop reorders anchored after the target item', async () => {
@@ -827,6 +1024,131 @@ describe('Outliner reorder controls', () => {
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
   })
 
+  it('persists a downward drag when the final drop lands on the preview row', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(secondRow, 100, 160)
+
+    await dispatchDrag(dragHandle(firstRow), 'dragstart', transfer)
+    await dispatchDrag(secondRow, 'dragover', transfer, { clientY: 154 })
+
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+    await dispatchDrag(outlinerItem(container, 'first'), 'drop', transfer, {
+      clientY: 154,
+    })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
+      new_parent_id: null,
+      position: 'after',
+      after_id: 'second',
+    })
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+  })
+
+  it('keeps reordering when a coordinate drag crosses an invalid dependency target', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const thirdRow = outlinerItem(container, 'third')
+    const firstDragHandle = dragHandle(firstRow)
+    const invalidDependencyTarget = labelledElement(
+      getDetailsPanel(container),
+      'Add dependency'
+    )
+    stubRect(firstRow, 100, 140)
+    stubRect(secondRow, 150, 190)
+    stubRect(thirdRow, 200, 240)
+    const restoreElementsFromPoint = stubElementsFromPoint((clientX) =>
+      clientX >= 400 ? [invalidDependencyTarget] : [firstDragHandle]
+    )
+
+    try {
+      await dispatchMouse(firstDragHandle, 'mousedown', {
+        clientX: 10,
+        clientY: 120,
+      })
+      await dispatchMouse(window, 'mousemove', { clientX: 10, clientY: 128 })
+      await dispatchMouse(window, 'mousemove', { clientX: 10, clientY: 185 })
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+      await dispatchMouse(window, 'mousemove', { clientX: 500, clientY: 185 })
+      expect(actionMocks.addDependency).not.toHaveBeenCalled()
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+      await dispatchMouse(window, 'mouseup', { clientX: 500, clientY: 185 })
+
+      expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
+        new_parent_id: null,
+        position: 'after',
+        after_id: 'second',
+      })
+      expect(actionMocks.addDependency).not.toHaveBeenCalled()
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+    } finally {
+      restoreElementsFromPoint()
+    }
+  })
+
+  it('persists moving an item into another section when the drop lands on the preview row', async () => {
+    const container = await render([
+      item({
+        id: 'source-section',
+        title: 'Source section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'moving-child',
+        title: 'Moving child',
+        parent_id: 'source-section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'destination-section',
+        title: 'Destination section',
+        sort_order: 2,
+        actionable: false,
+      }),
+    ])
+    const movingRow = outlinerItem(container, 'moving-child')
+    const destinationRow = outlinerItem(container, 'destination-section')
+    const transfer = dataTransfer()
+    stubRect(destinationRow, 100, 160)
+
+    await dispatchDrag(dragHandle(movingRow), 'dragstart', transfer)
+    await dispatchDrag(destinationRow, 'dragover', transfer, { clientY: 130 })
+
+    expect(outlinerItem(container, 'moving-child').dataset.dragPreview).toBe(
+      'true'
+    )
+    expect(renderedItemIds(container)).toEqual([
+      'source-section',
+      'destination-section',
+      'moving-child',
+    ])
+
+    await dispatchDrag(
+      outlinerItem(container, 'moving-child'),
+      'drop',
+      transfer,
+      {
+        clientY: 130,
+      }
+    )
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('moving-child', {
+      new_parent_id: 'destination-section',
+      position: 'first',
+    })
+  })
+
   it('previews the dragged row in its landing slot before drop', async () => {
     const container = await renderElement(
       React.createElement(LocalReorderHarness)
@@ -849,6 +1171,108 @@ describe('Outliner reorder controls', () => {
     )
 
     expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+  })
+
+  it('marks the dragged row original slot and reports when hovering back there', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    const originalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(originalSlot).toBeInstanceOf(HTMLElement)
+    expect(originalSlot?.getAttribute('aria-label')).toBe(
+      'Original position for Second'
+    )
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+    await dispatchDrag(originalSlot as HTMLElement, 'drop', transfer)
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'second')),
+      'dragstart',
+      transfer
+    )
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+    const activeOriginalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(activeOriginalSlot).toBeInstanceOf(HTMLElement)
+
+    await dispatchDrag(activeOriginalSlot as HTMLElement, 'dragover', transfer)
+
+    const markerReturnTarget = container.querySelector(
+      '[data-drag-return-target="second"]'
+    )
+    expect(markerReturnTarget).toBeInstanceOf(HTMLElement)
+    expect(markerReturnTarget?.getAttribute('aria-label')).toBe(
+      'Drop to return Second to its original position'
+    )
+
+    await dispatchDrag(outlinerItem(container, 'first'), 'dragover', transfer, {
+      clientY: 135,
+    })
+
+    const returnTarget = container.querySelector(
+      '[data-drag-return-target="second"]'
+    )
+    expect(returnTarget).toBeInstanceOf(HTMLElement)
+    expect(returnTarget?.getAttribute('aria-label')).toBe(
+      'Drop to return Second to its original position'
+    )
+  })
+
+  it('uses hidden siblings when deciding whether a drag preview returned to origin', async () => {
+    const container = await renderElement(
+      React.createElement(Outliner, {
+        hiddenItemIds: ['hidden'],
+        items: [
+          item({ id: 'first', title: 'First', sort_order: 1 }),
+          item({ id: 'second', title: 'Second', sort_order: 2 }),
+          item({ id: 'hidden', title: 'Hidden', sort_order: 3 }),
+          item({ id: 'third', title: 'Third', sort_order: 4 }),
+        ],
+      })
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const thirdRow = outlinerItem(container, 'third')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+    stubRect(thirdRow, 180, 220)
+
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
+
+    await dispatchDrag(dragHandle(secondRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    const originalSlot = container.querySelector(
+      '[data-drag-origin-slot="second"]'
+    )
+    expect(originalSlot).toBeInstanceOf(HTMLElement)
+
+    await dispatchDrag(thirdRow, 'dragover', transfer, { clientY: 185 })
+
+    expect(
+      container.querySelector('[data-drag-return-target="second"]')
+    ).toBeNull()
+
+    await dispatchDrag(originalSlot as HTMLElement, 'dragover', transfer)
+
+    expect(
+      container.querySelector('[data-drag-return-target="second"]')
+    ).toBeInstanceOf(HTMLElement)
   })
 
   it('renders the outliner and details surface without invalid DOM nesting warnings', async () => {
@@ -905,5 +1329,134 @@ describe('Outliner reorder controls', () => {
         'button[aria-label="Move item up"]'
       )
     ).toBeNull()
+  })
+
+  it('removes row indent and outdent buttons from the primary row controls', async () => {
+    const container = await render([
+      item({ id: 'first', title: 'First', sort_order: 1 }),
+      item({ id: 'second', title: 'Second', sort_order: 2 }),
+    ])
+    const firstRow = outlinerItem(container, 'first')
+
+    expect(
+      firstRow.querySelector('button[aria-label="Indent item"]')
+    ).toBeNull()
+    expect(
+      firstRow.querySelector('button[aria-label="Outdent item"]')
+    ).toBeNull()
+  })
+
+  it('previews and persists dragging a root under the hovered row as an indented child', async () => {
+    const container = await render([
+      item({ id: 'section', title: 'Section', sort_order: 1 }),
+      item({ id: 'loose', title: 'Loose item', sort_order: 2 }),
+    ])
+    const sectionRow = outlinerItem(container, 'section')
+    const looseRow = outlinerItem(container, 'loose')
+    const transfer = dataTransfer()
+    stubRect(sectionRow, 100, 160)
+
+    await dispatchDrag(dragHandle(looseRow), 'dragstart', transfer)
+    await dispatchDrag(sectionRow, 'dragover', transfer, { clientY: 130 })
+
+    expect(outlinerItem(container, 'loose').dataset.dragPreview).toBe('true')
+    expect(renderedItemIds(container)).toEqual(['section', 'loose'])
+    expect(rowIndent(container, 'loose')).toBe('1.25rem')
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+
+    await dispatchDrag(sectionRow, 'drop', transfer, { clientY: 130 })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('loose', {
+      new_parent_id: 'section',
+      position: 'first',
+    })
+  })
+
+  it('previews and persists outdenting beside a row at the desired indentation level', async () => {
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'child',
+        title: 'Child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'nested',
+        title: 'Nested',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+      item({ id: 'next-root', title: 'Next root', sort_order: 2 }),
+    ])
+    const sectionRow = outlinerItem(container, 'section')
+    const nestedRow = outlinerItem(container, 'nested')
+    const transfer = dataTransfer()
+    stubRect(sectionRow, 100, 160)
+
+    await dispatchDrag(dragHandle(nestedRow), 'dragstart', transfer)
+    await dispatchDrag(sectionRow, 'dragover', transfer, { clientY: 154 })
+
+    expect(outlinerItem(container, 'nested').dataset.dragPreview).toBe('true')
+    expect(renderedItemIds(container)).toEqual([
+      'section',
+      'child',
+      'nested',
+      'next-root',
+    ])
+    expect(rowIndent(container, 'nested')).toBe('0rem')
+
+    await dispatchDrag(sectionRow, 'drop', transfer, { clientY: 154 })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('nested', {
+      new_parent_id: null,
+      position: 'after',
+      after_id: 'section',
+    })
+  })
+
+  it('keeps the ghost at the candidate indentation level for same-parent reorders', async () => {
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'first-child',
+        title: 'First child',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second-child',
+        title: 'Second child',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
+    ])
+    const firstChildRow = outlinerItem(container, 'first-child')
+    const secondChildRow = outlinerItem(container, 'second-child')
+    const transfer = dataTransfer()
+    stubRect(firstChildRow, 100, 160)
+
+    await dispatchDrag(dragHandle(secondChildRow), 'dragstart', transfer)
+    await dispatchDrag(firstChildRow, 'dragover', transfer, { clientY: 104 })
+
+    expect(outlinerItem(container, 'second-child').dataset.dragPreview).toBe(
+      'true'
+    )
+    expect(renderedItemIds(container)).toEqual([
+      'section',
+      'second-child',
+      'first-child',
+    ])
+    expect(rowIndent(container, 'second-child')).toBe('1.25rem')
   })
 })

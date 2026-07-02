@@ -121,6 +121,8 @@ export const treeItemSchema = itemSchema
     needs_edges: z.array(treeDependencyEdgeSchema),
     actionable: z.boolean(),
     complete: z.boolean(),
+    has_notes: z.boolean(),
+    has_prompt_response_entries: z.boolean(),
   })
   .strict()
 
@@ -183,6 +185,21 @@ export const commentSchema = z
 export const commentListSchema = z.array(commentSchema)
 
 export type Comment = z.infer<typeof commentSchema>
+
+export const noteSchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    created_by: z.string(),
+    body: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  })
+  .strict()
+
+export const noteListSchema = z.array(noteSchema)
+
+export type Note = z.infer<typeof noteSchema>
 
 export const promptResponseKindSchema = z.enum(['prompt', 'response'])
 

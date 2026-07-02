@@ -18,15 +18,18 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createNote: vi.fn(),
   createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
   editComment: vi.fn(),
+  editNote: vi.fn(),
   fetchChanges: vi.fn(),
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
@@ -61,6 +64,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 type CreateItemInput = {
@@ -649,10 +654,12 @@ describe('Outliner live newly added filter exemptions', () => {
       }
     )
     actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createNote.mockResolvedValue({})
     actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
+    actionMocks.editNote.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
     actionMocks.fetchComments.mockResolvedValue([])
     actionMocks.fetchItemActivity.mockResolvedValue([])
@@ -664,6 +671,7 @@ describe('Outliner live newly added filter exemptions', () => {
         created_at: '2026-06-29T00:00:00.000000Z',
       },
     ])
+    actionMocks.fetchNotes.mockResolvedValue([])
     actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
@@ -1158,6 +1166,64 @@ describe('Outliner live newly added filter exemptions', () => {
     ).toBe('Ready')
   })
 
+  it('shows each section readiness as the most actionable descendant readiness', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'top-section',
+            title: 'Top section',
+            actionable: false,
+            sort_order: 1,
+          }),
+          item({
+            id: 'waiting-branch',
+            title: 'Waiting branch',
+            actionable: false,
+            parent_id: 'top-section',
+            sort_order: 1,
+          }),
+          item({
+            id: 'waiting-child',
+            title: 'Waiting child',
+            actionable: true,
+            parent_id: 'waiting-branch',
+            state: 'feedback',
+            sort_order: 1,
+          }),
+          item({
+            id: 'ready-branch',
+            title: 'Ready branch',
+            actionable: false,
+            parent_id: 'top-section',
+            sort_order: 2,
+          }),
+          item({
+            id: 'ready-child',
+            title: 'Ready child',
+            actionable: true,
+            parent_id: 'ready-branch',
+            state: 'respond',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    const sectionReadiness = Object.fromEntries(
+      ['top-section', 'waiting-branch', 'ready-branch'].map((itemId) => [
+        itemId,
+        getItemReadinessIndicator(container, itemId).textContent,
+      ])
+    )
+
+    expect(sectionReadiness).toEqual({
+      'top-section': 'Ready',
+      'waiting-branch': 'Waiting',
+      'ready-branch': 'Ready',
+    })
+  })
+
   it('renders a done checkbox for root, section, and item rows', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
 
@@ -1313,7 +1379,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(actionMocks.patchItem).toHaveBeenCalledWith('review-row', {
       state: 'done',
     })
-    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
     expect(getItemCheckbox(container, 'review-row').checked).toBe(true)
     expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
       'done'
@@ -1775,7 +1841,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('lets a recreated sibling id use normal root ordering after its local anchor is pruned', async () => {
+  it('lets a recreated sibling id use manual root ordering after its local anchor is pruned', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1812,8 +1878,8 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Restore created sibling from server'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'created-root-sibling',
+      'priority-anchor',
       'completed-root',
       'completed-child',
     ])

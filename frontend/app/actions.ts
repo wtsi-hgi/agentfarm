@@ -18,6 +18,8 @@ import {
   markerListSchema,
   markerSchema,
   messageResponseSchema,
+  noteListSchema,
+  noteSchema,
   notImplementedResponseSchema,
   priorityResponseSchema,
   promptResponseEntryListSchema,
@@ -91,6 +93,10 @@ export type DependencyInput =
     }
 
 export type CommentInput = {
+  body: string
+}
+
+export type NoteInput = {
   body: string
 }
 
@@ -365,6 +371,29 @@ export async function deleteComment(commentId: string) {
     `/api/v1/comments/${encodeURIComponent(commentId)}`,
     deletedResponseSchema,
     jsonInit('DELETE')
+  )
+}
+
+export async function fetchNotes(itemId: string) {
+  return authenticatedRead(
+    `/api/v1/items/${encodeURIComponent(itemId)}/notes`,
+    noteListSchema
+  )
+}
+
+export async function createNote(itemId: string, input: NoteInput) {
+  return mutation(
+    `/api/v1/items/${encodeURIComponent(itemId)}/notes`,
+    noteSchema,
+    jsonInit('POST', input)
+  )
+}
+
+export async function editNote(noteId: string, input: NoteInput) {
+  return mutation(
+    `/api/v1/notes/${encodeURIComponent(noteId)}`,
+    noteSchema,
+    jsonInit('PATCH', input)
   )
 }
 
