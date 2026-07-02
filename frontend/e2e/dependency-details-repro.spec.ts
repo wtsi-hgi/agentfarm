@@ -80,15 +80,36 @@ async function dragRowToAddDependency(
   row: Locator,
   dropTarget: Locator
 ): Promise<void> {
-  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
   const dragHandle = row.getByRole('button', { name: 'Drag item' })
+  await dragHandle.scrollIntoViewIfNeeded()
+  await dropTarget.scrollIntoViewIfNeeded()
 
-  await dragHandle.dispatchEvent('dragstart', { dataTransfer })
-  await dropTarget.dispatchEvent('dragenter', { dataTransfer })
-  await dropTarget.dispatchEvent('dragover', { dataTransfer })
-  await dropTarget.dispatchEvent('drop', { dataTransfer })
-  await dragHandle.dispatchEvent('dragend', { dataTransfer })
-  await dataTransfer.dispose()
+  const handleBox = await dragHandle.boundingBox()
+  const targetBox = await dropTarget.boundingBox()
+  if (!handleBox) {
+    throw new Error('Expected dependency source drag handle to be visible')
+  }
+  if (!targetBox) {
+    throw new Error('Expected dependency drop target to be visible')
+  }
+
+  const start = {
+    x: handleBox.x + handleBox.width / 2,
+    y: handleBox.y + handleBox.height / 2,
+  }
+  const target = {
+    x: targetBox.x + targetBox.width / 2,
+    y: targetBox.y + targetBox.height / 2,
+  }
+
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(start.x, start.y + 8, { steps: 2 })
+    await page.mouse.move(target.x, target.y, { steps: 16 })
+  } finally {
+    await page.mouse.up()
+  }
 }
 
 test.describe('dependency details UI reproduction', () => {

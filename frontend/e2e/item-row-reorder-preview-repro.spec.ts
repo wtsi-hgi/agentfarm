@@ -29,6 +29,7 @@ const moveAnywhereScreenshotPath = path.join(
 
 type ItemSummary = {
   id: string
+  slug: string
   title: string
 }
 
@@ -52,6 +53,8 @@ type RowGeometry = ItemSummary & {
 }
 
 type TreeItemSummary = ItemSummary & {
+  needs: string[]
+  needs_edges: { id: string; slug: string; automatic_chain?: boolean }[]
   parent_id: string | null
 }
 
@@ -242,32 +245,79 @@ async function dragRowWithPointer(
   page: Page,
   draggedItemId: string,
   targetItemId: string,
-  zone: 'after' | 'before' | 'inside'
+  zone: 'after' | 'before' | 'inside',
+  options: { finishInTargetBand?: boolean } = {}
 ) {
+  const dragHandle = itemRow(page, draggedItemId).getByRole('button', {
+    name: 'Drag item',
+  })
   const targetRow = itemRow(page, targetItemId)
+  await dragHandle.scrollIntoViewIfNeeded()
   await targetRow.scrollIntoViewIfNeeded()
-  const targetBox = await targetRow.boundingBox()
-  if (!targetBox) {
-    throw new Error(`Expected target row ${targetItemId} to be visible`)
+
+  const handleBox = await dragHandle.boundingBox()
+  if (!handleBox) {
+    throw new Error(
+      `Expected drag handle for row ${draggedItemId} to be visible`
+    )
   }
 
-  const targetY =
-    zone === 'before'
-      ? Math.max(4, targetBox.height * 0.1)
-      : zone === 'inside'
-        ? targetBox.height / 2
-        : Math.max(4, targetBox.height - targetBox.height * 0.1)
+  async function targetPoint({
+    outsideAfter = false,
+    outsideBefore = false,
+  } = {}) {
+    const targetBox = await targetRow.boundingBox()
+    if (!targetBox) {
+      throw new Error(`Expected target row ${targetItemId} to be visible`)
+    }
 
-  await itemRow(page, draggedItemId)
-    .getByRole('button', { name: 'Drag item' })
-    .dragTo(targetRow, {
-      force: true,
-      sourcePosition: { x: 8, y: 8 },
-      targetPosition: {
-        x: Math.min(180, Math.max(8, targetBox.width / 2)),
-        y: targetY,
-      },
-    })
+    const yOffset =
+      zone === 'before'
+        ? outsideBefore
+          ? -2
+          : 1
+        : zone === 'inside'
+          ? targetBox.height / 2
+          : outsideAfter
+            ? targetBox.height + 2
+            : Math.max(1, targetBox.height - 1)
+
+    return {
+      x: targetBox.x + Math.min(180, Math.max(8, targetBox.width / 2)),
+      y: targetBox.y + yOffset,
+    }
+  }
+
+  const start = {
+    x: handleBox.x + handleBox.width / 2,
+    y: handleBox.y + handleBox.height / 2,
+  }
+  const firstTarget = await targetPoint()
+  const startDeltaY = firstTarget.y >= start.y ? 8 : -8
+  const finishInTargetBand = options.finishInTargetBand ?? true
+
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(start.x, start.y + startDeltaY, { steps: 2 })
+    const initialTarget = await targetPoint()
+    await page.mouse.move(initialTarget.x, initialTarget.y, { steps: 12 })
+    const shiftedTarget = await targetPoint(
+      finishInTargetBand
+        ? {}
+        : {
+            outsideAfter: true,
+            outsideBefore: true,
+          }
+    )
+    await page.mouse.move(shiftedTarget.x, shiftedTarget.y, { steps: 4 })
+    await expect(itemRow(page, draggedItemId)).toHaveAttribute(
+      'data-drag-preview',
+      'true'
+    )
+  } finally {
+    await page.mouse.up()
+  }
 }
 
 async function captureMoveAnywhereRepro(page: Page, testInfo: TestInfo) {
@@ -314,7 +364,167 @@ async function expectBackendFixtureTree(
     .toEqual(expected)
 }
 
+async function expectBackendLeafChain(
+  request: APIRequestContext,
+  sessionToken: string,
+  titlePrefix: string,
+  expected: readonly { needs: readonly string[]; title: string }[],
+  message: string
+) {
+  await expect
+    .poll(
+      async () =>
+        (await backendFixtureTree(request, sessionToken, titlePrefix)).map(
+          (entry) => ({
+            needs: entry.needs,
+            title: entry.title,
+          })
+        ),
+      { message }
+    )
+    .toEqual(expected)
+}
+
 test.describe('item row reorder affordance', () => {
+  test('moves a section leaf up and down through real mouse dragging and repairs the automatic chain', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 700 })
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Mouse chain drag ${Date.now()}`
+    const rowTitlePrefix = `${titlePrefix} leaf`
+    let parent: ItemSummary | undefined
+
+    try {
+      parent = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} section`,
+      })
+      const v1 = await createBackendItem(request, sessionToken, {
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} v1`,
+      })
+      const enterData = await createBackendItem(request, sessionToken, {
+        after_id: v1.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} enter data`,
+      })
+      const improvements = await createBackendItem(request, sessionToken, {
+        after_id: enterData.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} new improvements`,
+      })
+      const notes = await createBackendItem(request, sessionToken, {
+        after_id: improvements.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} notes screen`,
+      })
+      const scratch = await createBackendItem(request, sessionToken, {
+        after_id: notes.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} scratch pad`,
+      })
+      const foo = await createBackendItem(request, sessionToken, {
+        after_id: scratch.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} foo`,
+      })
+      const refinement = await createBackendItem(request, sessionToken, {
+        after_id: foo.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} state refinement`,
+      })
+      const v2 = await createBackendItem(request, sessionToken, {
+        after_id: refinement.id,
+        parent_id: parent.id,
+        title: `${rowTitlePrefix} v2`,
+      })
+
+      await gotoPath(page, '/')
+      await expect(
+        itemRow(page, foo.id).getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(foo.title)
+
+      await dragRowWithPointer(page, foo.id, scratch.id, 'before', {
+        finishInTargetBand: true,
+      })
+
+      await expectBackendLeafChain(
+        request,
+        sessionToken,
+        rowTitlePrefix,
+        [
+          { title: v1.title, needs: [] },
+          { title: enterData.title, needs: [v1.slug] },
+          { title: improvements.title, needs: [enterData.slug] },
+          { title: notes.title, needs: [improvements.slug] },
+          { title: foo.title, needs: [notes.slug] },
+          { title: scratch.title, needs: [foo.slug] },
+          { title: refinement.title, needs: [scratch.slug] },
+          { title: v2.title, needs: [refinement.slug] },
+        ],
+        'upward visible-handle drag should persist and repair the section chain'
+      )
+
+      await page.reload()
+      await expect
+        .poll(async () => titles(await fixtureRows(page, rowTitlePrefix)), {
+          message: 'refresh should keep the upward mouse-dragged order',
+        })
+        .toEqual([
+          v1.title,
+          enterData.title,
+          improvements.title,
+          notes.title,
+          foo.title,
+          scratch.title,
+          refinement.title,
+          v2.title,
+        ])
+
+      await dragRowWithPointer(page, foo.id, refinement.id, 'after', {
+        finishInTargetBand: true,
+      })
+
+      await expectBackendLeafChain(
+        request,
+        sessionToken,
+        rowTitlePrefix,
+        [
+          { title: v1.title, needs: [] },
+          { title: enterData.title, needs: [v1.slug] },
+          { title: improvements.title, needs: [enterData.slug] },
+          { title: notes.title, needs: [improvements.slug] },
+          { title: scratch.title, needs: [notes.slug] },
+          { title: refinement.title, needs: [scratch.slug] },
+          { title: foo.title, needs: [refinement.slug] },
+          { title: v2.title, needs: [foo.slug] },
+        ],
+        'downward visible-handle drag should persist and repair the section chain'
+      )
+
+      await page.reload()
+      await expect
+        .poll(async () => titles(await fixtureRows(page, rowTitlePrefix)), {
+          message: 'refresh should keep the downward mouse-dragged order',
+        })
+        .toEqual([
+          v1.title,
+          enterData.title,
+          improvements.title,
+          notes.title,
+          scratch.title,
+          refinement.title,
+          foo.title,
+          v2.title,
+        ])
+    } finally {
+      if (parent) {
+        await deleteBackendItem(request, sessionToken, parent.id)
+      }
+    }
+  })
+
   test('moves rows anywhere through the visible drag handle', async ({
     page,
     request,

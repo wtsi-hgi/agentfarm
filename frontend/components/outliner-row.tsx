@@ -218,7 +218,7 @@ export function OutlinerRow({
         aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         title="Drag"
         disabled={pending}
-        draggable={!pending}
+        draggable={false}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
