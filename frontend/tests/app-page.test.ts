@@ -96,6 +96,13 @@ function authToken(init?: RequestInit): string | null {
   return new Headers(init?.headers).get('x-agentfarm-session')
 }
 
+function headerMetricValue(document: Document, label: string): string | null {
+  const metric = Array.from(document.querySelectorAll('header dl div')).find(
+    (node) => node.querySelector('dt')?.textContent === label
+  )
+  return metric?.querySelector('dd')?.textContent ?? null
+}
+
 function stubBackend() {
   const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
     const pathname = new URL(url.toString()).pathname
@@ -227,6 +234,71 @@ describe('app page BFF wiring', () => {
     ).not.toBeNull()
     expect(document.body.textContent).not.toContain('Unified Tree')
     expect(document.body.textContent).not.toContain('Full-stack starter')
+  })
+
+  it('counts only leaf items in the header item metric while keeping sections visible', async () => {
+    const section = {
+      ...baseTreeItem,
+      id: 'section',
+      title: 'Section',
+      slug: 'section',
+      sort_order: 1,
+      actionable: false,
+    } satisfies TreeItem
+    const firstLeaf = {
+      ...baseTreeItem,
+      id: 'first-leaf',
+      title: 'First leaf',
+      slug: 'first-leaf',
+      parent_id: section.id,
+      sort_order: 1,
+    } satisfies TreeItem
+    const secondLeaf = {
+      ...baseTreeItem,
+      id: 'second-leaf',
+      title: 'Second leaf',
+      slug: 'second-leaf',
+      parent_id: section.id,
+      sort_order: 2,
+    } satisfies TreeItem
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      if (pathname === '/api/v1/tree') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse([section, firstLeaf, secondLeaf])
+      }
+      if (pathname === '/api/v1/priority') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse([])
+      }
+      if (pathname === '/api/v1/markers') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse(markers)
+      }
+      if (pathname === '/api/v1/auth/context') {
+        return jsonResponse({ owner_username: 'alice' })
+      }
+      if (pathname === '/api/v1/auth/whoami') {
+        return jsonResponse({ username: 'vue', role: 'viewer' })
+      }
+      return jsonResponse({ message: `Unexpected path: ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const markup = renderToStaticMarkup(await Home())
+    const document = new JSDOM(markup).window.document
+
+    expect(headerMetricValue(document, 'Items')).toBe('2')
+    expect(
+      document.querySelector('[data-outliner-item-id="section"]')
+    ).not.toBeNull()
+    expect(document.body.textContent).toContain('Section')
   })
 
   it('passes markers into the refreshed default tree projection', async () => {

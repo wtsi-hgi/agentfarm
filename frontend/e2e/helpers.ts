@@ -75,10 +75,14 @@ export async function signInAs(
 export async function createItem(
   request: APIRequestContext,
   sessionToken: string,
-  title: string
+  title: string,
+  options: {
+    parent_id?: string | null
+    state?: string
+  } = {}
 ) {
   const response = await request.post(`${backendBaseUrl}/api/v1/items`, {
-    data: { title },
+    data: { title, ...options },
     headers: {
       'x-agentfarm-session': sessionToken,
     },
