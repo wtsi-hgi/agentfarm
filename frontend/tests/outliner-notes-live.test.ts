@@ -57,6 +57,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 let roots: Root[] = []
@@ -250,8 +252,14 @@ describe('Outliner notes overlay', () => {
         items: [item({ id: 'root', title: 'Root project' })],
       })
     )
+    const notesButton = getItemButton(container, 'root', 'Open notes')
 
-    await click(getItemButton(container, 'root', 'Open notes'))
+    expect(notesButton.getAttribute('aria-description')).toBe(
+      'No notes available'
+    )
+    expect(notesButton.title).toBe('Notes')
+
+    await click(notesButton)
 
     const dialog = getNotesDialog()
     const headings = Array.from(dialog.querySelectorAll('h3, h4')).map(
@@ -276,6 +284,17 @@ describe('Outliner notes overlay', () => {
     expect(actionMocks.createNote).toHaveBeenCalledWith('root', {
       body: '## New note\n- saved',
     })
+    expect(
+      getItemButton(container, 'root', 'Open notes').dataset.available
+    ).toBe('true')
+    expect(
+      getItemButton(container, 'root', 'Open notes').getAttribute(
+        'aria-description'
+      )
+    ).toBe('Notes available')
+    expect(getItemButton(container, 'root', 'Open notes').title).toBe(
+      'Notes available'
+    )
     expect(dialog.textContent).toContain('New note')
     expect(dialog.textContent).toContain('2026-07-02 10:00 UTC')
 

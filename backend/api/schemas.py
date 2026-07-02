@@ -323,9 +323,13 @@ class TreeItemOut(ItemOut):
     :func:`services.leverage.is_actionable`; ``complete`` is the recursive
     structural predicate from :func:`services.tree.is_complete` (H1). These
     are display/projection flags only: GET ``/tree`` still returns every item.
+    ``has_notes`` and ``has_prompt_response_entries`` tell the outliner whether
+    a row already has dated notes or agent timeline records to open.
     """
 
     needs: list[str]
     needs_edges: list[TreeDependencyEdgeOut]
     actionable: bool
     complete: bool
+    has_notes: bool
+    has_prompt_response_entries: bool

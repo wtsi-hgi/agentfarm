@@ -235,9 +235,11 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     needs_edges: [{ id: 'dep-1', slug: 'build-api' }],
     actionable: true,
     complete: false,
+    has_notes: false,
+    has_prompt_response_entries: true,
   }
 
-  it('parses tree items with needs, edge ids, and work-now flags', () => {
+  it('parses tree items with needs, edge ids, work flags, and content flags', () => {
     expect(treeSchema.parse([validTreeItem])).toEqual([validTreeItem])
   })
 
@@ -253,6 +255,18 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     const { needs_edges: _needsEdges, ...withoutNeedsEdges } = validTreeItem
 
     const result = treeSchema.safeParse([withoutNeedsEdges])
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects tree items missing content availability flags', () => {
+    const {
+      has_notes: _hasNotes,
+      has_prompt_response_entries: _hasPromptResponseEntries,
+      ...withoutContentFlags
+    } = validTreeItem
+
+    const result = treeSchema.safeParse([withoutContentFlags])
 
     expect(result.success).toBe(false)
   })

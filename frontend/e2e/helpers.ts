@@ -88,6 +88,51 @@ export async function createItem(
   return JSON.parse(body) as { id: string; title: string }
 }
 
+export async function createNote(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string,
+  body: string
+) {
+  const response = await request.post(
+    `${backendBaseUrl}/api/v1/items/${itemId}/notes`,
+    {
+      data: { body },
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const responseBody = await response.text()
+  expect(response.ok(), responseBody).toBeTruthy()
+  return JSON.parse(responseBody) as { id: string; item_id: string }
+}
+
+export async function createPromptResponseEntry(
+  request: APIRequestContext,
+  sessionToken: string,
+  itemId: string,
+  kind: 'prompt' | 'response',
+  body: string
+) {
+  const response = await request.post(
+    `${backendBaseUrl}/api/v1/items/${itemId}/prompt-responses`,
+    {
+      data: { kind, body },
+      headers: {
+        'x-agentfarm-session': sessionToken,
+      },
+    }
+  )
+  const responseBody = await response.text()
+  expect(response.ok(), responseBody).toBeTruthy()
+  return JSON.parse(responseBody) as {
+    id: string
+    item_id: string
+    kind: 'prompt' | 'response'
+  }
+}
+
 export async function deleteBackendItem(
   request: APIRequestContext,
   sessionToken: string,

@@ -121,6 +121,8 @@ export const treeItemSchema = itemSchema
     needs_edges: z.array(treeDependencyEdgeSchema),
     actionable: z.boolean(),
     complete: z.boolean(),
+    has_notes: z.boolean(),
+    has_prompt_response_entries: z.boolean(),
   })
   .strict()
 

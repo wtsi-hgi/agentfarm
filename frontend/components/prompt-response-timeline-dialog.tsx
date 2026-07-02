@@ -24,6 +24,7 @@ type PromptResponseTimelineDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void
+  onAvailabilityChange?: (itemId: string, hasEntries: boolean) => void
 }
 
 function formatTimestamp(timestamp: string) {
@@ -59,6 +60,7 @@ export function PromptResponseTimelineDialog({
   ancestors = [],
   item,
   onClose,
+  onAvailabilityChange,
 }: PromptResponseTimelineDialogProps) {
   const titleId = React.useId()
   const itemId = item?.id ?? null
@@ -86,6 +88,7 @@ export function PromptResponseTimelineDialog({
       const loadedEntries = await fetchPromptResponseEntries(requestedItemId)
       if (currentItemId.current === requestedItemId) {
         setEntries(sortedEntries(loadedEntries))
+        onAvailabilityChange?.(requestedItemId, loadedEntries.length > 0)
       }
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
@@ -96,7 +99,7 @@ export function PromptResponseTimelineDialog({
         setLoading(false)
       }
     }
-  }, [itemId])
+  }, [itemId, onAvailabilityChange])
 
   React.useEffect(() => {
     void loadEntries()
@@ -134,6 +137,7 @@ export function PromptResponseTimelineDialog({
         return
       }
       setEntries((current) => sortedEntries([...current, created]))
+      onAvailabilityChange?.(requestedItemId, true)
       setDraft('')
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {

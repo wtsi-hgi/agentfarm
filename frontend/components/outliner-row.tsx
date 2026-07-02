@@ -190,6 +190,8 @@ export function OutlinerRow({
   const readiness = itemReadiness(item, { ignoreState: hasChildren })
   const displayDone = readiness === 'done'
   const displayReady = readiness === 'ready'
+  const hasNotes = item.has_notes
+  const hasPromptResponseEntries = item.has_prompt_response_entries
 
   return (
     <div
@@ -307,31 +309,59 @@ export function OutlinerRow({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-8"
+          className={cn(
+            'size-8 transition-colors',
+            hasNotes &&
+              'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
+          )}
           aria-label="Open notes"
-          title="Notes"
+          aria-description={hasNotes ? 'Notes available' : 'No notes available'}
+          data-available={hasNotes ? 'true' : 'false'}
+          title={hasNotes ? 'Notes available' : 'Notes'}
           disabled={pending}
           onClick={(event) => {
             event.stopPropagation()
             onOpenNotes(item)
           }}
         >
-          <NotebookText className="size-3.5" aria-hidden="true" />
+          <NotebookText
+            className="size-3.5"
+            strokeWidth={hasNotes ? 2.75 : 2}
+            aria-hidden="true"
+          />
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="size-8"
+          className={cn(
+            'size-8 transition-colors',
+            hasPromptResponseEntries &&
+              'bg-cyan-500/10 text-cyan-700 hover:bg-cyan-500/15 dark:text-cyan-300 dark:hover:bg-cyan-500/20'
+          )}
           aria-label="Open prompt/response timeline"
-          title="Prompt/response timeline"
+          aria-description={
+            hasPromptResponseEntries
+              ? 'Prompt/response entries available'
+              : 'No prompt/response entries available'
+          }
+          data-available={hasPromptResponseEntries ? 'true' : 'false'}
+          title={
+            hasPromptResponseEntries
+              ? 'Prompt/response entries available'
+              : 'Prompt/response timeline'
+          }
           disabled={pending}
           onClick={(event) => {
             event.stopPropagation()
             onOpenPromptTimeline(item)
           }}
         >
-          <MessagesSquare className="size-3.5" aria-hidden="true" />
+          <MessagesSquare
+            className="size-3.5"
+            strokeWidth={hasPromptResponseEntries ? 2.75 : 2}
+            aria-hidden="true"
+          />
         </Button>
         <Button
           type="button"

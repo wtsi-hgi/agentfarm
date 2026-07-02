@@ -116,6 +116,19 @@ async def _activity(client: AsyncClient, item_id: str):
     return await client.get(f"/api/v1/items/{item_id}/activity")
 
 
+async def _create_note(client: AsyncClient, item_id: str, body: str):
+    return await client.post(f"/api/v1/items/{item_id}/notes", json={"body": body})
+
+
+async def _create_prompt_response_entry(
+    client: AsyncClient, item_id: str, *, kind: str, body: str
+):
+    return await client.post(
+        f"/api/v1/items/{item_id}/prompt-responses",
+        json={"kind": kind, "body": body},
+    )
+
+
 def _item_row(db_path, item_id: str) -> dict:
     """Return one item's persisted row as a plain dict (a supported boundary)."""
     with get_connection(db_path) as conn:
@@ -321,6 +334,43 @@ async def test_create_after_id_outside_parent_returns_404_without_insert_or_edge
     assert response.json() == {"detail": "item not found"}
     assert _item_count(fresh_db) == 3
     assert _dependencies(fresh_db) == []
+
+
+@pytest.mark.anyio
+async def test_tree_marks_rows_with_notes_or_prompt_response_entries(
+    fresh_db,
+) -> None:
+    """GET /tree flags rows that already have note or agent timeline records."""
+    del fresh_db
+
+    async with _client() as client:
+        plain = await _create(client, {"title": "Plain work"})
+        noted = await _create(client, {"title": "Has notes"})
+        prompted = await _create(client, {"title": "Has prompt entries"})
+
+        noted_id = noted.json()["id"]
+        prompted_id = prompted.json()["id"]
+        note = await _create_note(client, noted_id, "Remember this")
+        entry = await _create_prompt_response_entry(
+            client,
+            prompted_id,
+            kind="prompt",
+            body="Please inspect this row.",
+        )
+        tree_response = await _tree(client)
+
+    assert plain.status_code == 200
+    assert note.status_code == 200
+    assert entry.status_code == 200
+    assert tree_response.status_code == 200
+
+    rows_by_id = {row["id"]: row for row in tree_response.json()}
+    assert rows_by_id[plain.json()["id"]]["has_notes"] is False
+    assert rows_by_id[plain.json()["id"]]["has_prompt_response_entries"] is False
+    assert rows_by_id[noted_id]["has_notes"] is True
+    assert rows_by_id[noted_id]["has_prompt_response_entries"] is False
+    assert rows_by_id[prompted_id]["has_notes"] is False
+    assert rows_by_id[prompted_id]["has_prompt_response_entries"] is True
 
 
 # --- A2: Edit item fields and timestamp/slug behaviour ----------------------

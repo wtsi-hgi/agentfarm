@@ -31,6 +31,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
@@ -54,6 +56,24 @@ function renderedItemIds(element: React.ReactElement) {
   return Array.from(
     document.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
   ).map((row) => row.dataset.outlinerItemId)
+}
+
+function renderedDocument(element: React.ReactElement) {
+  return new JSDOM(renderToStaticMarkup(element)).window.document
+}
+
+function itemActionButton(
+  document: Document,
+  itemId: string,
+  ariaLabel: string
+) {
+  const button = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label="${ariaLabel}"]`
+  )
+  if (!(button instanceof document.defaultView!.HTMLButtonElement)) {
+    throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
+  }
+  return button
 }
 
 describe('Outliner', () => {
@@ -82,6 +102,57 @@ describe('Outliner', () => {
     expect(
       visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
     ).toEqual(['prompt', 'review'])
+  })
+
+  it('describes row note and prompt availability to assistive technology', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({ id: 'plain', title: 'Plain work' }),
+          item({
+            id: 'noted',
+            title: 'Noted work',
+            sort_order: 2,
+            has_notes: true,
+          }),
+          item({
+            id: 'prompted',
+            title: 'Prompted work',
+            sort_order: 3,
+            has_prompt_response_entries: true,
+          }),
+        ],
+      })
+    )
+
+    const plainNotes = itemActionButton(document, 'plain', 'Open notes')
+    const activeNotes = itemActionButton(document, 'noted', 'Open notes')
+    const plainTimeline = itemActionButton(
+      document,
+      'plain',
+      'Open prompt/response timeline'
+    )
+    const activeTimeline = itemActionButton(
+      document,
+      'prompted',
+      'Open prompt/response timeline'
+    )
+
+    expect(activeNotes.getAttribute('aria-description')).toBe('Notes available')
+    expect(plainNotes.getAttribute('aria-description')).toBe(
+      'No notes available'
+    )
+    expect(activeNotes.getAttribute('data-available')).toBe('true')
+    expect(plainNotes.getAttribute('data-available')).toBe('false')
+
+    expect(activeTimeline.getAttribute('aria-description')).toBe(
+      'Prompt/response entries available'
+    )
+    expect(plainTimeline.getAttribute('aria-description')).toBe(
+      'No prompt/response entries available'
+    )
+    expect(activeTimeline.getAttribute('data-available')).toBe('true')
+    expect(plainTimeline.getAttribute('data-available')).toBe('false')
   })
 
   it('displays an explicit sibling section dependency before its waiting section', () => {

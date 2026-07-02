@@ -57,6 +57,8 @@ const baseItem = {
   needs_edges: [],
   actionable: true,
   complete: false,
+  has_notes: false,
+  has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
 type EntryInput = {
@@ -370,10 +372,18 @@ describe('Outliner prompt/response timeline overlay', () => {
         items: [item({ id: 'root', title: 'Root project' })],
       })
     )
-
-    await click(
-      getItemButton(container, 'root', 'Open prompt/response timeline')
+    const timelineButton = getItemButton(
+      container,
+      'root',
+      'Open prompt/response timeline'
     )
+
+    expect(timelineButton.getAttribute('aria-description')).toBe(
+      'No prompt/response entries available'
+    )
+    expect(timelineButton.title).toBe('Prompt/response timeline')
+
+    await click(timelineButton)
 
     const dialog = getTimelineDialog()
     const body = getTextarea(dialog, 'Prompt or response body')
@@ -385,6 +395,20 @@ describe('Outliner prompt/response timeline overlay', () => {
       kind: 'prompt',
       body: 'Please inspect the failure.',
     })
+    expect(
+      getItemButton(container, 'root', 'Open prompt/response timeline').dataset
+        .available
+    ).toBe('true')
+    expect(
+      getItemButton(
+        container,
+        'root',
+        'Open prompt/response timeline'
+      ).getAttribute('aria-description')
+    ).toBe('Prompt/response entries available')
+    expect(
+      getItemButton(container, 'root', 'Open prompt/response timeline').title
+    ).toBe('Prompt/response entries available')
     expect(dialog.textContent).toContain('Please inspect the failure.')
     expect(dialog.textContent).toContain('2026-06-30 10:00 UTC')
 

@@ -24,6 +24,7 @@ type ItemNotesDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void
+  onAvailabilityChange?: (itemId: string, hasNotes: boolean) => void
 }
 
 function formatTimestamp(timestamp: string) {
@@ -47,6 +48,7 @@ export function ItemNotesDialog({
   ancestors = [],
   item,
   onClose,
+  onAvailabilityChange,
 }: ItemNotesDialogProps) {
   const titleId = React.useId()
   const itemId = item?.id ?? null
@@ -76,6 +78,7 @@ export function ItemNotesDialog({
       const loadedNotes = await fetchNotes(requestedItemId)
       if (currentItemId.current === requestedItemId) {
         setNotes(sortedNotes(loadedNotes))
+        onAvailabilityChange?.(requestedItemId, loadedNotes.length > 0)
       }
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {
@@ -86,7 +89,7 @@ export function ItemNotesDialog({
         setLoading(false)
       }
     }
-  }, [itemId])
+  }, [itemId, onAvailabilityChange])
 
   React.useEffect(() => {
     void loadNotes()
@@ -124,6 +127,7 @@ export function ItemNotesDialog({
         return
       }
       setNotes((current) => sortedNotes([...current, created]))
+      onAvailabilityChange?.(requestedItemId, true)
       setDraft('')
     } catch (caught) {
       if (currentItemId.current === requestedItemId) {

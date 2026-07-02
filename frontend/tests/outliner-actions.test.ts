@@ -603,6 +603,8 @@ describe('outliner mutation Server Actions', () => {
       needs_edges: [],
       actionable: true,
       complete: false,
+      has_notes: false,
+      has_prompt_response_entries: false,
     }
     const priorityItem = {
       ...baseItem,

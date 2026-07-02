@@ -383,6 +383,8 @@ function treeItemFromSavedItem(savedItem: Item): TreeItem {
       !isExternalWaitingItem(savedItem) &&
       !savedItem.blocked_external,
     complete,
+    has_notes: false,
+    has_prompt_response_entries: false,
   }
 }
 
@@ -686,6 +688,8 @@ function mergeSavedItem(
           ...merged,
           needs: item.needs,
           needs_edges: item.needs_edges,
+          has_notes: item.has_notes,
+          has_prompt_response_entries: item.has_prompt_response_entries,
         }
       }
       if (!oldSlug || oldSlug === savedItem.slug) {
@@ -702,6 +706,42 @@ function mergeSavedItem(
       }
     })
   )
+}
+
+function markItemContentAvailability(
+  items: TreeItem[],
+  itemId: string,
+  availability: Partial<
+    Pick<TreeItem, 'has_notes' | 'has_prompt_response_entries'>
+  >
+): TreeItem[] {
+  let changed = false
+  const nextItems = items.map((item) => {
+    if (item.id !== itemId) {
+      return item
+    }
+
+    const hasNotes = availability.has_notes ?? item.has_notes
+    const hasPromptResponseEntries =
+      availability.has_prompt_response_entries ??
+      item.has_prompt_response_entries
+
+    if (
+      item.has_notes === hasNotes &&
+      item.has_prompt_response_entries === hasPromptResponseEntries
+    ) {
+      return item
+    }
+
+    changed = true
+    return {
+      ...item,
+      has_notes: hasNotes,
+      has_prompt_response_entries: hasPromptResponseEntries,
+    }
+  })
+
+  return changed ? nextItems : items
 }
 
 function appendSavedItem(
@@ -1582,6 +1622,28 @@ export function Outliner({
     })
   }, [])
 
+  const updateNotesAvailability = React.useCallback(
+    (itemId: string, hasNotes: boolean) => {
+      setLocalItems((current) =>
+        markItemContentAvailability(current, itemId, {
+          has_notes: hasNotes,
+        })
+      )
+    },
+    []
+  )
+
+  const updatePromptResponseAvailability = React.useCallback(
+    (itemId: string, hasEntries: boolean) => {
+      setLocalItems((current) =>
+        markItemContentAvailability(current, itemId, {
+          has_prompt_response_entries: hasEntries,
+        })
+      )
+    },
+    []
+  )
+
   const activeItems = React.useMemo(
     () => localItems.filter((item) => !locallyDeletedItemIds.has(item.id)),
     [localItems, locallyDeletedItemIds]
@@ -2453,11 +2515,13 @@ export function Outliner({
         ancestors={timelineItemAncestors}
         item={timelineItem}
         onClose={() => setTimelineItemId(null)}
+        onAvailabilityChange={updatePromptResponseAvailability}
       />
       <ItemNotesDialog
         ancestors={notesItemAncestors}
         item={notesItem}
         onClose={() => setNotesItemId(null)}
+        onAvailabilityChange={updateNotesAvailability}
       />
     </div>
   )
