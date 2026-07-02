@@ -148,6 +148,18 @@ class CommentUpdate(BaseModel):
     body: str
 
 
+class NoteCreate(BaseModel):
+    """Request body for recording an item note."""
+
+    body: str
+
+
+class NoteUpdate(BaseModel):
+    """Request body for editing an item note."""
+
+    body: str
+
+
 class PromptResponseEntryCreate(BaseModel):
     """Request body for recording an item prompt or response timeline entry."""
 
@@ -192,6 +204,17 @@ class CommentOut(BaseModel):
     id: str
     item_id: str
     author: str
+    body: str
+    created_at: str
+    updated_at: str
+
+
+class NoteOut(BaseModel):
+    """Response model for a dated item note."""
+
+    id: str
+    item_id: str
+    created_by: str
     body: str
     created_at: str
     updated_at: str

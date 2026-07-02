@@ -9,6 +9,7 @@ import {
   IndentDecrease,
   IndentIncrease,
   MessagesSquare,
+  NotebookText,
   Trash2,
 } from 'lucide-react'
 
@@ -54,6 +55,7 @@ type OutlinerRowProps = {
   onKeyboardReorder: (item: TreeItem, direction: 'up' | 'down') => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
+  onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
   onDragStart?: React.DragEventHandler<HTMLButtonElement>
   onDragEnd?: React.DragEventHandler<HTMLButtonElement>
@@ -75,6 +77,7 @@ export function OutlinerRow({
   onKeyboardReorder,
   onChangeState,
   onChangeDone,
+  onOpenNotes,
   onOpenPromptTimeline,
   onDragStart,
   onDragEnd,
@@ -300,6 +303,21 @@ export function OutlinerRow({
             ))}
           </select>
         ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Open notes"
+          title="Notes"
+          disabled={pending}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenNotes(item)
+          }}
+        >
+          <NotebookText className="size-3.5" aria-hidden="true" />
+        </Button>
         <Button
           type="button"
           variant="ghost"

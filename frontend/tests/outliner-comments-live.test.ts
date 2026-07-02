@@ -13,15 +13,18 @@ const actionMocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   createItem: vi.fn(),
   createMarker: vi.fn(),
+  createNote: vi.fn(),
   createPromptResponseEntry: vi.fn(),
   deleteComment: vi.fn(),
   deleteDependency: vi.fn(),
   deleteItem: vi.fn(),
   editComment: vi.fn(),
+  editNote: vi.fn(),
   fetchChanges: vi.fn(),
   fetchComments: vi.fn(),
   fetchItemActivity: vi.fn(),
   fetchMarkers: vi.fn(),
+  fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
@@ -431,11 +434,13 @@ describe('Outliner comment target lifecycle', () => {
     actionMocks.createComment.mockResolvedValue({})
     actionMocks.createItem.mockResolvedValue({})
     actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createNote.mockResolvedValue({})
     actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
     actionMocks.deleteDependency.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
+    actionMocks.editNote.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
     actionMocks.fetchComments.mockImplementation(async (itemId: string) => {
       if (itemId === 'child') {
@@ -448,6 +453,7 @@ describe('Outliner comment target lifecycle', () => {
     })
     actionMocks.fetchItemActivity.mockResolvedValue([])
     actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchNotes.mockResolvedValue([])
     actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})

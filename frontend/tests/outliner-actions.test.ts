@@ -5,16 +5,19 @@ import {
   createComment,
   createItem,
   createMarker,
+  createNote,
   createPromptResponseEntry,
   createRun,
   deleteComment,
   deleteDependency,
   deleteItem,
   editComment,
+  editNote,
   fetchItemActivity,
   fetchChanges,
   fetchComments,
   fetchMarkers,
+  fetchNotes,
   fetchPromptResponseEntries,
   fetchPriority,
   fetchTree,
@@ -516,6 +519,80 @@ describe('outliner mutation Server Actions', () => {
       fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
     ).toEqual(expectedAuthHeaders(2))
     expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(1)
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+  })
+
+  it('exposes note workflows through validated Server Actions', async () => {
+    const note = {
+      id: 'note-1',
+      item_id: 'current',
+      created_by: 'alice',
+      body: '## Decision\n- keep notes',
+      created_at: '2026-07-02T09:00:00.000000Z',
+      updated_at: '2026-07-02T09:00:00.000000Z',
+    }
+    const editedNote = {
+      ...note,
+      body: '## Decision\n- edit notes',
+      updated_at: '2026-07-02T09:05:00.000000Z',
+    }
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'GET' && pathname === '/api/v1/items/current/notes') {
+        return jsonResponse([note])
+      }
+      if (method === 'POST' && pathname === '/api/v1/items/current/notes') {
+        return jsonResponse(note)
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/notes/note-1') {
+        return jsonResponse(editedNote)
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(fetchNotes('current')).resolves.toEqual([note])
+    await expect(
+      createNote('current', {
+        body: '## Decision\n- keep notes',
+      })
+    ).resolves.toEqual(note)
+    await expect(
+      editNote('note-1', {
+        body: '## Decision\n- edit notes',
+      })
+    ).resolves.toEqual(editedNote)
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      {
+        method: 'GET',
+        path: '/api/v1/items/current/notes',
+        body: null,
+      },
+      {
+        method: 'POST',
+        path: '/api/v1/items/current/notes',
+        body: { body: '## Decision\n- keep notes' },
+      },
+      {
+        method: 'PATCH',
+        path: '/api/v1/notes/note-1',
+        body: { body: '## Decision\n- edit notes' },
+      },
+    ])
+    expect(
+      fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(3))
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(2)
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
 

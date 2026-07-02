@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "items",
     "dependencies",
     "comments",
+    "item_notes",
     "prompt_response_entries",
     "item_state_changes",
     "markers",
@@ -416,6 +417,39 @@ def test_delete_item_cascades_to_prompt_response_entries(tmp_path) -> None:
         remaining = conn.execute(
             "SELECT COUNT(*) FROM prompt_response_entries"
         ).fetchone()[0]
+
+    assert remaining == 0
+
+
+def test_delete_item_cascades_to_notes(tmp_path) -> None:
+    """Deleting an item removes its dated notes."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        _insert_item(conn, "item-a")
+        conn.execute(
+            """
+            INSERT INTO item_notes (
+                id, item_id, created_by, body, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "note-1",
+                "item-a",
+                "alice",
+                "# Note",
+                "2026-01-01T00:00:00.000000Z",
+                "2026-01-01T00:00:00.000000Z",
+            ),
+        )
+
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM items WHERE id = ?", ("item-a",))
+
+    with get_connection(db_path) as conn:
+        remaining = conn.execute("SELECT COUNT(*) FROM item_notes").fetchone()[0]
 
     assert remaining == 0
 

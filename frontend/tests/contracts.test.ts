@@ -14,6 +14,8 @@ import {
   markerListSchema,
   markerSchema,
   messageResponseSchema,
+  noteListSchema,
+  noteSchema,
   notImplementedResponseSchema,
   priorityResponseSchema,
   promptResponseEntryListSchema,
@@ -353,6 +355,28 @@ describe('prompt/response timeline contracts', () => {
     const { body: _body, ...withoutBody } = entry
 
     expect(promptResponseEntrySchema.safeParse(withoutBody).success).toBe(false)
+  })
+})
+
+describe('note contracts', () => {
+  const note = {
+    id: 'note-1',
+    item_id: 'item-1',
+    created_by: 'alice',
+    body: '## Decision\n- use notes',
+    created_at: '2026-07-02T09:00:00.000000Z',
+    updated_at: '2026-07-02T09:05:00.000000Z',
+  }
+
+  it('parses Note payloads and lists', () => {
+    expect(noteSchema.parse(note)).toEqual(note)
+    expect(noteListSchema.parse([note])).toEqual([note])
+  })
+
+  it('rejects notes without edit timestamps', () => {
+    const { updated_at: _updatedAt, ...withoutUpdatedAt } = note
+
+    expect(noteSchema.safeParse(withoutUpdatedAt).success).toBe(false)
   })
 })
 

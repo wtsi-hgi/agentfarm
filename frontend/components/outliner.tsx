@@ -16,6 +16,7 @@ import {
 } from '@/app/actions'
 import { CommentsPanel } from '@/components/comments-panel'
 import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
+import { ItemNotesDialog } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
 import { OutlinerRow } from '@/components/outliner-row'
 import {
@@ -1497,6 +1498,7 @@ export function Outliner({
   const [timelineItemId, setTimelineItemId] = React.useState<string | null>(
     null
   )
+  const [notesItemId, setNotesItemId] = React.useState<string | null>(null)
   const [pendingDependencyRemoval, setPendingDependencyRemoval] =
     React.useState<PendingDependencyRemoval | null>(null)
   const [draftResetRequest, setDraftResetRequest] =
@@ -1682,6 +1684,7 @@ export function Outliner({
   const timelineItem = timelineItemId
     ? (itemsById.get(timelineItemId) ?? null)
     : null
+  const notesItem = notesItemId ? (itemsById.get(notesItemId) ?? null) : null
 
   React.useEffect(() => {
     if (selectedItemId && itemsById.has(selectedItemId)) {
@@ -1823,6 +1826,9 @@ export function Outliner({
     const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
     setLocallyDeletedItemIds(unavailableIds)
     setTimelineItemId((current) =>
+      current && deletedIds.has(current) ? null : current
+    )
+    setNotesItemId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
@@ -1971,6 +1977,11 @@ export function Outliner({
   function openPromptTimeline(item: TreeItem) {
     setSelectedItemId(item.id)
     setTimelineItemId(item.id)
+  }
+
+  function openNotes(item: TreeItem) {
+    setSelectedItemId(item.id)
+    setNotesItemId(item.id)
   }
 
   function closePendingDependencyRemoval() {
@@ -2328,6 +2339,7 @@ export function Outliner({
                       onKeyboardReorder={reorderFromDragHandleKeyboard}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
+                      onOpenNotes={openNotes}
                       onOpenPromptTimeline={openPromptTimeline}
                       draftResetRequest={rowDraftResetRequest}
                       onDragStart={(event) => {
@@ -2410,6 +2422,7 @@ export function Outliner({
         item={timelineItem}
         onClose={() => setTimelineItemId(null)}
       />
+      <ItemNotesDialog item={notesItem} onClose={() => setNotesItemId(null)} />
     </div>
   )
 }
