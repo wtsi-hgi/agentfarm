@@ -148,6 +148,14 @@ function isBlockStart(lines: string[], index: number): boolean {
   )
 }
 
+function nextNonBlankLineIndex(lines: string[], index: number): number {
+  let cursor = index
+  while (cursor < lines.length && !(lines[cursor] ?? '').trim()) {
+    cursor += 1
+  }
+  return cursor
+}
+
 function parseBlocks(value: string): Block[] {
   const normalized = value.replace(/\r\n?/g, '\n')
   const lines = normalized.split('\n')
@@ -225,9 +233,30 @@ function parseBlocks(value: string): Block[] {
 
     if (isOrderedListLine(line)) {
       const items: string[] = []
-      while (index < lines.length && isOrderedListLine(lines[index] ?? '')) {
-        items.push((lines[index] ?? '').replace(/^\s*\d+\.\s+/, ''))
-        index += 1
+      while (index < lines.length) {
+        const currentLine = lines[index] ?? ''
+
+        if (isOrderedListLine(currentLine)) {
+          items.push(currentLine.replace(/^\s*\d+\.\s+/, ''))
+          index += 1
+          continue
+        }
+
+        if (currentLine.trim()) {
+          break
+        }
+
+        const nextListLineIndex = nextNonBlankLineIndex(lines, index)
+        if (
+          nextListLineIndex < lines.length &&
+          isOrderedListLine(lines[nextListLineIndex] ?? '')
+        ) {
+          index = nextListLineIndex
+          continue
+        }
+
+        index = nextListLineIndex
+        break
       }
       blocks.push({ kind: 'ol', items })
       continue

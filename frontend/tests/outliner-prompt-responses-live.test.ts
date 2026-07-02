@@ -301,6 +301,38 @@ describe('Outliner prompt/response timeline overlay', () => {
     expect(dialog.textContent).not.toContain('Human planning note')
   })
 
+  it('renders pasted response ordered-list items separated by blank lines as one sequence', async () => {
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([
+      entry({
+        id: 'response-1',
+        kind: 'response',
+        body: '1. Inspect the failure\n\n1. Patch the renderer\n\n1. Run the gates',
+        created_at: '2026-06-30T09:02:00.000000Z',
+      }),
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+      })
+    )
+
+    await click(
+      getItemButton(container, 'root', 'Open prompt/response timeline')
+    )
+
+    const dialog = getTimelineDialog()
+    const lists = dialog.querySelectorAll('ol')
+    const items = lists[0]?.querySelectorAll('li') ?? []
+
+    expect(lists).toHaveLength(1)
+    expect(Array.from(items).map((listItem) => listItem.textContent)).toEqual([
+      'Inspect the failure',
+      'Patch the renderer',
+      'Run the gates',
+    ])
+  })
+
   it('shows ancestor breadcrumbs before the selected item title', async () => {
     const container = await render(
       React.createElement(Outliner, {
