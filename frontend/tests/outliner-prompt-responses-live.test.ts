@@ -299,6 +299,54 @@ describe('Outliner prompt/response timeline overlay', () => {
     expect(dialog.textContent).not.toContain('Human planning note')
   })
 
+  it('shows ancestor breadcrumbs before the selected item title', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({ id: 'root', title: 'Root project', sort_order: 1 }),
+          item({
+            id: 'section',
+            title: 'Implementation section',
+            parent_id: 'root',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Prompt target',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    await click(
+      getItemButton(container, 'leaf', 'Open prompt/response timeline')
+    )
+
+    const dialog = getTimelineDialog()
+    const header = dialog.querySelector('header')
+    const breadcrumb = dialog.querySelector('nav[aria-label="Item location"]')
+    if (!(header instanceof HTMLElement)) {
+      throw new Error('Missing prompt/response dialog header')
+    }
+    if (!(breadcrumb instanceof HTMLElement)) {
+      throw new Error('Missing prompt/response item breadcrumb')
+    }
+
+    expect(actionMocks.fetchPromptResponseEntries).toHaveBeenCalledWith('leaf')
+    expect(breadcrumb.textContent).toContain('Root project')
+    expect(breadcrumb.textContent).toContain('Implementation section')
+    expect(breadcrumb.textContent).not.toContain('Prompt target')
+    expect(header.textContent).toContain('Prompt target')
+    expect(header.textContent?.indexOf('Root project')).toBeLessThan(
+      header.textContent?.indexOf('Prompt target') ?? -1
+    )
+    expect(header.textContent?.indexOf('Implementation section')).toBeLessThan(
+      header.textContent?.indexOf('Prompt target') ?? -1
+    )
+  })
+
   it('adds prompt and response entries with server timestamps visible', async () => {
     let createdCount = 0
     actionMocks.createPromptResponseEntry.mockImplementation(

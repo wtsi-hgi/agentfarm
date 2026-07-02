@@ -12,11 +12,16 @@ import {
 } from 'lucide-react'
 
 import { createNote, editNote, fetchNotes } from '@/app/actions'
+import {
+  ItemDialogHeading,
+  type ItemDialogBreadcrumb,
+} from '@/components/item-dialog-heading'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
 
 type ItemNotesDialogProps = {
+  ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void
 }
@@ -38,7 +43,11 @@ function sortedNotes(notes: readonly Note[]) {
   )
 }
 
-export function ItemNotesDialog({ item, onClose }: ItemNotesDialogProps) {
+export function ItemNotesDialog({
+  ancestors = [],
+  item,
+  onClose,
+}: ItemNotesDialogProps) {
   const titleId = React.useId()
   const itemId = item?.id ?? null
   const [notes, setNotes] = React.useState<Note[]>([])
@@ -168,12 +177,11 @@ export function ItemNotesDialog({ item, onClose }: ItemNotesDialogProps) {
               <NotebookText className="size-4" aria-hidden="true" />
               Notes
             </div>
-            <h2
-              id={titleId}
-              className="text-foreground mt-1 truncate text-lg font-semibold"
-            >
-              {item.title}
-            </h2>
+            <ItemDialogHeading
+              ancestors={ancestors}
+              item={item}
+              titleId={titleId}
+            />
           </div>
           <Button
             type="button"

@@ -16,6 +16,7 @@ import {
 } from '@/app/actions'
 import { CommentsPanel } from '@/components/comments-panel'
 import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
+import type { ItemDialogBreadcrumb } from '@/components/item-dialog-heading'
 import { ItemNotesDialog } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
 import { OutlinerRow } from '@/components/outliner-row'
@@ -1196,6 +1197,28 @@ function collectionToSet(collection: IdCollection | undefined): Set<string> {
   return isIdSet(collection) ? new Set(collection) : new Set(collection)
 }
 
+function itemAncestorBreadcrumbs(
+  item: TreeItem | null,
+  itemsById: ReadonlyMap<string, TreeItem>
+): ItemDialogBreadcrumb[] {
+  const ancestors: ItemDialogBreadcrumb[] = []
+  const visited = new Set<string>()
+  let parentId = item?.parent_id ?? null
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = itemsById.get(parentId)
+    if (!parent) {
+      break
+    }
+
+    ancestors.push({ id: parent.id, title: parent.title })
+    parentId = parent.parent_id
+  }
+
+  return ancestors.reverse()
+}
+
 function orderedSiblings(items: TreeItem[], parentId: string | null) {
   return items
     .filter((item) => item.parent_id === parentId)
@@ -1685,6 +1708,14 @@ export function Outliner({
     ? (itemsById.get(timelineItemId) ?? null)
     : null
   const notesItem = notesItemId ? (itemsById.get(notesItemId) ?? null) : null
+  const timelineItemAncestors = React.useMemo(
+    () => itemAncestorBreadcrumbs(timelineItem, itemsById),
+    [itemsById, timelineItem]
+  )
+  const notesItemAncestors = React.useMemo(
+    () => itemAncestorBreadcrumbs(notesItem, itemsById),
+    [itemsById, notesItem]
+  )
 
   React.useEffect(() => {
     if (selectedItemId && itemsById.has(selectedItemId)) {
@@ -2419,10 +2450,15 @@ export function Outliner({
         }}
       />
       <PromptResponseTimelineDialog
+        ancestors={timelineItemAncestors}
         item={timelineItem}
         onClose={() => setTimelineItemId(null)}
       />
-      <ItemNotesDialog item={notesItem} onClose={() => setNotesItemId(null)} />
+      <ItemNotesDialog
+        ancestors={notesItemAncestors}
+        item={notesItem}
+        onClose={() => setNotesItemId(null)}
+      />
     </div>
   )
 }

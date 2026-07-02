@@ -294,4 +294,50 @@ describe('Outliner notes overlay', () => {
     expect(dialog.textContent).toContain('Edited 2026-07-02 10:15 UTC')
     expect(dialog.textContent).not.toContain('Existing note')
   })
+
+  it('shows ancestor breadcrumbs before the selected item title', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({ id: 'root', title: 'Root project', sort_order: 1 }),
+          item({
+            id: 'section',
+            title: 'Implementation section',
+            parent_id: 'root',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Notes target',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    await click(getItemButton(container, 'leaf', 'Open notes'))
+
+    const dialog = getNotesDialog()
+    const header = dialog.querySelector('header')
+    const breadcrumb = dialog.querySelector('nav[aria-label="Item location"]')
+    if (!(header instanceof HTMLElement)) {
+      throw new Error('Missing notes dialog header')
+    }
+    if (!(breadcrumb instanceof HTMLElement)) {
+      throw new Error('Missing notes item breadcrumb')
+    }
+
+    expect(actionMocks.fetchNotes).toHaveBeenCalledWith('leaf')
+    expect(breadcrumb.textContent).toContain('Root project')
+    expect(breadcrumb.textContent).toContain('Implementation section')
+    expect(breadcrumb.textContent).not.toContain('Notes target')
+    expect(header.textContent).toContain('Notes target')
+    expect(header.textContent?.indexOf('Root project')).toBeLessThan(
+      header.textContent?.indexOf('Notes target') ?? -1
+    )
+    expect(header.textContent?.indexOf('Implementation section')).toBeLessThan(
+      header.textContent?.indexOf('Notes target') ?? -1
+    )
+  })
 })
