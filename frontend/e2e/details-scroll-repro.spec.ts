@@ -1,9 +1,9 @@
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 
-import { expect, test, type APIRequestContext } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
-import { createItem, gotoPath, signInAs } from './helpers'
+import { createItem, deleteBackendItems, gotoPath, signInAs } from './helpers'
 
 const screenshotPath = path.resolve(
   __dirname,
@@ -13,8 +13,6 @@ const screenshotPath = path.resolve(
   'agent',
   'details-scroll-repro.png'
 )
-const backendBaseUrl =
-  process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 const viewport = { width: 1280, height: 720 }
 
 type SeededItem = Awaited<ReturnType<typeof createItem>>
@@ -27,31 +25,6 @@ type ScrollSnapshot = {
   visibleRowCount: number
   visibleRowTitles: string[]
   viewportHeight: number
-}
-
-async function deleteSeededItems(
-  request: APIRequestContext,
-  sessionToken: string,
-  items: readonly SeededItem[]
-) {
-  for (const item of [...items].reverse()) {
-    const response = await request.delete(
-      `${backendBaseUrl}/api/v1/items/${item.id}`,
-      {
-        headers: {
-          'x-agentfarm-session': sessionToken,
-        },
-      }
-    )
-
-    if (response.ok() || response.status() === 404) {
-      continue
-    }
-
-    throw new Error(
-      `Could not clean up seeded item ${item.id}: ${await response.text()}`
-    )
-  }
 }
 
 test.describe('details panel scroll reproduction', () => {
@@ -155,7 +128,11 @@ test.describe('details panel scroll reproduction', () => {
         `Details panel should stay capped inside the viewport: ${JSON.stringify(snapshot)}`
       ).toBeLessThanOrEqual(snapshot.viewportHeight)
     } finally {
-      await deleteSeededItems(request, sessionToken, seededItems)
+      await deleteBackendItems(
+        request,
+        sessionToken,
+        seededItems.map((item) => item.id)
+      )
     }
   })
 })

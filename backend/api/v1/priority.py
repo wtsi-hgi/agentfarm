@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
@@ -24,7 +25,7 @@ _ITEM_COLUMNS = (
 )
 
 
-def _row_to_priority_item(row: sqlite3.Row, rank: int) -> PriorityItemOut:
+def _row_to_priority_item(row: Mapping[str, Any], rank: int) -> PriorityItemOut:
     """Build a ranked priority entry from a persisted item row."""
     data = dict(row)
     data["blocked_external"] = bool(data["blocked_external"])

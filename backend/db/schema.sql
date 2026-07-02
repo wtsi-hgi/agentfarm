@@ -97,3 +97,6 @@ CREATE INDEX IF NOT EXISTS idx_dependencies_to
 
 CREATE INDEX IF NOT EXISTS idx_dependencies_kind_from
   ON dependencies(kind, from_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_auto_chain_from
+  ON dependencies(automatic_chain, from_id);
