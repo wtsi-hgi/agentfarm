@@ -94,8 +94,10 @@ export function ItemNotesDialog({
   React.useEffect(() => {
     void loadNotes()
     setDraft('')
+    setSaving(false)
     setEditingId(null)
     setEditingDraft('')
+    setSavingEditId(null)
   }, [loadNotes])
 
   React.useEffect(() => {
@@ -141,14 +143,18 @@ export function ItemNotesDialog({
   }
 
   async function saveNote(noteId: string) {
-    if (!editingDraft.trim() || savingEditId) {
+    if (!itemId || !editingDraft.trim() || savingEditId) {
       return
     }
 
+    const requestedItemId = itemId
     setSavingEditId(noteId)
     setError(null)
     try {
       const updated = await editNote(noteId, { body: editingDraft.trim() })
+      if (currentItemId.current !== requestedItemId) {
+        return
+      }
       setNotes((current) =>
         sortedNotes(
           current.map((note) => (note.id === updated.id ? updated : note))
@@ -157,9 +163,13 @@ export function ItemNotesDialog({
       setEditingId(null)
       setEditingDraft('')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to save')
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to save')
+      }
     } finally {
-      setSavingEditId(null)
+      if (currentItemId.current === requestedItemId) {
+        setSavingEditId(null)
+      }
     }
   }
 

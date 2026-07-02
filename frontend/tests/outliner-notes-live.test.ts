@@ -82,6 +82,16 @@ function note(overrides: Partial<Note>): Note {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 async function flushReact() {
   await act(async () => {
     await Promise.resolve()
@@ -312,6 +322,101 @@ describe('Outliner notes overlay', () => {
     expect(dialog.textContent).toContain('revised')
     expect(dialog.textContent).toContain('Edited 2026-07-02 10:15 UTC')
     expect(dialog.textContent).not.toContain('Existing note')
+  })
+
+  it('ignores an in-flight note edit after switching to another item', async () => {
+    const rootEdit = deferred<Note>()
+    actionMocks.fetchNotes.mockImplementation(async (itemId: string) => {
+      if (itemId === 'root') {
+        return [
+          note({
+            id: 'root-note',
+            item_id: 'root',
+            body: 'Root original',
+          }),
+        ]
+      }
+
+      if (itemId === 'other') {
+        return [
+          note({
+            id: 'other-note',
+            item_id: 'other',
+            body: 'Other original',
+          }),
+        ]
+      }
+
+      return []
+    })
+    actionMocks.editNote.mockImplementation(
+      async (noteId: string, input: { body: string }) => {
+        if (noteId === 'root-note') {
+          return rootEdit.promise
+        }
+
+        return note({
+          id: noteId,
+          item_id: 'other',
+          body: input.body,
+          created_at: '2026-07-02T09:00:00.000000Z',
+          updated_at: '2026-07-02T10:30:00.000000Z',
+        })
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({ id: 'root', title: 'Root project', sort_order: 1 }),
+          item({ id: 'other', title: 'Other project', sort_order: 2 }),
+        ],
+      })
+    )
+
+    await click(getItemButton(container, 'root', 'Open notes'))
+    let dialog = getNotesDialog()
+    expect(dialog.textContent).toContain('Root original')
+
+    await click(getButton(dialog, 'Edit note'))
+    await changeTextarea(getTextarea(dialog, 'Note body'), 'Root edited')
+    await click(getButton(dialog, 'Save note'))
+
+    expect(actionMocks.editNote).toHaveBeenCalledWith('root-note', {
+      body: 'Root edited',
+    })
+
+    await click(getItemButton(container, 'other', 'Open notes'))
+    dialog = getNotesDialog()
+    expect(dialog.textContent).toContain('Other project')
+    expect(dialog.textContent).toContain('Other original')
+
+    await act(async () => {
+      rootEdit.resolve(
+        note({
+          id: 'root-note',
+          item_id: 'root',
+          body: 'Root edited',
+          created_at: '2026-07-02T09:00:00.000000Z',
+          updated_at: '2026-07-02T10:15:00.000000Z',
+        })
+      )
+      await rootEdit.promise
+    })
+    await flushReact()
+
+    dialog = getNotesDialog()
+    expect(dialog.textContent).toContain('Other original')
+    expect(dialog.textContent).not.toContain('Root edited')
+
+    await click(getButton(dialog, 'Edit note'))
+    await changeTextarea(getTextarea(dialog, 'Note body'), 'Other edited')
+    await click(getButton(dialog, 'Save note'))
+
+    expect(actionMocks.editNote).toHaveBeenCalledWith('other-note', {
+      body: 'Other edited',
+    })
+    expect(dialog.textContent).toContain('Other edited')
   })
 
   it('shows ancestor breadcrumbs before the selected item title', async () => {
