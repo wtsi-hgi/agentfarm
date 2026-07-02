@@ -17,8 +17,8 @@ import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import {
   STATE_OPTIONS,
+  type ItemReadiness,
   isExternalWaitingItem,
-  itemReadiness,
 } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
@@ -42,6 +42,7 @@ type OutlinerRowProps = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
+  displayReadiness: ItemReadiness
   selected?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
@@ -68,6 +69,7 @@ export function OutlinerRow({
   depth,
   hasChildren,
   collapsed,
+  displayReadiness,
   selected = false,
   onToggle,
   onSelect,
@@ -188,9 +190,8 @@ export function OutlinerRow({
   }
 
   const checkedDone = item.state === 'done'
-  const readiness = itemReadiness(item, { ignoreState: hasChildren })
-  const displayDone = readiness === 'done'
-  const displayReady = readiness === 'ready'
+  const displayDone = displayReadiness === 'done'
+  const displayReady = displayReadiness === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
 

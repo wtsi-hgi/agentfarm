@@ -1166,6 +1166,64 @@ describe('Outliner live newly added filter exemptions', () => {
     ).toBe('Ready')
   })
 
+  it('shows each section readiness as the most actionable descendant readiness', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'top-section',
+            title: 'Top section',
+            actionable: false,
+            sort_order: 1,
+          }),
+          item({
+            id: 'waiting-branch',
+            title: 'Waiting branch',
+            actionable: false,
+            parent_id: 'top-section',
+            sort_order: 1,
+          }),
+          item({
+            id: 'waiting-child',
+            title: 'Waiting child',
+            actionable: true,
+            parent_id: 'waiting-branch',
+            state: 'feedback',
+            sort_order: 1,
+          }),
+          item({
+            id: 'ready-branch',
+            title: 'Ready branch',
+            actionable: false,
+            parent_id: 'top-section',
+            sort_order: 2,
+          }),
+          item({
+            id: 'ready-child',
+            title: 'Ready child',
+            actionable: true,
+            parent_id: 'ready-branch',
+            state: 'respond',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    const sectionReadiness = Object.fromEntries(
+      ['top-section', 'waiting-branch', 'ready-branch'].map((itemId) => [
+        itemId,
+        getItemReadinessIndicator(container, itemId).textContent,
+      ])
+    )
+
+    expect(sectionReadiness).toEqual({
+      'top-section': 'Ready',
+      'waiting-branch': 'Waiting',
+      'ready-branch': 'Ready',
+    })
+  })
+
   it('renders a done checkbox for root, section, and item rows', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
 

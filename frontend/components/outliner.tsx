@@ -52,7 +52,11 @@ import {
   type RowMutationActions,
   type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
-import { isExternalWaitingItem } from '@/lib/state-metadata'
+import {
+  type ItemReadiness,
+  isExternalWaitingItem,
+  itemReadiness,
+} from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -60,6 +64,7 @@ export type VisibleOutlinerRow = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
+  displayReadiness: ItemReadiness
   filteredOutNewlyAdded: boolean
 }
 
@@ -1447,11 +1452,42 @@ export function visibleOutlinerRows(
     {
       collapsed: boolean
       directlyVisible: boolean
+      displayReadiness: ItemReadiness
       filteredOutNewlyAdded: boolean
       hasChildren: boolean
     }
   >()
+  const displayReadinessCache = new Map<string, ItemReadiness>()
   const visibleDescendantCache = new Map<string, boolean>()
+
+  function displayReadiness(item: TreeItem): ItemReadiness {
+    const cached = displayReadinessCache.get(item.id)
+    if (cached) {
+      return cached
+    }
+
+    const childItems = children.get(item.id) ?? []
+    if (childItems.length === 0) {
+      const readiness = itemReadiness(item)
+      displayReadinessCache.set(item.id, readiness)
+      return readiness
+    }
+
+    let readiness: ItemReadiness = 'done'
+    for (const child of childItems) {
+      const childReadiness = displayReadiness(child)
+      if (childReadiness === 'ready') {
+        displayReadinessCache.set(item.id, 'ready')
+        return 'ready'
+      }
+      if (childReadiness === 'waiting') {
+        readiness = 'waiting'
+      }
+    }
+
+    displayReadinessCache.set(item.id, readiness)
+    return readiness
+  }
 
   function projection(item: TreeItem) {
     const cached = projectionCache.get(item.id)
@@ -1475,6 +1511,7 @@ export function visibleOutlinerRows(
     const projected = {
       collapsed,
       directlyVisible,
+      displayReadiness: displayReadiness(item),
       filteredOutNewlyAdded,
       hasChildren,
     }
@@ -1498,8 +1535,13 @@ export function visibleOutlinerRows(
 
   function visitTree(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
-        projection(item)
+      const {
+        collapsed,
+        directlyVisible,
+        displayReadiness,
+        filteredOutNewlyAdded,
+        hasChildren,
+      } = projection(item)
 
       if (directlyVisible) {
         rows.push({
@@ -1507,6 +1549,7 @@ export function visibleOutlinerRows(
           depth,
           hasChildren,
           collapsed,
+          displayReadiness,
           filteredOutNewlyAdded,
         })
       }
@@ -1519,8 +1562,13 @@ export function visibleOutlinerRows(
 
   function visitFiltered(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
-        projection(item)
+      const {
+        collapsed,
+        directlyVisible,
+        displayReadiness,
+        filteredOutNewlyAdded,
+        hasChildren,
+      } = projection(item)
       const visible = directlyVisible || hasVisibleDescendant(item)
 
       if (!visible) {
@@ -1532,6 +1580,7 @@ export function visibleOutlinerRows(
         depth,
         hasChildren,
         collapsed,
+        displayReadiness,
         filteredOutNewlyAdded,
       })
 
@@ -2398,6 +2447,7 @@ export function Outliner({
                 depth,
                 hasChildren,
                 collapsed,
+                displayReadiness,
                 filteredOutNewlyAdded,
               }) => {
                 const rowDraftResetRequest =
@@ -2457,6 +2507,7 @@ export function Outliner({
                       depth={depth}
                       hasChildren={hasChildren}
                       collapsed={collapsed}
+                      displayReadiness={displayReadiness}
                       selected={selectedItemId === item.id}
                       onToggle={toggle}
                       onSelect={(itemId) => setSelectedItemId(itemId)}
