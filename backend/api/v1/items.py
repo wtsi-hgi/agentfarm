@@ -488,7 +488,9 @@ async def get_tree(
     projection = leverage.build_projection(conn)
     needs_edges_by_item = _explicit_needs_edges_by_item(conn)
     item_ids_with_notes = _item_ids_with_notes(conn)
-    item_ids_with_prompt_response_entries = _item_ids_with_prompt_response_entries(conn)
+    item_ids_with_prompt_response_entries = _item_ids_with_prompt_response_entries(
+        conn,
+    )
     result: list[TreeItemOut] = []
     for item_id in projection.tree_order_ids():
         row = projection.item_rows.get(item_id)
