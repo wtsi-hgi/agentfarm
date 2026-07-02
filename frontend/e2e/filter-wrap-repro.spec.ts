@@ -22,6 +22,13 @@ type LayoutSnapshot = {
   viewportWidth: number
 }
 
+type DetailsScrollSnapshot = {
+  bottom: number
+  hasInternalOverflow: boolean
+  top: number
+  viewportHeight: number
+}
+
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 const viewportWidth = 1089
@@ -193,12 +200,32 @@ async function layoutSnapshot(page: Page): Promise<LayoutSnapshot> {
   }
 }
 
-function hasPageScrollbar(snapshot: LayoutSnapshot) {
-  return snapshot.documentScrollHeight > snapshot.viewportHeight
+async function detailsScrollSnapshot(
+  page: Page
+): Promise<DetailsScrollSnapshot> {
+  return page
+    .locator('aside[aria-label="Item details"]')
+    .evaluate((details) => {
+      const detailsBox = details.getBoundingClientRect()
+      const scrollable = Array.from(details.children).find((child) => {
+        const element = child as HTMLElement
+        return (
+          getComputedStyle(element).overflowY === 'auto' &&
+          element.scrollHeight > element.clientHeight
+        )
+      }) as HTMLElement | undefined
+
+      return {
+        bottom: detailsBox.bottom,
+        hasInternalOverflow: Boolean(scrollable),
+        top: detailsBox.top,
+        viewportHeight: window.innerHeight,
+      }
+    })
 }
 
 test.describe('marker filter layout', () => {
-  test('keeps the clear-filter button on the same row when Details makes the page scroll', async ({
+  test('keeps the clear-filter button on the same row when Details content scrolls internally', async ({
     page,
     request,
   }) => {
@@ -215,15 +242,22 @@ test.describe('marker filter layout', () => {
     const before = await layoutSnapshot(page)
     expect(before.viewportWidth).toBe(viewportWidth)
     expect(before.clearWrapped).toBe(false)
-    expect(hasPageScrollbar(before)).toBe(false)
 
     await selectItem(page, seed.heavyTitle)
-    await expect(
-      page.locator('aside[aria-label="Item details"]').getByText('Comment 24')
-    ).toBeVisible()
+    const details = page.locator('aside[aria-label="Item details"]')
     const after = await layoutSnapshot(page)
-
-    expect(hasPageScrollbar(after)).toBe(true)
     expect(after.clearWrapped).toBe(false)
+
+    await page.evaluate(() => window.scrollTo(0, 500))
+    await expect
+      .poll(async () => (await details.boundingBox())?.y ?? 0)
+      .toBeLessThanOrEqual(20)
+    const afterDetails = await detailsScrollSnapshot(page)
+    expect(afterDetails.top).toBeGreaterThanOrEqual(0)
+    expect(afterDetails.bottom).toBeLessThanOrEqual(afterDetails.viewportHeight)
+    expect(afterDetails.hasInternalOverflow).toBe(true)
+    await details.hover()
+    await page.mouse.wheel(0, 4000)
+    await expect(details.getByText('Comment 24')).toBeVisible()
   })
 })

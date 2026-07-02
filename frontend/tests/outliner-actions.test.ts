@@ -116,7 +116,7 @@ describe('outliner mutation Server Actions', () => {
     vi.clearAllMocks()
   })
 
-  it('calls item mutation endpoints with validated responses and revalidates the primary route', async () => {
+  it('calls item mutation endpoints and revalidates only route-refreshing changes', async () => {
     const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
       const pathname = new URL(url.toString()).pathname
       const method = init?.method ?? 'GET'
@@ -205,7 +205,7 @@ describe('outliner mutation Server Actions', () => {
     expect(
       fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
     ).toEqual(expectedAuthHeaders(6))
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(6)
+    expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(4)
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
   })
 
@@ -248,7 +248,7 @@ describe('outliner mutation Server Actions', () => {
         ([url]) => new URL(url.toString()).pathname === '/api/v1/dependencies'
       )
     ).toBe(false)
-    expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled()
   })
 
   it('passes the explicit first-position move contract through to the backend', async () => {

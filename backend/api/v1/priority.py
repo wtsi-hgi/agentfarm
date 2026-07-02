@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
@@ -24,7 +25,7 @@ _ITEM_COLUMNS = (
 )
 
 
-def _row_to_priority_item(row: sqlite3.Row, rank: int) -> PriorityItemOut:
+def _row_to_priority_item(row: Mapping[str, Any], rank: int) -> PriorityItemOut:
     """Build a ranked priority entry from a persisted item row."""
     data = dict(row)
     data["blocked_external"] = bool(data["blocked_external"])
@@ -41,11 +42,10 @@ async def get_priority(
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> list[PriorityItemOut]:
     """Return actionable leaves in descending unblock-leverage order."""
+    projection = leverage.build_projection(conn)
     ranked: list[PriorityItemOut] = []
-    for rank, item_id in enumerate(leverage.priority_item_ids(conn), start=1):
-        row = conn.execute(
-            f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
-        ).fetchone()
+    for rank, item_id in enumerate(projection.priority_item_ids(), start=1):
+        row = projection.item_rows.get(item_id)
         if row is not None:
             ranked.append(_row_to_priority_item(row, rank))
     return ranked

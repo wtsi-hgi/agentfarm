@@ -68,6 +68,35 @@ def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
     return ItemActivityOut(kind="state-change", **dict(row))
 
 
+def _explicit_needs_edges_by_item(
+    conn: sqlite3.Connection,
+) -> dict[str, list[tree.ExplicitNeedsEdge]]:
+    """Return visible dependency labels grouped by source item."""
+    rows = conn.execute(
+        """
+        SELECT dep.from_id AS from_id,
+               dep.id AS id,
+               target.slug AS slug,
+               dep.automatic_chain AS automatic_chain
+        FROM dependencies AS dep
+        JOIN items AS target ON target.id = dep.to_id
+        WHERE dep.kind = 'explicit'
+        ORDER BY dep.from_id, target.slug, dep.id
+        """
+    ).fetchall()
+    edges_by_item: dict[str, list[tree.ExplicitNeedsEdge]] = {}
+    for row in rows:
+        edges = edges_by_item.setdefault(row["from_id"], [])
+        edges.append(
+            {
+                "id": row["id"],
+                "slug": row["slug"],
+                "automatic_chain": bool(row["automatic_chain"]),
+            }
+        )
+    return edges_by_item
+
+
 def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether an item with ``item_id`` exists."""
     row = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
@@ -131,8 +160,8 @@ async def create_item(
     ``after_id`` when that anchor is in the requested sibling group), records
     the acting user as ``created_by``/``updated_by``, and stamps all four
     creation timestamps with one ``now`` (``completed_at`` stays null). Defaults
-    fill any omitted field. Sibling order is organisational only: creation does
-    not add a dependency on neighbouring items.
+    fill any omitted field. Root sibling order is organisational only; creating
+    an ordinary leaf inside a section repairs that section's automatic chain.
     """
     if payload.parent_id is not None and not _item_exists(conn, payload.parent_id):
         raise HTTPException(status_code=404, detail="item not found")
@@ -141,6 +170,11 @@ async def create_item(
             raise HTTPException(status_code=404, detail="item not found")
         if not _is_in_sibling_group(conn, payload.after_id, payload.parent_id):
             raise HTTPException(status_code=404, detail="item not found")
+    parent_group_id = (
+        _parent_id_of(conn, payload.parent_id)
+        if payload.parent_id is not None
+        else None
+    )
 
     item_id = str(uuid.uuid4())
     slug = tree.derive_unique_slug(conn, payload.title)
@@ -185,9 +219,9 @@ async def create_item(
         },
     )
 
-    # Clean any legacy generated edges for this sibling group. The current
-    # section-item chain is derived live from sort order rather than stored.
+    # Repair generated edges for this sibling group.
     graph.regenerate_group(conn, payload.parent_id)
+    graph.regenerate_group(conn, parent_group_id)
 
     row = conn.execute(
         f"SELECT {_ITEM_COLUMNS} FROM items WHERE id = ?", (item_id,)
@@ -213,9 +247,8 @@ async def delete_item(
     is hand-deleted.
 
     Because the deleted item's incident dependency edges were cascade-removed,
-    the captured sibling group only needs legacy implicit-edge cleanup. Any
-    replacement section-item chain is derived live from the remaining sort
-    order, not written as dependency rows. An unknown id is 404.
+    the captured sibling group and the deleted item's parent group repair their
+    automatic chain rows from the remaining leaves. An unknown id is 404.
     """
     existing = conn.execute(
         "SELECT parent_id FROM items WHERE id = ?", (item_id,)
@@ -226,14 +259,16 @@ async def delete_item(
     # Capture BEFORE deletion: the group this item leaves must be cleaned,
     # and the row (and thus its parent_id) is gone once the delete runs.
     parent_id = existing["parent_id"]
+    parent_group_id = _parent_id_of(conn, parent_id) if parent_id is not None else None
 
     # One delete; ON DELETE CASCADE removes the subtree, its comments/runs, and
     # every incident edge (from_id or to_id). foreign_keys=ON makes it fire.
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
 
-    # Clean the sibling group the item left. The deleted item's incident edges
-    # are already gone via cascade; no order-derived replacement edge is added.
+    # Repair the sibling group the item left. The deleted item's incident edges
+    # are already gone via cascade.
     graph.regenerate_group(conn, parent_id)
+    graph.regenerate_group(conn, parent_group_id)
 
     return DeletedResponse(deleted=True, id=item_id)
 
@@ -255,9 +290,8 @@ async def indent_item(
     parent): there is nothing to indent under, so this is 422 ``"cannot indent
     first item"``. An unknown id is 404.
 
-    Identity is preserved (same ``id``; explicit edges and comments, stored by
-    id, are untouched). The affected groups -- the sibling group the item left
-    AND the new parent's child group -- run legacy implicit-edge cleanup via
+    Identity is preserved (same ``id``; user-owned edges and comments, stored
+    by id, are untouched). Affected groups repair automatic chain rows via
     :func:`services.tree.reparent_item`.
     """
     preceding = _preceding_sibling_id(conn, item_id)
@@ -267,6 +301,14 @@ async def indent_item(
         if not _item_exists(conn, item_id):
             raise HTTPException(status_code=404, detail="item not found")
         raise HTTPException(status_code=422, detail="cannot indent first item")
+
+    if graph.move_would_create_cycle(
+        conn,
+        item_id,
+        preceding,
+        as_first_child=True,
+    ):
+        raise HTTPException(status_code=409, detail="dependency cycle rejected")
 
     tree.reparent_item(conn, item_id, preceding, as_first_child=True)
 
@@ -293,10 +335,9 @@ async def outdent_item(
     move up to, so this is 422 ``"cannot outdent root item"``. An unknown id is
     404.
 
-    Identity is preserved (same ``id``; explicit edges and comments untouched).
-    The affected groups -- the former parent's child group AND the destination
-    group the item joined (the grandparent's group) -- run legacy implicit-edge
-    cleanup by :func:`services.tree.reparent_item`.
+    Identity is preserved (same ``id``; user-owned edges and comments
+    untouched). Affected groups repair automatic chain rows by
+    :func:`services.tree.reparent_item`.
     """
     existing = conn.execute(
         "SELECT parent_id FROM items WHERE id = ?", (item_id,)
@@ -311,6 +352,14 @@ async def outdent_item(
     # The destination is the grandparent's group; the item lands right after its
     # former parent to preserve the familiar outliner shape.
     grandparent_id = _parent_id_of(conn, former_parent_id)
+    if graph.move_would_create_cycle(
+        conn,
+        item_id,
+        grandparent_id,
+        after_id=former_parent_id,
+    ):
+        raise HTTPException(status_code=409, detail="dependency cycle rejected")
+
     tree.reparent_item(conn, item_id, grandparent_id, after_id=former_parent_id)
 
     row = conn.execute(
@@ -333,9 +382,9 @@ async def move_item(
     destination group. The default ``position="after"`` preserves legacy
     callers: it positions the item immediately after ``after_id`` when supplied,
     or appends at the end when ``after_id`` is omitted/null. Cross-product moves
-    are allowed. Identity is preserved (same ``id``; explicit edges and
+    are allowed. Identity is preserved (same ``id``; user-owned edges and
     comments, stored by id, are untouched). Both the source and destination
-    sibling groups run legacy implicit-edge cleanup via
+    sibling groups repair automatic chain rows via
     :func:`services.tree.reparent_item`.
 
     Validation runs BEFORE any mutation, in this order:
@@ -347,9 +396,9 @@ async def move_item(
     2. **422** ``cannot move into own descendant`` if ``new_parent_id`` is the
        item itself or any descendant of it -- such a move would detach a cycle of
        items from the tree.
-    3. Moving/reordering plain leaves inside a section changes the live
-       implicit section chain, so moves that would create an effective
-       dependency cycle are rejected.
+    3. Moving/reordering plain leaves inside a section changes automatic chain
+       rows, so moves that would create an effective dependency cycle are
+       rejected.
 
     G2 (merge) and G3 (split) are built from this endpoint plus create/delete and
     need no separate routes (spec: G2, G3).
@@ -412,30 +461,32 @@ async def get_tree(
     so the payload reads top-to-bottom like the outline itself.
 
     Each entry carries its :class:`ItemOut` fields plus ``needs``: the *current*
-    slugs of that item's EXPLICIT (``>needs:``) dependency targets. Because
-    edges are stored by ``to_id`` (an item id) and the slug is looked up live,
-    a renamed target's label updates automatically while the stored edge is
-    unchanged. Implicit (tree-derived) edges are not shown as needs labels.
+    slugs of that item's visible ``>needs:`` dependency targets. Because edges
+    are stored by ``to_id`` (an item id) and the slug is looked up live, a
+    renamed target's label updates automatically while the stored edge is
+    unchanged. Automatic leaf-chain rows are included because they are persisted
+    and removable through the same dependency UI.
 
     H1 adds per-item ``actionable`` and ``complete`` booleans for the work-now
     projection. They are computed per item without filtering: every stored item
     remains present in the response, including collapsed/non-actionable ones.
     """
-    rows = {
-        row["id"]: row
-        for row in conn.execute(f"SELECT {_ITEM_COLUMNS} FROM items").fetchall()
-    }
+    projection = leverage.build_projection(conn)
+    needs_edges_by_item = _explicit_needs_edges_by_item(conn)
     result: list[TreeItemOut] = []
-    for item_id in tree.items_in_tree_order(conn):
-        item = _row_to_item(rows[item_id])
-        needs_edges = tree.explicit_needs_edges(conn, item_id)
+    for item_id in projection.tree_order_ids():
+        row = projection.item_rows.get(item_id)
+        if row is None:
+            continue
+        item = _row_to_item(row)
+        needs_edges = needs_edges_by_item.get(item_id, [])
         result.append(
             TreeItemOut(
                 **item.model_dump(),
                 needs=[edge["slug"] for edge in needs_edges],
                 needs_edges=needs_edges,
-                actionable=leverage.is_actionable(conn, item_id),
-                complete=tree.is_complete(conn, item_id),
+                actionable=projection.is_actionable(item_id),
+                complete=projection.is_complete(item_id),
             )
         )
     return result

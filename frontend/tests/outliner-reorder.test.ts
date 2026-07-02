@@ -5,6 +5,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CommentsPanel } from '@/components/comments-panel'
 import { Outliner } from '@/components/outliner'
 import type { TreeItem } from '@/lib/contracts'
 
@@ -110,12 +111,59 @@ function outlinerItem(container: ParentNode, itemId: string) {
   return element
 }
 
+function itemInput(container: ParentNode, itemId: string) {
+  const input = outlinerItem(container, itemId).querySelector(
+    'input[aria-label="Item text"]'
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input: ${itemId}`)
+  }
+  return input
+}
+
 function button(element: ParentNode, ariaLabel: string) {
   const candidate = element.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(candidate instanceof HTMLButtonElement)) {
     throw new Error(`Missing button: ${ariaLabel}`)
   }
   return candidate
+}
+
+function getDetailsPanel(container: ParentNode) {
+  const panel = container.querySelector('aside[aria-label="Item details"]')
+  if (!(panel instanceof HTMLElement)) {
+    throw new Error('Missing item details panel')
+  }
+  return panel
+}
+
+function labelledElement(container: ParentNode, ariaLabel: string) {
+  const element = container.querySelector(`[aria-label="${ariaLabel}"]`)
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Missing labelled element: ${ariaLabel}`)
+  }
+  return element
+}
+
+function getDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  if (!(dialog instanceof HTMLElement)) {
+    throw new Error('Missing confirmation dialog')
+  }
+  return dialog
+}
+
+function queryDialog() {
+  const dialog = document.body.querySelector(
+    '[role="alertdialog"][aria-modal="true"]'
+  )
+  return dialog instanceof HTMLElement ? dialog : null
+}
+
+function dialogButton(ariaLabel: string) {
+  return button(getDialog(), ariaLabel)
 }
 
 function dragHandle(element: ParentNode) {
@@ -207,9 +255,26 @@ function LocalReorderHarness() {
   return React.createElement(Outliner, { items })
 }
 
-async function click(target: HTMLButtonElement) {
+async function click(target: HTMLElement) {
   await act(async () => {
     target.click()
+  })
+  await flushReact()
+}
+
+async function keyDown(
+  target: HTMLElement,
+  key: string,
+  init: { altKey?: boolean } = {}
+) {
+  await act(async () => {
+    const event = new KeyboardEvent('keydown', {
+      altKey: init.altKey ?? false,
+      bubbles: true,
+      cancelable: true,
+      key,
+    })
+    target.dispatchEvent(event)
   })
   await flushReact()
 }
@@ -277,6 +342,7 @@ describe('Outliner reorder controls', () => {
     })
     actionMocks.createPromptResponseEntry.mockResolvedValue({})
     actionMocks.deleteComment.mockResolvedValue({})
+    actionMocks.deleteDependency.mockResolvedValue({})
     actionMocks.deleteItem.mockResolvedValue({})
     actionMocks.editComment.mockResolvedValue({})
     actionMocks.fetchChanges.mockResolvedValue([])
@@ -305,22 +371,59 @@ describe('Outliner reorder controls', () => {
     vi.clearAllMocks()
   })
 
-  it('moves the second root to the explicit first position', async () => {
+  it('moves the second root to the explicit first position from the drag handle keyboard shortcut', async () => {
     const container = await render([
       item({ id: 'first', title: 'First', sort_order: 1 }),
       item({ id: 'second', title: 'Second', sort_order: 2 }),
       item({ id: 'third', title: 'Third', sort_order: 3 }),
     ])
 
-    const moveUp = button(outlinerItem(container, 'second'), 'Move item up')
-    expect(moveUp.disabled).toBe(false)
-
-    await click(moveUp)
+    await keyDown(dragHandle(outlinerItem(container, 'second')), 'ArrowUp', {
+      altKey: true,
+    })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
       new_parent_id: null,
       position: 'first',
     })
+  })
+
+  it('does not reorder from the drag handle while the row is pending', async () => {
+    let resolveCreated: (created: TreeItem) => void = () => {
+      throw new Error('Create item promise was not initialized')
+    }
+    const createdItemPromise = new Promise<TreeItem>((resolve) => {
+      resolveCreated = resolve
+    })
+    actionMocks.createItem.mockImplementation(async () => createdItemPromise)
+    const container = await render([
+      item({ id: 'first', title: 'First', sort_order: 1 }),
+      item({ id: 'second', title: 'Second', sort_order: 2 }),
+      item({ id: 'third', title: 'Third', sort_order: 3 }),
+    ])
+    const secondRow = outlinerItem(container, 'second')
+
+    await click(button(secondRow, 'Add sibling'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledTimes(1)
+    expect(dragHandle(secondRow).disabled).toBe(true)
+
+    await keyDown(dragHandle(secondRow), 'ArrowUp', { altKey: true })
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveCreated(
+        item({
+          id: 'created',
+          title: 'New item',
+          slug: 'created',
+          sort_order: 3,
+        })
+      )
+      await createdItemPromise
+    })
+    await flushReact()
   })
 
   it('keeps drag-and-drop reorders anchored after the target item', async () => {
@@ -344,6 +447,366 @@ describe('Outliner reorder controls', () => {
     })
   })
 
+  it('cancels Details dependency removal without deleting the dependency', async () => {
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+        needs: ['blocking-section'],
+        needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const detailsPanel = getDetailsPanel(container)
+
+    expect(detailsPanel.textContent).toContain('Dependencies')
+    expect(detailsPanel.textContent).toContain('Blocking section')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+
+    expect(getDialog().textContent).toContain('Remove dependency')
+    expect(getDialog().textContent).toContain('Blocking section')
+    expect(getDialog().textContent).toContain('>blocking-section')
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+
+    await click(dialogButton('Cancel'))
+
+    expect(queryDialog()).toBeNull()
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('deletes a Details dependency only after confirmation', async () => {
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+        needs: ['blocking-section'],
+        needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+
+    expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
+
+    await click(dialogButton('Remove dependency'))
+
+    expect(actionMocks.deleteDependency).toHaveBeenCalledTimes(1)
+    expect(actionMocks.deleteDependency).toHaveBeenCalledWith('dep-1')
+    expect(queryDialog()).toBeNull()
+    expect(detailsPanel.textContent).not.toContain('>blocking-section')
+    expect(detailsPanel.textContent).toContain('No explicit dependencies')
+  })
+
+  it('closes Details dependency removal after confirm before a parent refresh removes the edge', async () => {
+    const removeDependency = vi.fn().mockResolvedValue(undefined)
+    const dependent = item({
+      id: 'dependent',
+      title: 'Dependent section',
+      slug: 'dependent-section',
+      needs: ['blocking-section'],
+      needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+    })
+    const blocking = item({
+      id: 'blocking',
+      title: 'Blocking section',
+      slug: 'blocking-section',
+      sort_order: 2,
+    })
+    const container = await renderElement(
+      React.createElement(CommentsPanel, {
+        item: dependent,
+        allItems: [dependent, blocking],
+        onRemoveDependency: removeDependency,
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+    await click(dialogButton('Remove dependency'))
+
+    expect(removeDependency).toHaveBeenCalledTimes(1)
+    expect(removeDependency).toHaveBeenCalledWith('dep-1')
+    expect(queryDialog()).toBeNull()
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('keeps Details dependency removal open when confirm fails', async () => {
+    const removeDependency = vi
+      .fn()
+      .mockRejectedValue(new Error('Unable to remove dependency'))
+    const dependent = item({
+      id: 'dependent',
+      title: 'Dependent section',
+      slug: 'dependent-section',
+      needs: ['blocking-section'],
+      needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
+    })
+    const blocking = item({
+      id: 'blocking',
+      title: 'Blocking section',
+      slug: 'blocking-section',
+      sort_order: 2,
+    })
+    const container = await renderElement(
+      React.createElement(CommentsPanel, {
+        item: dependent,
+        allItems: [dependent, blocking],
+        onRemoveDependency: removeDependency,
+      })
+    )
+    const detailsPanel = getDetailsPanel(container)
+
+    await click(button(detailsPanel, 'Edit dependencies'))
+    await click(button(detailsPanel, 'Remove dependency Blocking section'))
+    await click(dialogButton('Remove dependency'))
+
+    expect(removeDependency).toHaveBeenCalledTimes(1)
+    expect(queryDialog()).not.toBeNull()
+    expect(getDialog().textContent).toContain('Unable to remove dependency')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('adds a dependency by dropping an outliner row onto the Details target', async () => {
+    actionMocks.addDependency.mockResolvedValue({
+      id: 'dep-new',
+      from_id: 'dependent',
+      to_id: 'blocking',
+      kind: 'explicit',
+    })
+    const container = await render([
+      item({
+        id: 'dependent',
+        title: 'Dependent section',
+        slug: 'dependent-section',
+      }),
+      item({
+        id: 'blocking',
+        title: 'Blocking section',
+        slug: 'blocking-section',
+        sort_order: 2,
+      }),
+    ])
+    const blockingRow = outlinerItem(container, 'blocking')
+    const detailsPanel = getDetailsPanel(container)
+    const dropTarget = labelledElement(detailsPanel, 'Add dependency')
+    const transfer = dataTransfer()
+
+    await dispatchDrag(dragHandle(blockingRow), 'dragstart', transfer)
+    await dispatchDrag(dropTarget, 'dragover', transfer)
+    await dispatchDrag(dropTarget, 'drop', transfer)
+
+    expect(actionMocks.addDependency).toHaveBeenCalledWith({
+      from_id: 'dependent',
+      to_id: 'blocking',
+    })
+    expect(detailsPanel.textContent).toContain('Blocking section')
+    expect(detailsPanel.textContent).toContain('>blocking-section')
+  })
+
+  it('moves a leaf below a lower same-section dependency target immediately', async () => {
+    actionMocks.addDependency.mockResolvedValue({
+      id: 'auto-chain-a-c',
+      from_id: 'a',
+      to_id: 'c',
+      kind: 'explicit',
+    })
+    const container = await render([
+      item({
+        id: 'section',
+        title: 'Section',
+        slug: 'section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'a',
+        title: 'A',
+        slug: 'a',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'b',
+        title: 'B',
+        slug: 'b',
+        parent_id: 'section',
+        sort_order: 2,
+        needs: ['a'],
+        needs_edges: [
+          { id: 'auto-chain-b-a', slug: 'a', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'c',
+        title: 'C',
+        slug: 'c',
+        parent_id: 'section',
+        sort_order: 3,
+        needs: ['b'],
+        needs_edges: [
+          { id: 'auto-chain-c-b', slug: 'b', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'd',
+        title: 'D',
+        slug: 'd',
+        parent_id: 'section',
+        sort_order: 4,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-d-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+    ])
+    const transfer = dataTransfer()
+
+    await click(itemInput(container, 'a'))
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'c')),
+      'dragstart',
+      transfer
+    )
+    await dispatchDrag(
+      labelledElement(getDetailsPanel(container), 'Add dependency'),
+      'dragover',
+      transfer
+    )
+    await dispatchDrag(
+      labelledElement(getDetailsPanel(container), 'Add dependency'),
+      'drop',
+      transfer
+    )
+
+    expect(actionMocks.addDependency).toHaveBeenCalledWith({
+      from_id: 'a',
+      to_id: 'c',
+    })
+    expect(renderedItemIds(container)).toEqual(['section', 'b', 'c', 'a', 'd'])
+    await click(itemInput(container, 'd'))
+    expect(getDetailsPanel(container).textContent).toContain('>c')
+  })
+
+  it('does not resurrect a removed automatic dependency in an untouched section', async () => {
+    actionMocks.createItem.mockResolvedValue(
+      item({
+        id: 'e',
+        title: 'E',
+        slug: 'e',
+        parent_id: 'section-two',
+        sort_order: 1.5,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-e-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      })
+    )
+    actionMocks.deleteDependency.mockResolvedValue({
+      deleted: true,
+      id: 'auto-chain-b-a',
+    })
+    const container = await render([
+      item({
+        id: 'section-one',
+        title: 'Section one',
+        slug: 'section-one',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'a',
+        title: 'A',
+        slug: 'a',
+        parent_id: 'section-one',
+        sort_order: 1,
+      }),
+      item({
+        id: 'b',
+        title: 'B',
+        slug: 'b',
+        parent_id: 'section-one',
+        sort_order: 2,
+        needs: ['a'],
+        needs_edges: [
+          { id: 'auto-chain-b-a', slug: 'a', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+      item({
+        id: 'section-two',
+        title: 'Section two',
+        slug: 'section-two',
+        sort_order: 2,
+        actionable: false,
+      }),
+      item({
+        id: 'c',
+        title: 'C',
+        slug: 'c',
+        parent_id: 'section-two',
+        sort_order: 1,
+      }),
+      item({
+        id: 'd',
+        title: 'D',
+        slug: 'd',
+        parent_id: 'section-two',
+        sort_order: 2,
+        needs: ['c'],
+        needs_edges: [
+          { id: 'auto-chain-d-c', slug: 'c', automatic_chain: true },
+        ],
+        actionable: false,
+      }),
+    ])
+
+    await click(itemInput(container, 'b'))
+    await click(button(getDetailsPanel(container), 'Edit dependencies'))
+    await click(button(getDetailsPanel(container), 'Remove dependency A'))
+    await click(dialogButton('Remove dependency'))
+
+    expect(getDetailsPanel(container).textContent).toContain(
+      'No explicit dependencies'
+    )
+
+    await click(button(outlinerItem(container, 'c'), 'Add sibling'))
+    await click(itemInput(container, 'b'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: 'section-two',
+      after_id: 'c',
+    })
+    expect(getDetailsPanel(container).textContent).toContain(
+      'No explicit dependencies'
+    )
+    expect(getDetailsPanel(container).textContent).not.toContain('>a')
+  })
+
   it('reorders upward from the visible drag handle and persists the first-position move', async () => {
     const container = await renderElement(
       React.createElement(LocalReorderHarness)
@@ -362,6 +825,30 @@ describe('Outliner reorder controls', () => {
       position: 'first',
     })
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+  })
+
+  it('previews the dragged row in its landing slot before drop', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const thirdRow = outlinerItem(container, 'third')
+    const transfer = dataTransfer()
+    stubRect(firstRow, 100, 140)
+
+    await dispatchDrag(dragHandle(thirdRow), 'dragstart', transfer)
+    await dispatchDrag(firstRow, 'dragover', transfer, { clientY: 105 })
+
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+    expect(renderedItemIds(container)).toEqual(['third', 'first', 'second'])
+
+    await dispatchDrag(
+      dragHandle(outlinerItem(container, 'third')),
+      'dragend',
+      transfer
+    )
+
+    expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
   })
 
   it('renders the outliner and details surface without invalid DOM nesting warnings', async () => {
@@ -386,20 +873,26 @@ describe('Outliner reorder controls', () => {
     }
   })
 
-  it('updates visible order and move controls after clicking an available move button', async () => {
+  it('updates visible order from the drag handle keyboard shortcut without visible move arrows', async () => {
     const container = await renderElement(
       React.createElement(LocalReorderHarness)
     )
 
     expect(renderedItemIds(container)).toEqual(['first', 'second', 'third'])
     expect(
-      button(outlinerItem(container, 'first'), 'Move item up').disabled
-    ).toBe(true)
+      outlinerItem(container, 'first').querySelector(
+        'button[aria-label="Move item up"]'
+      )
+    ).toBeNull()
     expect(
-      button(outlinerItem(container, 'first'), 'Move item down').disabled
-    ).toBe(false)
+      outlinerItem(container, 'first').querySelector(
+        'button[aria-label="Move item down"]'
+      )
+    ).toBeNull()
 
-    await click(button(outlinerItem(container, 'first'), 'Move item down'))
+    await keyDown(dragHandle(outlinerItem(container, 'first')), 'ArrowDown', {
+      altKey: true,
+    })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
       new_parent_id: null,
@@ -408,10 +901,9 @@ describe('Outliner reorder controls', () => {
     })
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
     expect(
-      button(outlinerItem(container, 'second'), 'Move item up').disabled
-    ).toBe(true)
-    expect(
-      button(outlinerItem(container, 'first'), 'Move item up').disabled
-    ).toBe(false)
+      outlinerItem(container, 'second').querySelector(
+        'button[aria-label="Move item up"]'
+      )
+    ).toBeNull()
   })
 })

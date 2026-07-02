@@ -2,8 +2,6 @@
 
 import * as React from 'react'
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   ChevronRight,
   CornerDownLeft,
@@ -16,12 +14,6 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import {
@@ -49,8 +41,6 @@ type OutlinerRowProps = {
   hasChildren: boolean
   collapsed: boolean
   selected?: boolean
-  canMoveUp?: boolean
-  canMoveDown?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
   onSubmitText: (item: TreeItem, text: string) => Promise<void>
@@ -61,8 +51,7 @@ type OutlinerRowProps = {
     command: RowKeyboardCommand
   ) => Promise<void>
   onDelete: (item: TreeItem) => Promise<void>
-  onMoveUp: (item: TreeItem) => Promise<void>
-  onMoveDown: (item: TreeItem) => Promise<void>
+  onKeyboardReorder: (item: TreeItem, direction: 'up' | 'down') => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onOpenPromptTimeline: (item: TreeItem) => void
@@ -77,16 +66,13 @@ export function OutlinerRow({
   hasChildren,
   collapsed,
   selected = false,
-  canMoveUp = false,
-  canMoveDown = false,
   onToggle,
   onSelect,
   onSubmitText,
   onCreateSibling,
   onKeyboardCommand,
   onDelete,
-  onMoveUp,
-  onMoveDown,
+  onKeyboardReorder,
   onChangeState,
   onChangeDone,
   onOpenPromptTimeline,
@@ -97,6 +83,7 @@ export function OutlinerRow({
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const pendingRef = React.useRef(false)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
 
@@ -112,6 +99,11 @@ export function OutlinerRow({
   }, [draftResetRequestId, draftResetText])
 
   async function run(operation: () => Promise<void>) {
+    if (pendingRef.current) {
+      return
+    }
+
+    pendingRef.current = true
     setPending(true)
     setError(null)
     try {
@@ -119,6 +111,7 @@ export function OutlinerRow({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Action failed')
     } finally {
+      pendingRef.current = false
       setPending(false)
     }
   }
@@ -171,121 +164,125 @@ export function OutlinerRow({
     }
   }
 
+  function handleDragHandleKeyDown(
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ) {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return
+    }
+
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (pendingRef.current) {
+        return
+      }
+
+      void run(() =>
+        onKeyboardReorder(item, event.key === 'ArrowUp' ? 'up' : 'down')
+      )
+    }
+  }
+
   const checkedDone = item.state === 'done'
-  const readiness = itemReadiness(item)
+  const readiness = itemReadiness(item, { ignoreState: hasChildren })
   const displayDone = readiness === 'done'
   const displayReady = readiness === 'ready'
 
   return (
-    <TooltipProvider>
-      <div
-        className={cn(
-          'grid min-h-11 grid-cols-[auto_auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
-          MODE_COLOUR_MAP[item.mode],
-          selected && 'bg-accent/50',
-          displayDone && 'text-muted-foreground',
-          isExternalWaitingItem(item) && 'text-muted-foreground'
-        )}
-        style={{ paddingLeft: `${depth * 1.25}rem` }}
-        data-mode={item.mode}
-        onClick={() => onSelect(item.id)}
+    <div
+      className={cn(
+        'grid min-h-11 grid-cols-[auto_auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
+        MODE_COLOUR_MAP[item.mode],
+        selected && 'bg-accent/50',
+        displayDone && 'text-muted-foreground',
+        isExternalWaitingItem(item, { ignoreState: hasChildren }) &&
+          'text-muted-foreground'
+      )}
+      style={{ paddingLeft: `${depth * 1.25}rem` }}
+      data-mode={item.mode}
+      onClick={() => onSelect(item.id)}
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
+        aria-label="Drag item"
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        title="Drag"
+        disabled={pending}
+        draggable={!pending}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onKeyDown={handleDragHandleKeyDown}
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
-              aria-label="Drag item"
-              draggable
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-            >
-              <GripVertical className="size-3.5" aria-hidden="true" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Drag</TooltipContent>
-        </Tooltip>
-        <div className="flex size-8 items-center justify-center">
-          <input
-            type="checkbox"
-            aria-label="Mark item done"
-            checked={checkedDone}
+        <GripVertical className="size-3.5" aria-hidden="true" />
+      </Button>
+      <div className="flex size-8 items-center justify-center">
+        <input
+          type="checkbox"
+          aria-label="Mark item done"
+          checked={checkedDone}
+          disabled={pending}
+          onChange={handleDoneChange}
+          className="border-border bg-background text-foreground focus-visible:ring-ring accent-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
+      <div className="flex size-8 items-center justify-center">
+        {hasChildren ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            aria-label={collapsed ? 'Expand item' : 'Collapse item'}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand' : 'Collapse'}
+            onClick={() => onToggle(item.id)}
+          >
+            {collapsed ? (
+              <ChevronRight className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        ) : (
+          <span className="size-7" aria-hidden="true" />
+        )}
+      </div>
+
+      <div className="min-w-0 space-y-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
             disabled={pending}
-            onChange={handleDoneChange}
-            className="border-border bg-background text-foreground focus-visible:ring-ring accent-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Item text"
+            className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="Add sibling"
+            title="Add sibling"
+            disabled={pending}
+            onClick={createSibling}
+          >
+            <CornerDownLeft className="size-3.5" aria-hidden="true" />
+          </Button>
         </div>
-        <div className="flex size-8 items-center justify-center">
-          {hasChildren ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  aria-label={collapsed ? 'Expand item' : 'Collapse item'}
-                  aria-expanded={!collapsed}
-                  onClick={() => onToggle(item.id)}
-                >
-                  {collapsed ? (
-                    <ChevronRight className="size-4" aria-hidden="true" />
-                  ) : (
-                    <ChevronDown className="size-4" aria-hidden="true" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {collapsed ? 'Expand' : 'Collapse'}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <span className="size-7" aria-hidden="true" />
-          )}
-        </div>
-
-        <div className="min-w-0 space-y-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={pending}
-              aria-label="Item text"
-              className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 shrink-0"
-                  aria-label="Add sibling"
-                  disabled={pending}
-                  onClick={createSibling}
-                >
-                  <CornerDownLeft className="size-3.5" aria-hidden="true" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Add sibling</TooltipContent>
-            </Tooltip>
+        {error ? (
+          <div className="text-destructive truncate text-xs" role="alert">
+            {error}
           </div>
-          {item.needs.length > 0 ? (
-            <div className="text-muted-foreground truncate text-xs">
-              {item.needs.map((need) => `>${need}`).join(' ')}
-            </div>
-          ) : null}
-          {error ? (
-            <div className="text-destructive truncate text-xs" role="alert">
-              {error}
-            </div>
-          ) : null}
-        </div>
+        ) : null}
+      </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-1">
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        {!hasChildren ? (
           <select
             aria-label="Item state"
             className={cn(
@@ -302,121 +299,69 @@ export function OutlinerRow({
               </option>
             ))}
           </select>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Open prompt/response timeline"
-                disabled={pending}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onOpenPromptTimeline(item)
-                }}
-              >
-                <MessagesSquare className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Prompt/response timeline</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Indent item"
-                disabled={pending}
-                onClick={() =>
-                  runKeyboardCommand({ key: 'Tab', shiftKey: false })
-                }
-              >
-                <IndentIncrease className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Indent</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Outdent item"
-                disabled={pending}
-                onClick={() =>
-                  runKeyboardCommand({ key: 'Tab', shiftKey: true })
-                }
-              >
-                <IndentDecrease className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Outdent</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Move item up"
-                disabled={pending || !canMoveUp}
-                onClick={() => void run(() => onMoveUp(item))}
-              >
-                <ArrowUp className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move up</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Move item down"
-                disabled={pending || !canMoveDown}
-                onClick={() => void run(() => onMoveDown(item))}
-              >
-                <ArrowDown className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Move down</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                aria-label="Delete item"
-                disabled={pending}
-                onClick={() => void run(() => onDelete(item))}
-              >
-                <Trash2 className="size-3.5" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Delete</TooltipContent>
-          </Tooltip>
-          <span
-            aria-label="Item readiness"
-            className={cn(
-              'border-border text-muted-foreground rounded-sm border px-2 py-0.5 text-xs',
-              displayReady && 'text-foreground',
-              displayDone && 'bg-muted'
-            )}
-          >
-            {displayDone ? 'Done' : displayReady ? 'Ready' : 'Waiting'}
-          </span>
-        </div>
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Open prompt/response timeline"
+          title="Prompt/response timeline"
+          disabled={pending}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenPromptTimeline(item)
+          }}
+        >
+          <MessagesSquare className="size-3.5" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Indent item"
+          title="Indent"
+          disabled={pending}
+          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: false })}
+        >
+          <IndentIncrease className="size-3.5" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Outdent item"
+          title="Outdent"
+          disabled={pending}
+          onClick={() => runKeyboardCommand({ key: 'Tab', shiftKey: true })}
+        >
+          <IndentDecrease className="size-3.5" aria-hidden="true" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Delete item"
+          title="Delete"
+          disabled={pending}
+          onClick={() => void run(() => onDelete(item))}
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </Button>
+        <span
+          aria-label="Item readiness"
+          className={cn(
+            'border-border text-muted-foreground rounded-sm border px-2 py-0.5 text-xs',
+            displayReady && 'text-foreground',
+            displayDone && 'bg-muted'
+          )}
+        >
+          {displayDone ? 'Done' : displayReady ? 'Ready' : 'Waiting'}
+        </span>
       </div>
-    </TooltipProvider>
+    </div>
   )
 }

@@ -28,6 +28,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
+  Dependency,
+  Item,
   ItemActivity,
   Marker,
   PriorityItem,
@@ -62,7 +64,9 @@ export type VisibleOutlinerRow = {
 type IdCollection = ReadonlySet<string> | readonly string[]
 
 export type VisibleOutlinerOptions = {
+  dragPreview?: DragPreview | null
   leverageSort?: boolean
+  localSiblingAnchorIds?: ReadonlyMap<string, string>
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   view?: OutlinerView
   hiddenItemIds?: IdCollection
@@ -93,6 +97,12 @@ type AfterMoveTarget = {
 type MoveTarget = FirstMoveTarget | AfterMoveTarget
 
 type DropPosition = 'before' | 'after'
+
+type DragPreview = {
+  draggedItemId: string
+  targetItemId: string
+  position: DropPosition
+}
 
 type FocusRequest = {
   itemId: string
@@ -128,6 +138,16 @@ type PendingDependencyRemoval =
     }
 
 const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
+
+type PreservedAutomaticEdge = {
+  fromId: string
+  toId: string
+}
+
+type SameSectionLowerLeafDependencyPlacement = {
+  parentId: string
+  preservedAutomaticEdge?: PreservedAutomaticEdge
+}
 
 type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
@@ -205,8 +225,19 @@ function makePriorityRanks(
   return new Map(priorityItems.map((item) => [item.id, item.rank]))
 }
 
-function isDoneForProjection(item: TreeItem): boolean {
-  return item.complete || item.state === 'done' || item.state === 'abandoned'
+type ProjectionStateOptions = {
+  hasChildren?: boolean
+}
+
+function isDoneForProjection(
+  item: TreeItem,
+  options: ProjectionStateOptions = {}
+): boolean {
+  return (
+    item.complete ||
+    item.state === 'done' ||
+    (!options.hasChildren && item.state === 'abandoned')
+  )
 }
 
 function compareTimestamp(left: string, right: string): number {
@@ -241,9 +272,13 @@ function latestMarkerAt(markers: readonly Marker[]): string | null {
   return latest?.at ?? null
 }
 
-function doneOnOrBeforeMarker(item: TreeItem, markerAt: string): boolean {
+function doneOnOrBeforeMarker(
+  item: TreeItem,
+  markerAt: string,
+  options: ProjectionStateOptions = {}
+): boolean {
   return (
-    isDoneForProjection(item) &&
+    isDoneForProjection(item, options) &&
     item.completed_at !== null &&
     compareTimestamp(item.completed_at, markerAt) <= 0
   )
@@ -258,9 +293,20 @@ function defaultTreeMarkerHiddenItemIds(
     return new Set()
   }
 
+  const itemIdsWithChildren = new Set<string>()
+  for (const item of items) {
+    if (item.parent_id !== null) {
+      itemIdsWithChildren.add(item.parent_id)
+    }
+  }
+
   return new Set(
     items
-      .filter((item) => doneOnOrBeforeMarker(item, markerAt))
+      .filter((item) =>
+        doneOnOrBeforeMarker(item, markerAt, {
+          hasChildren: itemIdsWithChildren.has(item.id),
+        })
+      )
       .map((item) => item.id)
   )
 }
@@ -269,38 +315,593 @@ function defaultExpandedItemIds(items: readonly TreeItem[]): Set<string> {
   return new Set(items.map((item) => item.id))
 }
 
-function isUpNextItem(
-  item: TreeItem,
-  priorityRanks: ReadonlyMap<string, number>
-): boolean {
+function isCompleteState(state: State): boolean {
+  return state === 'done' || state === 'abandoned'
+}
+
+function isPriorityEligibleItem(item: TreeItem, hasChildren = false): boolean {
   return (
-    priorityRanks.has(item.id) &&
     item.actionable &&
-    !isDoneForProjection(item) &&
-    !isExternalWaitingItem(item)
+    !isDoneForProjection(item, { hasChildren }) &&
+    !isExternalWaitingItem(item, { ignoreState: hasChildren })
   )
 }
 
-function isFollowUpItem(item: TreeItem): boolean {
-  return !isDoneForProjection(item) && isExternalWaitingItem(item)
+function isUpNextItem(
+  item: TreeItem,
+  priorityRanks: ReadonlyMap<string, number>,
+  hasChildren: boolean
+): boolean {
+  return priorityRanks.has(item.id) && isPriorityEligibleItem(item, hasChildren)
+}
+
+function isFollowUpItem(item: TreeItem, hasChildren: boolean): boolean {
+  return (
+    !isDoneForProjection(item, { hasChildren }) &&
+    isExternalWaitingItem(item, { ignoreState: hasChildren })
+  )
 }
 
 function isVisibleInView(
   item: TreeItem,
   view: OutlinerView,
-  priorityRanks: ReadonlyMap<string, number>
+  priorityRanks: ReadonlyMap<string, number>,
+  hasChildren: boolean
 ): boolean {
   if (view === 'up-next') {
-    return isUpNextItem(item, priorityRanks)
+    return isUpNextItem(item, priorityRanks, hasChildren)
   }
   if (view === 'follow-up') {
-    return isFollowUpItem(item)
+    return isFollowUpItem(item, hasChildren)
   }
   return true
 }
 
 function isRestorableDoneState(state: State): boolean {
   return state !== 'done' && state !== 'abandoned'
+}
+
+function itemResponse(value: unknown): Item | null {
+  if (typeof value !== 'object' || value === null || !('id' in value)) {
+    return null
+  }
+  return typeof (value as { id: unknown }).id === 'string'
+    ? (value as Item)
+    : null
+}
+
+function treeItemFromSavedItem(savedItem: Item): TreeItem {
+  const complete = isCompleteState(savedItem.state)
+  return {
+    ...savedItem,
+    needs: [],
+    needs_edges: [],
+    actionable:
+      !complete &&
+      !isExternalWaitingItem(savedItem) &&
+      !savedItem.blocked_external,
+    complete,
+  }
+}
+
+function localChildrenByParent(items: readonly TreeItem[]) {
+  const children = new Map<string | null, TreeItem[]>()
+  for (const item of items) {
+    const siblings = children.get(item.parent_id) ?? []
+    siblings.push(item)
+    children.set(item.parent_id, siblings)
+  }
+
+  for (const siblings of children.values()) {
+    siblings.sort(
+      (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id)
+    )
+  }
+  return children
+}
+
+function automaticDependencyId(fromId: string, toId: string): string {
+  return `auto-chain-${fromId}-${toId}`
+}
+
+function reconcileLocalAutomaticDependencies(
+  items: readonly TreeItem[],
+  parentIds?: ReadonlySet<string | null> | readonly (string | null)[],
+  preserveAutomaticEdges: readonly PreservedAutomaticEdge[] = []
+): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const affectedParentIds =
+    parentIds === undefined
+      ? new Set(children.keys())
+      : new Set(parentIds instanceof Set ? parentIds.values() : parentIds)
+  const desiredTargets = new Map<string, TreeItem>()
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+
+  function isLeaf(item: TreeItem): boolean {
+    return (children.get(item.id) ?? []).length === 0
+  }
+
+  for (const parentId of affectedParentIds) {
+    if (parentId === null) {
+      continue
+    }
+    const siblings = children.get(parentId) ?? []
+    const leafSiblings = siblings.filter((sibling) => isLeaf(sibling))
+    for (let index = 1; index < leafSiblings.length; index += 1) {
+      const dependent = leafSiblings[index]
+      const target = leafSiblings[index - 1]
+      if (dependent && target) {
+        desiredTargets.set(dependent.id, target)
+      }
+    }
+  }
+
+  for (const edge of preserveAutomaticEdges) {
+    const dependent = itemsById.get(edge.fromId)
+    const target = itemsById.get(edge.toId)
+    if (
+      dependent &&
+      target &&
+      dependent.parent_id !== null &&
+      dependent.parent_id === target.parent_id &&
+      affectedParentIds.has(dependent.parent_id) &&
+      isLeaf(dependent) &&
+      isLeaf(target)
+    ) {
+      desiredTargets.set(dependent.id, target)
+    }
+  }
+
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (!affectedParentIds.has(item.parent_id)) {
+        return item
+      }
+
+      const userEdges = item.needs_edges.filter(
+        (edge) => edge.automatic_chain !== true
+      )
+      const target = desiredTargets.get(item.id)
+      const nextEdges =
+        target && !userEdges.some((edge) => edge.slug === target.slug)
+          ? sortDependencyEdges([
+              ...userEdges,
+              {
+                id: automaticDependencyId(item.id, target.id),
+                slug: target.slug,
+                automatic_chain: true,
+              },
+            ])
+          : sortDependencyEdges(userEdges)
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
+function parentGroupId(
+  items: readonly TreeItem[],
+  parentId: string | null
+): string | null {
+  if (parentId === null) {
+    return null
+  }
+  return items.find((item) => item.id === parentId)?.parent_id ?? null
+}
+
+function automaticGroupsForCreatedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): Set<string | null> {
+  const groups = new Set<string | null>([savedItem.parent_id])
+  groups.add(parentGroupId(items, savedItem.parent_id))
+  return groups
+}
+
+function automaticGroupsForStructuralSavedItem(
+  currentItems: readonly TreeItem[],
+  mergedItems: readonly TreeItem[],
+  savedItem: Item
+): Set<string | null> {
+  const existing = currentItems.find((item) => item.id === savedItem.id)
+  const oldParentId = existing?.parent_id ?? savedItem.parent_id
+  const newParentId = savedItem.parent_id
+  const groups = new Set<string | null>([oldParentId, newParentId])
+  groups.add(parentGroupId(currentItems, oldParentId))
+  groups.add(parentGroupId(mergedItems, newParentId))
+  return groups
+}
+
+function sameSectionLowerLeafDependencyPlacement(
+  items: readonly TreeItem[],
+  fromId: string,
+  toId: string
+): SameSectionLowerLeafDependencyPlacement | null {
+  const children = localChildrenByParent(items)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const source = itemsById.get(fromId)
+  const target = itemsById.get(toId)
+  if (
+    !source ||
+    !target ||
+    source.parent_id === null ||
+    source.parent_id !== target.parent_id ||
+    (children.get(source.id) ?? []).length > 0 ||
+    (children.get(target.id) ?? []).length > 0
+  ) {
+    return null
+  }
+
+  const leafSiblings = (children.get(source.parent_id) ?? []).filter(
+    (sibling) => (children.get(sibling.id) ?? []).length === 0
+  )
+  const sourceIndex = leafSiblings.findIndex((sibling) => sibling.id === fromId)
+  const targetIndex = leafSiblings.findIndex((sibling) => sibling.id === toId)
+  if (sourceIndex < 0 || targetIndex <= sourceIndex) {
+    return null
+  }
+
+  const targetNext = leafSiblings[targetIndex + 1]
+  const preservedAutomaticEdge =
+    targetNext &&
+    targetNext.needs_edges.some(
+      (edge) => edge.automatic_chain === true && edge.slug === target.slug
+    )
+      ? { fromId: targetNext.id, toId: target.id }
+      : undefined
+  return {
+    parentId: source.parent_id,
+    preservedAutomaticEdge,
+  }
+}
+
+function moveLocalSiblingAfter(
+  items: readonly TreeItem[],
+  sourceId: string,
+  targetId: string
+): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const source = itemsById.get(sourceId)
+  const target = itemsById.get(targetId)
+  if (!source || !target || source.parent_id !== target.parent_id) {
+    return [...items]
+  }
+
+  const siblings = children.get(target.parent_id) ?? []
+  const remainingSiblings = siblings.filter(
+    (sibling) => sibling.id !== sourceId
+  )
+  const targetIndex = remainingSiblings.findIndex(
+    (sibling) => sibling.id === targetId
+  )
+  if (targetIndex < 0) {
+    return [...items]
+  }
+
+  const reorderedSiblings = [
+    ...remainingSiblings.slice(0, targetIndex + 1),
+    { ...source, parent_id: target.parent_id },
+    ...remainingSiblings.slice(targetIndex + 1),
+  ]
+  const rewrittenSiblings = new Map(
+    reorderedSiblings.map((sibling, index) => [
+      sibling.id,
+      { ...sibling, sort_order: index + 1 },
+    ])
+  )
+  return items.map((item) => rewrittenSiblings.get(item.id) ?? item)
+}
+
+function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const bySlug = new Map(items.map((item) => [item.slug, item]))
+  const completeCache = new Map<string, boolean>()
+
+  function isLeaf(itemId: string): boolean {
+    return (children.get(itemId) ?? []).length === 0
+  }
+
+  function complete(itemId: string): boolean {
+    const cached = completeCache.get(itemId)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const item = byId.get(itemId)
+    if (!item) {
+      return false
+    }
+
+    const childItems = children.get(itemId) ?? []
+    const value =
+      childItems.length > 0
+        ? childItems.every((child) => complete(child.id))
+        : isCompleteState(item.state)
+    completeCache.set(itemId, value)
+    return value
+  }
+
+  function selfAndAncestors(item: TreeItem): TreeItem[] {
+    const lineage: TreeItem[] = []
+    const visited = new Set<string>()
+    let current: TreeItem | undefined = item
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id)
+      lineage.push(current)
+      current = current.parent_id ? byId.get(current.parent_id) : undefined
+    }
+    return lineage
+  }
+
+  function dependencyTargetIds(item: TreeItem): string[] {
+    const targetIds: string[] = []
+    const seen = new Set<string>()
+    for (const scope of selfAndAncestors(item)) {
+      for (const slug of scope.needs) {
+        const target = bySlug.get(slug)
+        if (target && !seen.has(target.id)) {
+          seen.add(target.id)
+          targetIds.push(target.id)
+        }
+      }
+    }
+
+    return targetIds
+  }
+
+  return items.map((item) => {
+    const itemComplete = complete(item.id)
+    const actionable =
+      isLeaf(item.id) &&
+      !itemComplete &&
+      !isExternalWaitingItem(item) &&
+      dependencyTargetIds(item).every((targetId) => complete(targetId))
+    return {
+      ...item,
+      actionable,
+      complete: itemComplete,
+    }
+  })
+}
+
+function mergeSavedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): TreeItem[] {
+  const existing = items.find((item) => item.id === savedItem.id)
+  const oldSlug = existing?.slug
+  const merged = treeItemFromSavedItem(savedItem)
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (item.id === savedItem.id) {
+        return {
+          ...item,
+          ...merged,
+          needs: item.needs,
+          needs_edges: item.needs_edges,
+        }
+      }
+      if (!oldSlug || oldSlug === savedItem.slug) {
+        return item
+      }
+      return {
+        ...item,
+        needs: item.needs.map((slug) =>
+          slug === oldSlug ? savedItem.slug : slug
+        ),
+        needs_edges: item.needs_edges.map((edge) =>
+          edge.slug === oldSlug ? { ...edge, slug: savedItem.slug } : edge
+        ),
+      }
+    })
+  )
+}
+
+function appendSavedItem(
+  items: readonly TreeItem[],
+  savedItem: Item
+): TreeItem[] {
+  if (items.some((item) => item.id === savedItem.id)) {
+    return mergeSavedItem(items, savedItem)
+  }
+  const nextItems = [...items, treeItemFromSavedItem(savedItem)]
+  return reconcileLocalAutomaticDependencies(
+    nextItems,
+    automaticGroupsForCreatedItem(nextItems, savedItem)
+  )
+}
+
+function sortDependencyEdges(
+  edges: readonly { id: string; slug: string; automatic_chain?: boolean }[]
+): { id: string; slug: string; automatic_chain?: boolean }[] {
+  return [...edges].sort(
+    (a, b) => a.slug.localeCompare(b.slug) || a.id.localeCompare(b.id)
+  )
+}
+
+function appendLocalDependency(
+  items: readonly TreeItem[],
+  dependency: Dependency
+): TreeItem[] {
+  const target = items.find((item) => item.id === dependency.to_id)
+  if (!target) {
+    return recomputeLocalWorkFlags(items)
+  }
+
+  const lowerLeafPlacement = sameSectionLowerLeafDependencyPlacement(
+    items,
+    dependency.from_id,
+    dependency.to_id
+  )
+  if (lowerLeafPlacement) {
+    const movedItems = moveLocalSiblingAfter(
+      items,
+      dependency.from_id,
+      dependency.to_id
+    )
+    return reconcileLocalAutomaticDependencies(
+      movedItems,
+      [lowerLeafPlacement.parentId],
+      lowerLeafPlacement.preservedAutomaticEdge
+        ? [lowerLeafPlacement.preservedAutomaticEdge]
+        : []
+    )
+  }
+
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (item.id !== dependency.from_id) {
+        return item
+      }
+
+      const nextEdges = item.needs_edges.some(
+        (edge) => edge.id === dependency.id
+      )
+        ? item.needs_edges
+        : sortDependencyEdges([
+            ...item.needs_edges,
+            {
+              id: dependency.id,
+              slug: target.slug,
+              automatic_chain: dependency.id.startsWith('auto-chain-')
+                ? true
+                : undefined,
+            },
+          ])
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
+function removeLocalDependency(
+  items: readonly TreeItem[],
+  dependencyId: string
+): TreeItem[] {
+  return recomputeLocalWorkFlags(
+    items.map((item) => {
+      if (!item.needs_edges.some((edge) => edge.id === dependencyId)) {
+        return item
+      }
+
+      const nextEdges = item.needs_edges.filter(
+        (edge) => edge.id !== dependencyId
+      )
+      return {
+        ...item,
+        needs: nextEdges.map((edge) => edge.slug),
+        needs_edges: nextEdges,
+      }
+    })
+  )
+}
+
+type LocalPriorityEntry = {
+  id: string
+  localIndex: number
+  serverIndex: number
+  serverRank: number | null
+  userActionTier: number
+}
+
+function localUserActionTier(
+  item: Pick<TreeItem, 'state'> | undefined
+): number {
+  return item?.state === 'respond' ? 1 : 0
+}
+
+function compareLocalPriorityEntries(
+  left: LocalPriorityEntry,
+  right: LocalPriorityEntry
+): number {
+  const byUserAction = right.userActionTier - left.userActionTier
+  if (byUserAction !== 0) {
+    return byUserAction
+  }
+
+  if (left.serverRank !== null && right.serverRank !== null) {
+    const byServerRank = left.serverRank - right.serverRank
+    return byServerRank !== 0
+      ? byServerRank
+      : left.serverIndex - right.serverIndex
+  }
+
+  if (left.serverRank !== null || right.serverRank !== null) {
+    return left.serverRank !== null ? -1 : 1
+  }
+
+  return left.localIndex - right.localIndex
+}
+
+function localPriorityItems(
+  items: readonly TreeItem[],
+  priorityItems: readonly Pick<PriorityItem, 'id' | 'rank'>[],
+  locallyRankedItemIds: ReadonlySet<string>
+): Pick<PriorityItem, 'id' | 'rank'>[] {
+  if (locallyRankedItemIds.size === 0) {
+    return [...priorityItems]
+  }
+
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const rankedItemIds = new Set(priorityItems.map((item) => item.id))
+  const itemIdsWithChildren = new Set<string>()
+  for (const item of items) {
+    if (item.parent_id !== null) {
+      itemIdsWithChildren.add(item.parent_id)
+    }
+  }
+  const localItems = items
+    .filter(
+      (item) =>
+        locallyRankedItemIds.has(item.id) &&
+        !rankedItemIds.has(item.id) &&
+        isPriorityEligibleItem(item, itemIdsWithChildren.has(item.id))
+    )
+    .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id))
+  if (localItems.length === 0) {
+    return [...priorityItems]
+  }
+
+  const serverEntries = priorityItems.map((item, index) => ({
+    id: item.id,
+    localIndex: index,
+    serverIndex: index,
+    serverRank: item.rank,
+    userActionTier: localUserActionTier(itemsById.get(item.id)),
+  }))
+  const localEntries = localItems.map((item, index) => ({
+    id: item.id,
+    localIndex: index,
+    serverIndex: index,
+    serverRank: null,
+    userActionTier: localUserActionTier(item),
+  }))
+
+  return [...serverEntries, ...localEntries]
+    .sort(compareLocalPriorityEntries)
+    .map((item, index) => ({ id: item.id, rank: index + 1 }))
+}
+
+function patchAffectsPriorityMembership(patch: {
+  state?: State
+  mode?: unknown
+  effort?: unknown
+  blocked_external?: unknown
+}): boolean {
+  return (
+    Object.hasOwn(patch, 'state') ||
+    Object.hasOwn(patch, 'mode') ||
+    Object.hasOwn(patch, 'effort') ||
+    Object.hasOwn(patch, 'blocked_external')
+  )
 }
 
 function previousDoneStateFromActivity(
@@ -359,13 +960,15 @@ function makeChildMap(
       return cached
     }
 
-    if (isDoneForProjection(item)) {
+    const hasChildren = hasChildItems(item)
+    if (isDoneForProjection(item, { hasChildren })) {
       bestRankCache.set(item.id, Number.POSITIVE_INFINITY)
       return Number.POSITIVE_INFINITY
     }
 
     let rank =
-      view !== 'tree' && !isVisibleInView(item, view, priorityRanks)
+      view !== 'tree' &&
+      !isVisibleInView(item, view, priorityRanks, hasChildren)
         ? Number.POSITIVE_INFINITY
         : (priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY)
     for (const child of children.get(item.id) ?? []) {
@@ -381,7 +984,10 @@ function makeChildMap(
   }
 
   function doneOrder(a: TreeItem, b: TreeItem) {
-    return Number(isDoneForProjection(a)) - Number(isDoneForProjection(b))
+    return (
+      Number(isDoneForProjection(a, { hasChildren: hasChildItems(a) })) -
+      Number(isDoneForProjection(b, { hasChildren: hasChildItems(b) }))
+    )
   }
 
   function priorityOrder(a: TreeItem, b: TreeItem) {
@@ -393,6 +999,97 @@ function makeChildMap(
 
     const completeOrder = doneOrder(a, b)
     return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
+  }
+
+  function applyLocalSiblingAnchors(siblings: TreeItem[]) {
+    const anchors = order.localSiblingAnchorIds
+    if (!anchors || anchors.size === 0) {
+      return
+    }
+
+    for (const [itemId, anchorId] of anchors) {
+      const itemIndex = siblings.findIndex((item) => item.id === itemId)
+      if (itemIndex < 0) {
+        continue
+      }
+
+      const [item] = siblings.splice(itemIndex, 1)
+      if (!item) {
+        continue
+      }
+
+      const anchorIndex = siblings.findIndex(
+        (sibling) => sibling.id === anchorId
+      )
+      if (anchorIndex < 0) {
+        siblings.splice(itemIndex, 0, item)
+        continue
+      }
+
+      siblings.splice(anchorIndex + 1, 0, item)
+    }
+  }
+
+  function applyExplicitSectionDependencyOrder(siblings: TreeItem[]) {
+    if (siblings.length < 2) {
+      return
+    }
+
+    const siblingSectionIdsBySlug = new Map(
+      siblings
+        .filter((item) => hasChildItems(item))
+        .map((item) => [item.slug, item.id])
+    )
+    if (siblingSectionIdsBySlug.size < 2) {
+      return
+    }
+
+    const maxPasses = siblings.length * siblings.length
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      let moved = false
+      const indexById = new Map(
+        siblings.map((item, index) => [item.id, index] as const)
+      )
+
+      for (const source of [...siblings]) {
+        if (!hasChildItems(source)) {
+          continue
+        }
+
+        const sourceIndex = indexById.get(source.id)
+        if (sourceIndex === undefined) {
+          continue
+        }
+
+        const blockingTarget = source.needs_edges
+          .map((edge) => siblingSectionIdsBySlug.get(edge.slug) ?? null)
+          .find(
+            (targetId) =>
+              targetId !== null &&
+              targetId !== source.id &&
+              (indexById.get(targetId) ?? -1) > sourceIndex
+          )
+        if (!blockingTarget) {
+          continue
+        }
+
+        siblings.splice(sourceIndex, 1)
+        const targetIndex = siblings.findIndex(
+          (item) => item.id === blockingTarget
+        )
+        if (targetIndex < 0) {
+          siblings.splice(sourceIndex, 0, source)
+        } else {
+          siblings.splice(targetIndex + 1, 0, source)
+        }
+        moved = true
+        break
+      }
+
+      if (!moved) {
+        return
+      }
+    }
   }
 
   function hasChildItems(item: TreeItem) {
@@ -409,8 +1106,16 @@ function makeChildMap(
 
   function unitDoneOrder(a: readonly TreeItem[], b: readonly TreeItem[]) {
     return (
-      Number(a.every((item) => isDoneForProjection(item))) -
-      Number(b.every((item) => isDoneForProjection(item)))
+      Number(
+        a.every((item) =>
+          isDoneForProjection(item, { hasChildren: hasChildItems(item) })
+        )
+      ) -
+      Number(
+        b.every((item) =>
+          isDoneForProjection(item, { hasChildren: hasChildItems(item) })
+        )
+      )
     )
   }
 
@@ -440,11 +1145,16 @@ function makeChildMap(
   for (const [parentId, siblings] of children.entries()) {
     if (!order.leverageSort) {
       siblings.sort(treeOrder)
+      applyExplicitSectionDependencyOrder(siblings)
       continue
     }
 
     if (parentId === null) {
       siblings.sort(priorityOrder)
+      if (view === 'tree') {
+        applyLocalSiblingAnchors(siblings)
+      }
+      applyExplicitSectionDependencyOrder(siblings)
       continue
     }
 
@@ -457,7 +1167,10 @@ function makeChildMap(
         .map((item) => [item]),
     ]
     siblings.splice(0, siblings.length, ...sortSectionUnits(sectionUnits))
+    applyExplicitSectionDependencyOrder(siblings)
   }
+
+  applyDragPreviewToChildren(children, items, order.dragPreview)
 
   return children
 }
@@ -552,6 +1265,77 @@ function collectSubtreeItemIds(items: TreeItem[], rootItemId: string) {
   return subtreeIds
 }
 
+function resolveDragPreviewItems(
+  items: TreeItem[],
+  { draggedItemId, targetItemId }: DragPreview
+): { draggedItem: TreeItem; targetItem: TreeItem } | null {
+  if (draggedItemId === targetItemId) {
+    return null
+  }
+
+  const draggedItem = items.find((item) => item.id === draggedItemId)
+  const targetItem = items.find((item) => item.id === targetItemId)
+  if (!draggedItem || !targetItem) {
+    return null
+  }
+
+  if (collectSubtreeItemIds(items, draggedItem.id).has(targetItem.id)) {
+    return null
+  }
+
+  return { draggedItem, targetItem }
+}
+
+function applyDragPreviewToChildren(
+  children: ChildMap,
+  items: TreeItem[],
+  preview: DragPreview | null | undefined
+) {
+  if (!preview || preview.draggedItemId === preview.targetItemId) {
+    return
+  }
+
+  const previewItems = resolveDragPreviewItems(items, preview)
+  if (!previewItems) {
+    return
+  }
+  const { draggedItem, targetItem } = previewItems
+
+  const sourceSiblings = children.get(draggedItem.parent_id)
+  if (!sourceSiblings) {
+    return
+  }
+
+  const sourceIndex = sourceSiblings.findIndex(
+    (sibling) => sibling.id === draggedItem.id
+  )
+  if (sourceIndex < 0) {
+    return
+  }
+
+  const [removedItem] = sourceSiblings.splice(sourceIndex, 1)
+  const destinationParentId = targetItem.parent_id
+  const destinationSiblings = children.get(destinationParentId) ?? []
+  const targetIndex = destinationSiblings.findIndex(
+    (sibling) => sibling.id === targetItem.id
+  )
+
+  if (!removedItem || targetIndex < 0) {
+    if (removedItem) {
+      sourceSiblings.splice(sourceIndex, 0, removedItem)
+    }
+    return
+  }
+
+  const insertionIndex =
+    preview.position === 'before' ? targetIndex : targetIndex + 1
+  destinationSiblings.splice(insertionIndex, 0, {
+    ...removedItem,
+    parent_id: destinationParentId,
+  })
+  children.set(destinationParentId, destinationSiblings)
+}
+
 function firstAvailableItemId(
   items: TreeItem[],
   unavailableItemIds: ReadonlySet<string>
@@ -573,19 +1357,66 @@ export function visibleOutlinerRows(
     leverageSort: view !== 'tree' ? true : options.leverageSort,
   })
   const rows: VisibleOutlinerRow[] = []
+  const projectionCache = new Map<
+    string,
+    {
+      collapsed: boolean
+      directlyVisible: boolean
+      filteredOutNewlyAdded: boolean
+      hasChildren: boolean
+    }
+  >()
+  const visibleDescendantCache = new Map<string, boolean>()
 
-  function visit(parentId: string | null, depth: number) {
+  function projection(item: TreeItem) {
+    const cached = projectionCache.get(item.id)
+    if (cached) {
+      return cached
+    }
+
+    const hasChildren = (children.get(item.id) ?? []).length > 0
+    const collapsed = hasChildren && !expandedIds.has(item.id)
+    const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
+    const hiddenByView = !isVisibleInView(
+      item,
+      view,
+      priorityRanks,
+      hasChildren
+    )
+    const filteredOutNewlyAdded =
+      hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
+    const directlyVisible =
+      (!hiddenByExplicitFilter && !hiddenByView) || filteredOutNewlyAdded
+    const projected = {
+      collapsed,
+      directlyVisible,
+      filteredOutNewlyAdded,
+      hasChildren,
+    }
+    projectionCache.set(item.id, projected)
+    return projected
+  }
+
+  function hasVisibleDescendant(item: TreeItem): boolean {
+    const cached = visibleDescendantCache.get(item.id)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const visible = (children.get(item.id) ?? []).some((child) => {
+      const childProjection = projection(child)
+      return childProjection.directlyVisible || hasVisibleDescendant(child)
+    })
+    visibleDescendantCache.set(item.id, visible)
+    return visible
+  }
+
+  function visitTree(parentId: string | null, depth: number) {
     for (const item of children.get(parentId) ?? []) {
-      const hasChildren = (children.get(item.id) ?? []).length > 0
-      const collapsed = hasChildren && !expandedIds.has(item.id)
-      const hiddenByExplicitFilter = hasId(options.hiddenItemIds, item.id)
-      const hiddenByView = !isVisibleInView(item, view, priorityRanks)
-      const filteredOutNewlyAdded =
-        hiddenByExplicitFilter && hasId(options.newlyAddedIds, item.id)
-      const visible =
-        (!hiddenByExplicitFilter && !hiddenByView) || filteredOutNewlyAdded
+      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
+        projection(item)
 
-      if (visible) {
+      if (directlyVisible) {
         rows.push({
           item,
           depth,
@@ -595,13 +1426,41 @@ export function visibleOutlinerRows(
         })
       }
 
-      if (!visible || !collapsed) {
-        visit(item.id, visible ? depth + 1 : depth)
+      if (!directlyVisible || !collapsed) {
+        visitTree(item.id, directlyVisible ? depth + 1 : depth)
       }
     }
   }
 
-  visit(null, 0)
+  function visitFiltered(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      const { collapsed, directlyVisible, filteredOutNewlyAdded, hasChildren } =
+        projection(item)
+      const visible = directlyVisible || hasVisibleDescendant(item)
+
+      if (!visible) {
+        continue
+      }
+
+      rows.push({
+        item,
+        depth,
+        hasChildren,
+        collapsed,
+        filteredOutNewlyAdded,
+      })
+
+      if (!collapsed) {
+        visitFiltered(item.id, depth + 1)
+      }
+    }
+  }
+
+  if (view === 'tree') {
+    visitTree(null, 0)
+  } else {
+    visitFiltered(null, 0)
+  }
   return rows
 }
 
@@ -617,6 +1476,9 @@ export function Outliner({
   const defaultExpandedIds = React.useMemo(
     () => defaultExpandedItemIds(items),
     [items]
+  )
+  const [localItems, setLocalItems] = React.useState(() =>
+    recomputeLocalWorkFlags(items)
   )
   const [expandedIds, setExpandedIds] = React.useState(defaultExpandedIds)
   const [focusedItemId, setFocusedItemId] = React.useState<string | null>(null)
@@ -651,12 +1513,57 @@ export function Outliner({
   const [draggingItemId, setDraggingItemId] = React.useState<string | null>(
     null
   )
+  const [dragPreview, setDragPreview] = React.useState<DragPreview | null>(null)
   const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
     () => new Map<string, State>()
   )
+  const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
+    () => new Set<string>()
+  )
+  const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
+    () => new Map<string, string>()
+  )
+  React.useEffect(() => {
+    setLocalItems(recomputeLocalWorkFlags(items))
+  }, [items])
+
+  const mergeReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => mergeSavedItem(current, savedItem))
+  }, [])
+
+  const appendReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => appendSavedItem(current, savedItem))
+  }, [])
+
+  const mergeStructuralReturnedItem = React.useCallback((value: unknown) => {
+    const savedItem = itemResponse(value)
+    if (!savedItem) {
+      return
+    }
+    setLocalItems((current) => {
+      const merged = mergeSavedItem(current, savedItem)
+      return reconcileLocalAutomaticDependencies(
+        merged,
+        automaticGroupsForStructuralSavedItem(current, merged, savedItem)
+      )
+    })
+  }, [])
+
   const activeItems = React.useMemo(
-    () => items.filter((item) => !locallyDeletedItemIds.has(item.id)),
-    [items, locallyDeletedItemIds]
+    () => localItems.filter((item) => !locallyDeletedItemIds.has(item.id)),
+    [localItems, locallyDeletedItemIds]
+  )
+  const effectivePriorityItems = React.useMemo(
+    () => localPriorityItems(activeItems, priorityItems, locallyRankedItemIds),
+    [activeItems, priorityItems, locallyRankedItemIds]
   )
   const itemsById = React.useMemo(
     () => new Map(activeItems.map((item) => [item.id, item])),
@@ -690,33 +1597,82 @@ export function Outliner({
   }, [newlyAddedIds, sessionNewlyAddedIds])
   const mutationActions = React.useMemo<RowMutationActions>(
     () => ({
-      patchItem,
-      createDependency: addDependency,
-      deleteDependency,
-      createItem,
-      indentItem,
-      outdentItem,
+      patchItem: async (itemId, patch) => {
+        const savedItem = await patchItem(itemId, patch)
+        mergeReturnedItem(savedItem)
+        if (patchAffectsPriorityMembership(patch)) {
+          setLocallyRankedItemIds((current) => {
+            if (current.has(itemId)) {
+              return current
+            }
+            const next = new Set(current)
+            next.add(itemId)
+            return next
+          })
+        }
+        return savedItem
+      },
+      createDependency: async (input) => {
+        const dependency = await addDependency(input)
+        setLocalItems((current) => appendLocalDependency(current, dependency))
+        return dependency
+      },
+      deleteDependency: async (dependencyId) => {
+        const deleted = await deleteDependency(dependencyId)
+        const deletedId =
+          typeof deleted === 'object' &&
+          deleted !== null &&
+          'id' in deleted &&
+          typeof deleted.id === 'string'
+            ? deleted.id
+            : dependencyId
+        setLocalItems((current) => removeLocalDependency(current, deletedId))
+        return deleted
+      },
+      createItem: async (input) => {
+        const savedItem = await createItem(input)
+        appendReturnedItem(savedItem)
+        return savedItem
+      },
+      indentItem: async (itemId) => {
+        const savedItem = await indentItem(itemId)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
+      outdentItem: async (itemId) => {
+        const savedItem = await outdentItem(itemId)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
       deleteItem,
-      moveItem,
+      moveItem: async (itemId, input) => {
+        const savedItem = await moveItem(itemId, input)
+        mergeStructuralReturnedItem(savedItem)
+        return savedItem
+      },
     }),
-    []
+    [appendReturnedItem, mergeReturnedItem, mergeStructuralReturnedItem]
   )
   const rows = React.useMemo(
     () =>
       visibleOutlinerRows(activeItems, expandedIds, {
+        dragPreview,
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
+        localSiblingAnchorIds,
         newlyAddedIds: mergedNewlyAddedIds,
-        priorityItems,
+        priorityItems: effectivePriorityItems,
         view: selectedView,
       }),
     [
       activeItems,
+      dragPreview,
+      effectivePriorityItems,
       expandedIds,
+      localSiblingAnchorIds,
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
-      priorityItems,
       selectedView,
     ]
   )
@@ -768,11 +1724,27 @@ export function Outliner({
         return current
       }
 
-      const itemIds = new Set(items.map((item) => item.id))
+      const itemIds = new Set(localItems.map((item) => item.id))
       const next = new Set([...current].filter((itemId) => itemIds.has(itemId)))
       return next.size === current.size ? current : next
     })
-  }, [items])
+  }, [localItems])
+
+  React.useEffect(() => {
+    setLocalSiblingAnchorIds((current) => {
+      if (current.size === 0) {
+        return current
+      }
+
+      const itemIds = new Set(localItems.map((item) => item.id))
+      const next = new Map(
+        [...current].filter(
+          ([itemId, anchorId]) => itemIds.has(itemId) && itemIds.has(anchorId)
+        )
+      )
+      return next.size === current.size ? current : next
+    })
+  }, [localItems])
 
   React.useEffect(() => {
     if (!focusRequest) {
@@ -847,14 +1819,14 @@ export function Outliner({
   }
 
   function markItemSubtreeDeleted(item: TreeItem) {
-    const deletedIds = collectSubtreeItemIds(items, item.id)
+    const deletedIds = collectSubtreeItemIds(localItems, item.id)
     const unavailableIds = new Set([...locallyDeletedItemIds, ...deletedIds])
     setLocallyDeletedItemIds(unavailableIds)
     setTimelineItemId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
-    setSelectedItemId(firstAvailableItemId(items, unavailableIds))
+    setSelectedItemId(firstAvailableItemId(localItems, unavailableIds))
   }
 
   async function performSubmitText(
@@ -870,6 +1842,11 @@ export function Outliner({
 
   function focusCreatedSibling(item: TreeItem, createdItemId: string) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
+    setLocalSiblingAnchorIds((current) => {
+      const next = new Map(current)
+      next.set(createdItemId, item.id)
+      return next
+    })
     const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))
@@ -1070,6 +2047,17 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
+  async function reorderFromDragHandleKeyboard(
+    item: TreeItem,
+    direction: 'up' | 'down'
+  ) {
+    if (direction === 'up') {
+      await moveUp(item)
+    } else {
+      await moveDown(item)
+    }
+  }
+
   async function changeItemState(item: TreeItem, state: State) {
     if (state === item.state) {
       return
@@ -1120,6 +2108,55 @@ export function Outliner({
     }
 
     await changeItemState(item, await restoredStateForDoneItem(item))
+  }
+
+  async function addExplicitDependency(fromId: string, toId: string) {
+    const source = itemsById.get(fromId)
+    const target = itemsById.get(toId)
+    if (
+      !source ||
+      !target ||
+      source.id === target.id ||
+      source.needs_edges.some((edge) => edge.slug === target.slug)
+    ) {
+      return
+    }
+
+    await mutationActions.createDependency({
+      from_id: source.id,
+      to_id: target.id,
+    })
+    setSelectedItemId(source.id)
+  }
+
+  async function removeExplicitDependency(dependencyId: string) {
+    await mutationActions.deleteDependency(dependencyId)
+  }
+
+  function clearDragState() {
+    setDraggingItemId(null)
+    setDragPreview(null)
+  }
+
+  function updateDragPreview(
+    draggedItemId: string,
+    targetItemId: string,
+    position: DropPosition
+  ): boolean {
+    const nextPreview = { draggedItemId, targetItemId, position }
+    if (!resolveDragPreviewItems(activeItems, nextPreview)) {
+      setDragPreview(null)
+      return false
+    }
+
+    setDragPreview((current) =>
+      current?.draggedItemId === draggedItemId &&
+      current.targetItemId === targetItemId &&
+      current.position === position
+        ? current
+        : nextPreview
+    )
+    return true
   }
 
   async function moveDragged(
@@ -1224,7 +2261,6 @@ export function Outliner({
                 collapsed,
                 filteredOutNewlyAdded,
               }) => {
-                const targets = moveTargets(activeItems, item)
                 const rowDraftResetRequest =
                   draftResetRequest?.itemId === item.id
                     ? {
@@ -1243,7 +2279,12 @@ export function Outliner({
                         draggingItemId ||
                         event.dataTransfer.getData('text/plain') ||
                         null
-                      if (draggedId && draggedId !== item.id) {
+                      if (!draggedId || draggedId === item.id) {
+                        return
+                      }
+
+                      const position = dropPosition(event)
+                      if (updateDragPreview(draggedId, item.id, position)) {
                         event.preventDefault()
                       }
                     }}
@@ -1254,16 +2295,23 @@ export function Outliner({
                         event.dataTransfer.getData('text/plain') ||
                         null
                       const position = dropPosition(event)
-                      setDraggingItemId(null)
+                      clearDragState()
                       if (draggedId) {
                         void moveDragged(draggedId, item.id, position)
                       }
                     }}
                     className={cn(
-                      'focus-visible:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                      'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
                       focusedItemId === item.id && 'bg-accent/60',
-                      draggingItemId === item.id && 'opacity-60'
+                      dragPreview?.draggedItemId === item.id
+                        ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+                        : draggingItemId === item.id && 'opacity-60'
                     )}
+                    data-drag-preview={
+                      dragPreview?.draggedItemId === item.id
+                        ? 'true'
+                        : undefined
+                    }
                   >
                     <OutlinerRow
                       item={item}
@@ -1271,16 +2319,13 @@ export function Outliner({
                       hasChildren={hasChildren}
                       collapsed={collapsed}
                       selected={selectedItemId === item.id}
-                      canMoveUp={Boolean(targets.upTarget)}
-                      canMoveDown={Boolean(targets.downTarget)}
                       onToggle={toggle}
                       onSelect={(itemId) => setSelectedItemId(itemId)}
                       onSubmitText={submitText}
                       onCreateSibling={createSibling}
                       onKeyboardCommand={runKeyboardCommand}
                       onDelete={requestItemDelete}
-                      onMoveUp={moveUp}
-                      onMoveDown={moveDown}
+                      onKeyboardReorder={reorderFromDragHandleKeyboard}
                       onChangeState={changeItemState}
                       onChangeDone={changeItemDone}
                       onOpenPromptTimeline={openPromptTimeline}
@@ -1289,8 +2334,9 @@ export function Outliner({
                         event.dataTransfer.effectAllowed = 'move'
                         event.dataTransfer.setData('text/plain', item.id)
                         setDraggingItemId(item.id)
+                        setDragPreview(null)
                       }}
-                      onDragEnd={() => setDraggingItemId(null)}
+                      onDragEnd={clearDragState}
                     />
                     {filteredOutNewlyAdded ? (
                       <div
@@ -1310,7 +2356,12 @@ export function Outliner({
         </div>
         <CommentsPanel
           item={selectedItem}
+          allItems={activeItems}
           activityRefreshKey={detailRefreshKey}
+          draggingItemId={draggingItemId}
+          className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
+          onAddDependency={addExplicitDependency}
+          onRemoveDependency={removeExplicitDependency}
         />
       </div>
       <DestructiveConfirmationDialog

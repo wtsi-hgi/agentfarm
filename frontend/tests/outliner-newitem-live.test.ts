@@ -159,6 +159,44 @@ function NestedRowsHarness() {
   })
 }
 
+function SectionToLeafHarness() {
+  const [hasChild, setHasChild] = React.useState(true)
+  const items = [
+    item({
+      id: 'section',
+      title: 'Feedback section',
+      actionable: false,
+      state: 'feedback',
+      sort_order: 1,
+    }),
+    ...(hasChild
+      ? [
+          item({
+            id: 'leaf',
+            title: 'Leaf item',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ]
+      : []),
+  ]
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Remove child',
+        onClick: () => setHasChild(false),
+        type: 'button',
+      },
+      'Remove child'
+    ),
+    React.createElement(Outliner, { items })
+  )
+}
+
 function SiblingCreationHarness() {
   const [items, setItems] = React.useState<TreeItem[]>([
     item({ id: 'current', title: 'Current', sort_order: 1 }),
@@ -204,6 +242,157 @@ function ChildSiblingCreationHarness() {
   }, [])
 
   return React.createElement(Outliner, { items })
+}
+
+function PriorityRootSiblingCreationHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({
+      id: 'priority-anchor',
+      title: 'Priority anchor',
+      sort_order: 1,
+    }),
+    item({
+      id: 'completed-root',
+      title: 'Completed root',
+      actionable: false,
+      complete: true,
+      sort_order: 2,
+    }),
+    item({
+      id: 'completed-child',
+      title: 'Completed child',
+      actionable: false,
+      complete: true,
+      completed_at: '2026-06-29T01:00:00.000000Z',
+      parent_id: 'completed-root',
+      sort_order: 1,
+      state: 'done',
+    }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, {
+    items,
+    leverageSort: true,
+    priorityItems: [{ id: 'priority-anchor', rank: 1 }],
+  })
+}
+
+function PrunedRootSiblingAnchorHarness() {
+  const rootItems = () => [
+    item({
+      id: 'priority-anchor',
+      title: 'Priority anchor',
+      sort_order: 1,
+    }),
+    item({
+      id: 'completed-root',
+      title: 'Completed root',
+      actionable: false,
+      complete: true,
+      sort_order: 2,
+    }),
+    item({
+      id: 'completed-child',
+      title: 'Completed child',
+      actionable: false,
+      complete: true,
+      completed_at: '2026-06-29T01:00:00.000000Z',
+      parent_id: 'completed-root',
+      sort_order: 1,
+      state: 'done',
+    }),
+  ]
+  const [items, setItems] = React.useState<TreeItem[]>(rootItems)
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+
+    return () => {
+      publishCreatedItem = null
+    }
+  }, [])
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Remove created sibling from server',
+        onClick: () => setItems(rootItems()),
+        type: 'button',
+      },
+      'Remove created sibling from server'
+    ),
+    React.createElement(
+      'button',
+      {
+        'aria-label': 'Restore created sibling from server',
+        onClick: () =>
+          setItems([
+            ...rootItems(),
+            item({
+              id: 'created-root-sibling',
+              title: 'Restored root sibling',
+              sort_order: 0,
+            }),
+          ]),
+        type: 'button',
+      },
+      'Restore created sibling from server'
+    ),
+    React.createElement(Outliner, {
+      items,
+      leverageSort: true,
+      priorityItems: [{ id: 'priority-anchor', rank: 1 }],
+    })
+  )
+}
+
+function RootSiblingPriorityProjectionHarness() {
+  const [items, setItems] = React.useState<TreeItem[]>([
+    item({
+      id: 'ready-root',
+      title: 'Ready root',
+      sort_order: 1,
+    }),
+  ])
+
+  React.useEffect(() => {
+    publishCreatedItem = (created) => {
+      setItems((current) => [...current, created])
+    }
+    publishPatchedItem = (itemId, patch) => {
+      setItems((current) =>
+        current.map((existing) =>
+          existing.id === itemId ? { ...existing, ...patch } : existing
+        )
+      )
+    }
+
+    return () => {
+      publishCreatedItem = null
+      publishPatchedItem = null
+    }
+  }, [])
+
+  return React.createElement(Outliner, {
+    items,
+    leverageSort: true,
+    priorityItems: [{ id: 'ready-root', rank: 1 }],
+  })
 }
 
 async function flushReact() {
@@ -284,6 +473,17 @@ function getItemSelect(
     throw new Error(`Missing ${ariaLabel} select for ${itemId}`)
   }
   return select
+}
+
+function queryItemSelect(
+  container: ParentNode,
+  itemId: string,
+  ariaLabel: string
+) {
+  const select = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] select[aria-label="${ariaLabel}"]`
+  )
+  return select instanceof HTMLSelectElement ? select : null
 }
 
 function getItemCheckbox(container: ParentNode, itemId: string) {
@@ -609,6 +809,105 @@ describe('Outliner live newly added filter exemptions', () => {
     ])
   })
 
+  it('moves a waiting item changed to respond into up-next without a route refresh', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) =>
+        item({
+          id: itemId,
+          title: 'Await user feedback',
+          state: patch.state ?? 'feedback',
+          sort_order: 1,
+        })
+    )
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            state: 'feedback',
+            actionable: false,
+          }),
+        ],
+        priorityItems: [],
+      })
+    )
+
+    await click(getButton(container, 'Show follow up work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row'])
+
+    await changeSelect(
+      getItemSelect(container, 'feedback-row', 'Item state'),
+      'respond'
+    )
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('feedback-row', {
+      state: 'respond',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row'])
+    expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
+      'respond'
+    )
+    expect(
+      getItemReadinessIndicator(container, 'feedback-row').textContent
+    ).toBe('Ready')
+  })
+
+  it('orders a locally changed respond item ahead of server-ranked ready work', async () => {
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) =>
+        item({
+          id: itemId,
+          title: 'Await user feedback',
+          state: patch.state ?? 'feedback',
+          sort_order: 2,
+        })
+    )
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'ready-row',
+            title: 'Ready row',
+            sort_order: 1,
+          }),
+          item({
+            id: 'feedback-row',
+            title: 'Await user feedback',
+            sort_order: 2,
+            state: 'feedback',
+            actionable: false,
+          }),
+        ],
+        priorityItems: [{ id: 'ready-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row'])
+
+    await click(getButton(container, 'Show follow up work'))
+    await changeSelect(
+      getItemSelect(container, 'feedback-row', 'Item state'),
+      'respond'
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['feedback-row', 'ready-row'])
+    expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
+      'respond'
+    )
+  })
+
   it('keeps up-next separate from the default marker-completed tree cutoff', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
@@ -867,6 +1166,93 @@ describe('Outliner live newly added filter exemptions', () => {
       HTMLInputElement
     )
     expect(getItemCheckbox(container, 'leaf')).toBeInstanceOf(HTMLInputElement)
+  })
+
+  it('hides state selectors on sections and ignores their stored waiting state in Follow Up', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'section',
+            title: 'Feedback section',
+            actionable: false,
+            state: 'feedback',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Ready leaf',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+        priorityItems: [{ id: 'leaf', rank: 1 }],
+      })
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual(['section', 'leaf'])
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+    expect(getItemSelect(container, 'leaf', 'Item state').value).toBe(
+      'not-started'
+    )
+    expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
+      HTMLInputElement
+    )
+
+    await click(getButton(container, 'Show follow up work'))
+
+    expect(getOutlinerItemIds(container)).toEqual([])
+  })
+
+  it('remembers a hidden section state when the section becomes a leaf again', async () => {
+    const container = await render(React.createElement(SectionToLeafHarness))
+
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+
+    await click(getButton(container, 'Remove child'))
+
+    expect(getItemSelect(container, 'section', 'Item state').value).toBe(
+      'feedback'
+    )
+  })
+
+  it('keeps the section done checkbox active while the state selector is hidden', async () => {
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'section',
+            title: 'Review section',
+            actionable: false,
+            state: 'review',
+            sort_order: 1,
+          }),
+          item({
+            id: 'leaf',
+            title: 'Leaf item',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+
+    await clickCheckbox(getItemCheckbox(container, 'section'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('section', {
+      state: 'done',
+    })
+    expect(getItemCheckbox(container, 'section').checked).toBe(true)
+
+    await clickCheckbox(getItemCheckbox(container, 'section'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('section', {
+      state: 'review',
+    })
+    expect(getItemCheckbox(container, 'section').checked).toBe(false)
+    expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
   })
 
   it('checks a row through the existing state mutation and greys it as done', async () => {
@@ -1226,6 +1612,57 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(getItemInput(container, 'current').value).toBe('Renamed current')
   })
 
+  it('uses the returned saved item without waiting for a parent refresh', async () => {
+    actionMocks.patchItem.mockImplementation(async (itemId: string) =>
+      item({
+        id: itemId,
+        title: 'Renamed by backend',
+        slug: 'renamed-by-backend',
+        sort_order: 1,
+      })
+    )
+    const container = await render(React.createElement(SiblingCreationHarness))
+    const currentInput = getItemInput(container, 'current')
+
+    currentInput.setSelectionRange(0, currentInput.value.length)
+    await typeThroughCurrentSelection(currentInput, 'Renamed current')
+    await keyDown(currentInput, 'Enter')
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('current', {
+      title: 'Renamed current',
+    })
+    expect(getOutlinerItemIds(container)).toEqual(['current'])
+    expect(getItemInput(container, 'current').value).toBe('Renamed by backend')
+  })
+
+  it('renders a returned created sibling without waiting for a parent refresh', async () => {
+    actionMocks.createItem.mockImplementation(async (input: CreateItemInput) =>
+      item({
+        id: 'created-without-refresh',
+        title: input.title,
+        parent_id: input.parent_id ?? null,
+        sort_order: 2,
+      })
+    )
+    const container = await render(React.createElement(SiblingCreationHarness))
+
+    await click(getItemButton(container, 'current', 'Add sibling'))
+
+    const createdInput = getItemInput(container, 'created-without-refresh')
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'current',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'current',
+      'created-without-refresh',
+    ])
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
   it('selects the default title for a button-created sibling so immediate typing replaces it', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
@@ -1294,5 +1731,154 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(document.activeElement).toBe(createdInput)
     expect(createdInput.selectionStart).toBe(0)
     expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
+  it('keeps a button-created root sibling beneath the completed root subtree in priority sort', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 3,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(
+      React.createElement(PriorityRootSiblingCreationHarness)
+    )
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+    ])
+
+    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+
+    const createdInput = getItemInput(container, 'created-root-sibling')
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'completed-root',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+      'created-root-sibling',
+    ])
+    expect(document.activeElement).toBe(createdInput)
+    expect(createdInput.selectionStart).toBe(0)
+    expect(createdInput.selectionEnd).toBe('New item'.length)
+  })
+
+  it('lets a recreated sibling id use normal root ordering after its local anchor is pruned', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 3,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    const container = await render(
+      React.createElement(PrunedRootSiblingAnchorHarness)
+    )
+
+    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+      'created-root-sibling',
+    ])
+
+    await click(getButton(container, 'Remove created sibling from server'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'completed-root',
+      'completed-child',
+    ])
+
+    await click(getButton(container, 'Restore created sibling from server'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'priority-anchor',
+      'created-root-sibling',
+      'completed-root',
+      'completed-child',
+    ])
+  })
+
+  it('orders a created root sibling changed to respond by priority in up-next', async () => {
+    actionMocks.createItem.mockImplementation(
+      async (input: CreateItemInput) => {
+        const created = item({
+          id: 'created-root-sibling',
+          title: input.title,
+          parent_id: input.parent_id ?? null,
+          sort_order: 2,
+        })
+        publishCreatedItem?.(created)
+        return created
+      }
+    )
+    actionMocks.patchItem.mockImplementation(
+      async (itemId: string, patch: LivePatch) => {
+        const saved = item({
+          id: itemId,
+          title: 'New item',
+          parent_id: null,
+          sort_order: 2,
+          state: patch.state ?? 'not-started',
+        })
+        publishPatchedItem?.(itemId, patch)
+        return saved
+      }
+    )
+    const container = await render(
+      React.createElement(RootSiblingPriorityProjectionHarness)
+    )
+
+    await click(getItemButton(container, 'ready-root', 'Add sibling'))
+
+    expect(actionMocks.createItem).toHaveBeenCalledWith({
+      title: 'New item',
+      parent_id: null,
+      after_id: 'ready-root',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-root',
+      'created-root-sibling',
+    ])
+
+    await changeSelect(
+      getItemSelect(container, 'created-root-sibling', 'Item state'),
+      'respond'
+    )
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('created-root-sibling', {
+      state: 'respond',
+    })
+    expect(getOutlinerItemIds(container)).toEqual([
+      'ready-root',
+      'created-root-sibling',
+    ])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual([
+      'created-root-sibling',
+      'ready-root',
+    ])
   })
 })

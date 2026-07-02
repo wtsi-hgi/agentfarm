@@ -197,7 +197,7 @@ export function DestructiveConfirmationDialog({
             type="button"
             variant="outline"
             disabled={pending}
-            aria-label="Cancel deletion"
+            aria-label={cancelLabel}
             onClick={cancel}
           >
             {cancelLabel}
@@ -206,7 +206,7 @@ export function DestructiveConfirmationDialog({
             type="button"
             variant="destructive"
             disabled={pending}
-            aria-label="Confirm deletion"
+            aria-label={pending ? confirmingLabel : confirmLabel}
             onClick={() => void confirm()}
           >
             {pending ? confirmingLabel : confirmLabel}

@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import config
-from db.connection import get_connection
+from db.connection import get_connection, get_db
 from db.migrate import apply_migrations
 from services import leverage
 
@@ -35,6 +35,15 @@ async def _post_dependency(client: AsyncClient, body: dict):
     return await client.post("/api/v1/dependencies", json=body)
 
 
+async def _ensure_dependency(client: AsyncClient, body: dict) -> None:
+    """Ensure an edge exists, accepting automatic-chain duplicates."""
+    created = await _post_dependency(client, body)
+    if created.status_code == 200:
+        return
+    assert created.status_code == 409
+    assert created.json() == {"detail": "dependency already exists"}
+
+
 async def _patch(client: AsyncClient, item_id: str, body: dict):
     return await client.patch(f"/api/v1/items/{item_id}", json=body)
 
@@ -49,6 +58,36 @@ async def _priority(client: AsyncClient):
 
 async def _tree(client: AsyncClient):
     return await client.get("/api/v1/tree")
+
+
+async def _count_endpoint_queries(db_path, path: str) -> tuple[int, list[str]]:
+    """Return the number of SQL work statements used to serve one GET request."""
+    from main import app
+
+    statements: list[str] = []
+    counted_operations = {"SELECT", "INSERT", "UPDATE", "DELETE"}
+
+    def traced_db():
+        with get_connection(db_path) as conn:
+            conn.set_trace_callback(
+                lambda statement: (
+                    statements.append(statement)
+                    if statement.lstrip().split(maxsplit=1)[0].upper()
+                    in counted_operations
+                    else None
+                )
+            )
+            yield conn
+
+    app.dependency_overrides[get_db] = traced_db
+    try:
+        async with _client() as client:
+            response = await client.get(path)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    return len(statements), statements
 
 
 def _dependency_edges(db_path) -> set[tuple[str, str]]:
@@ -194,8 +233,7 @@ async def _build_e1_setup(client: AsyncClient) -> dict[str, str]:
         {"from_id": ids["B3"], "to_id": ids["B2"]},
         {"from_id": ids["G2"], "to_id": ids["G1"]},
     ):
-        created = await _post_dependency(client, dependency)
-        assert created.status_code == 200
+        await _ensure_dependency(client, dependency)
     return ids
 
 
@@ -325,6 +363,35 @@ async def test_priority_uses_section_leaf_chain_and_reorder_updates_it(
 
 
 @pytest.mark.anyio
+async def test_tree_and_priority_query_counts_stay_bounded_for_large_chain(
+    fresh_db,
+) -> None:
+    """Large outlines are projected set-at-once instead of via per-item walks."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Performance section"})
+        section_id = section.json()["id"]
+        for index in range(40):
+            created = await _create(
+                client,
+                {
+                    "title": f"Chain item {index + 1:02d}",
+                    "parent_id": section_id,
+                },
+            )
+            assert created.status_code == 200
+
+    tree_query_count, tree_statements = await _count_endpoint_queries(
+        fresh_db, "/api/v1/tree"
+    )
+    priority_query_count, priority_statements = await _count_endpoint_queries(
+        fresh_db, "/api/v1/priority"
+    )
+
+    assert tree_query_count <= 5, tree_statements
+    assert priority_query_count <= 5, priority_statements
+
+
+@pytest.mark.anyio
 async def test_done_section_chain_leaf_is_excluded_and_next_leaf_is_prioritized(
     fresh_db,
 ) -> None:
@@ -431,8 +498,7 @@ async def test_priority_weights_only_prompt_agent_downstream_double_e2(
             {"from_id": ids["H2"], "to_id": ids["H1"]},
             {"from_id": ids["I2"], "to_id": ids["I1"]},
         ):
-            created = await _post_dependency(client, dependency)
-            assert created.status_code == 200
+            await _ensure_dependency(client, dependency)
 
         response = await _priority(client)
 
@@ -655,12 +721,11 @@ async def test_downstream_excludes_completed_leaf_e4(fresh_db) -> None:
                 "state": "done",
             },
         )
-        created = await _post_dependency(
+        await _ensure_dependency(
             client,
             {"from_id": k2.json()["id"], "to_id": k1.json()["id"]},
         )
 
-    assert created.status_code == 200
     assert _downstream(fresh_db, k1.json()["id"]) == set()
     assert _score(fresh_db, k1.json()["id"]) == 0
 
@@ -700,8 +765,7 @@ async def test_downstream_follows_transitive_leaf_chain_e4(fresh_db) -> None:
             {"from_id": m2.json()["id"], "to_id": m1.json()["id"]},
             {"from_id": m3.json()["id"], "to_id": m2.json()["id"]},
         ):
-            created = await _post_dependency(client, dependency)
-            assert created.status_code == 200
+            await _ensure_dependency(client, dependency)
 
     assert _downstream(fresh_db, m1.json()["id"]) == {
         m2.json()["id"],

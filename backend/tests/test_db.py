@@ -27,6 +27,14 @@ EXPECTED_TABLES = {
     "item_state_changes",
     "markers",
     "runs",
+    "schema_migrations",
+}
+EXPECTED_INDEXES = {
+    "idx_items_parent_sort",
+    "idx_dependencies_from",
+    "idx_dependencies_to",
+    "idx_dependencies_kind_from",
+    "idx_dependencies_auto_chain_from",
 }
 
 
@@ -35,6 +43,19 @@ def _table_names(db_path: Path) -> set[str]:
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    return {row["name"] for row in rows}
+
+
+def _index_names(db_path: Path) -> set[str]:
+    """Return project-created index names recorded in ``sqlite_master``."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'
+            """
         ).fetchall()
     return {row["name"] for row in rows}
 
@@ -78,11 +99,23 @@ def test_migration_is_idempotent(tmp_path) -> None:
 
     apply_migrations(db_path)
     first = _table_names(db_path)
+    first_indexes = _index_names(db_path)
     # Second application must be a no-op (guaranteed by IF NOT EXISTS).
     apply_migrations(db_path)
     second = _table_names(db_path)
+    second_indexes = _index_names(db_path)
 
     assert first == second == EXPECTED_TABLES
+    assert first_indexes == second_indexes == EXPECTED_INDEXES
+
+
+def test_migration_creates_projection_indexes(tmp_path) -> None:
+    """Migrations add the indexes used by tree and priority projections."""
+    db_path = tmp_path / "agentfarm.db"
+
+    apply_migrations(db_path)
+
+    assert _index_names(db_path) == EXPECTED_INDEXES
 
 
 def test_migration_creates_parent_directory(tmp_path) -> None:
@@ -160,6 +193,116 @@ def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None
     assert row["description"] == ""
     assert row["repo_url"] is None
     assert row["usage"] == ""
+    assert _index_names(db_path) == EXPECTED_INDEXES
+
+
+def test_migration_backfills_automatic_leaf_chain_once(tmp_path) -> None:
+    """Upgrading an old DB creates explicit automatic sibling edges once.
+
+    The backfill assumes there are no pre-existing user-created dependency rows
+    in the user's real pre-UI database. If a row does already exist for a pair,
+    the migration preserves it as user-owned instead of relabelling it.
+    """
+    db_path = tmp_path / "agentfarm.db"
+    timestamp = "2026-01-01T00:00:00.000000Z"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE items (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              slug TEXT NOT NULL UNIQUE,
+              parent_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+              sort_order REAL NOT NULL,
+              state TEXT NOT NULL DEFAULT 'not-started',
+              mode TEXT NOT NULL DEFAULT 'prompt-agent',
+              effort TEXT NOT NULL DEFAULT 'medium',
+              blocked_external INTEGER NOT NULL DEFAULT 0,
+              blocked_note TEXT,
+              blocked_followup_date TEXT,
+              created_by TEXT NOT NULL,
+              updated_by TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              state_changed_at TEXT NOT NULL,
+              completed_at TEXT
+            );
+            CREATE TABLE dependencies (
+              id TEXT PRIMARY KEY,
+              from_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+              to_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+              kind TEXT NOT NULL,
+              UNIQUE (from_id, to_id)
+            );
+            """
+        )
+        rows = [
+            ("parent", "Parent", "parent", None, 1.0),
+            ("a", "A", "a", "parent", 1.0),
+            ("b", "B", "b", "parent", 2.0),
+            ("c", "C", "c", "parent", 3.0),
+        ]
+        for item_id, title, slug, parent_id, sort_order in rows:
+            conn.execute(
+                """
+                INSERT INTO items (
+                    id, title, slug, parent_id, sort_order, created_by,
+                    updated_by, created_at, updated_at, state_changed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_id,
+                    title,
+                    slug,
+                    parent_id,
+                    sort_order,
+                    "alice",
+                    "alice",
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        conn.execute(
+            """
+            INSERT INTO dependencies (id, from_id, to_id, kind)
+            VALUES ('existing-user-edge', 'c', 'b', 'explicit')
+            """
+        )
+
+    apply_migrations(db_path)
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, from_id, to_id, kind, automatic_chain
+            FROM dependencies
+            ORDER BY id
+            """
+        ).fetchall()
+        migrations = conn.execute(
+            "SELECT id FROM schema_migrations ORDER BY id"
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [
+        {
+            "id": "auto-chain-b-a",
+            "from_id": "b",
+            "to_id": "a",
+            "kind": "explicit",
+            "automatic_chain": 1,
+        },
+        {
+            "id": "existing-user-edge",
+            "from_id": "c",
+            "to_id": "b",
+            "kind": "explicit",
+            "automatic_chain": 0,
+        },
+    ]
+    assert [row["id"] for row in migrations] == ["20260701_automatic_sibling_chain"]
 
 
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:

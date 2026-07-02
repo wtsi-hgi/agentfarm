@@ -37,8 +37,13 @@ CREATE TABLE IF NOT EXISTS dependencies (
   from_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   to_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   kind        TEXT NOT NULL,              -- 'explicit' in v1; 'implicit' legacy
+  automatic_chain INTEGER NOT NULL DEFAULT 0,
   UNIQUE (from_id, to_id)
 );  -- edge means: from_id depends on (needs) to_id
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id          TEXT PRIMARY KEY
+);
 
 CREATE TABLE IF NOT EXISTS comments (
   id          TEXT PRIMARY KEY,
@@ -80,3 +85,18 @@ CREATE TABLE IF NOT EXISTS runs (         -- v2 seam, unused in v1 logic
   status      TEXT NOT NULL DEFAULT 'pending',
   created_at  TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_items_parent_sort
+  ON items(parent_id, sort_order, id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_from
+  ON dependencies(from_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_to
+  ON dependencies(to_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_kind_from
+  ON dependencies(kind, from_id);
+
+CREATE INDEX IF NOT EXISTS idx_dependencies_auto_chain_from
+  ON dependencies(automatic_chain, from_id);

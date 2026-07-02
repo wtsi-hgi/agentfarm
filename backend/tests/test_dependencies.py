@@ -1,9 +1,8 @@
 """Acceptance tests for dependency behavior.
 
-The v1 dependency model keeps tree structure separate from stored dependency
-rows: explicit edges are persisted, while the default leaf-item chain inside a
-section is derived live from current sibling order. Roots, sections, and
-subsections stay independent siblings unless the user records explicit edges.
+Dependency rows are the supported boundary for both user-authored edges and the
+automatic ordinary-leaf chain inside non-root sections. Roots, sections, and
+subsections stay independent siblings unless a stored edge says otherwise.
 """
 
 from __future__ import annotations
@@ -83,6 +82,19 @@ def _dependency_rows(db_path) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _dependency_rows_with_ownership(db_path) -> list[dict]:
+    """Return dependency rows including automatic-chain ownership."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, from_id, to_id, kind, automatic_chain
+            FROM dependencies
+            ORDER BY from_id, to_id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _dependency_edges(db_path, kind: str | None = None) -> set[tuple[str, str]]:
     """Return dependency edges as ``(from_id, to_id)`` pairs."""
     with get_connection(db_path) as conn:
@@ -92,6 +104,32 @@ def _dependency_edges(db_path, kind: str | None = None) -> set[tuple[str, str]]:
             rows = conn.execute(
                 "SELECT from_id, to_id FROM dependencies WHERE kind = ?", (kind,)
             ).fetchall()
+    return {(row["from_id"], row["to_id"]) for row in rows}
+
+
+def _automatic_edges(db_path) -> set[tuple[str, str]]:
+    """Return automatic leaf-chain edges as ``(from_id, to_id)`` pairs."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT from_id, to_id
+            FROM dependencies
+            WHERE kind = 'explicit' AND automatic_chain = 1
+            """
+        ).fetchall()
+    return {(row["from_id"], row["to_id"]) for row in rows}
+
+
+def _user_edges(db_path) -> set[tuple[str, str]]:
+    """Return user-authored dependency edges as ``(from_id, to_id)`` pairs."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT from_id, to_id
+            FROM dependencies
+            WHERE kind = 'explicit' AND automatic_chain = 0
+            """
+        ).fetchall()
     return {(row["from_id"], row["to_id"]) for row in rows}
 
 
@@ -157,17 +195,21 @@ async def _build_cross_product_pair(client: AsyncClient) -> dict[str, str]:
 
 
 @pytest.mark.anyio
-async def test_siblings_do_not_gain_implicit_dependencies(fresh_db) -> None:
-    """Sibling order is derived live and still creates no dependency rows."""
+async def test_root_siblings_do_not_gain_automatic_dependencies(fresh_db) -> None:
+    """Root sibling order still creates no dependency rows."""
     async with _client() as client:
-        await _build_outline(client)
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        c = await _create(client, {"title": "C"})
 
-    assert _dependency_edges(fresh_db) == set()
+    assert {a.json()["id"], b.json()["id"], c.json()["id"]}
+    assert _user_edges(fresh_db) == set()
+    assert _automatic_edges(fresh_db) == set()
 
 
 @pytest.mark.anyio
 async def test_section_leaf_siblings_chain_by_current_sort_order(fresh_db) -> None:
-    """Plain leaf items inside one section wait on their previous leaf."""
+    """Plain leaf items inside one section persist their previous-leaf edge."""
     async with _client() as client:
         section = await _create(client, {"title": "Section"})
         first = await _create(
@@ -186,7 +228,11 @@ async def test_section_leaf_siblings_chain_by_current_sort_order(fresh_db) -> No
     second_id = second.json()["id"]
     third_id = third.json()["id"]
 
-    assert _dependency_edges(fresh_db) == set()
+    assert _automatic_edges(fresh_db) == {
+        (second_id, first_id),
+        (third_id, second_id),
+    }
+    assert _user_edges(fresh_db) == set()
     assert _actionable(fresh_db) == {first_id}
     assert _depends_on(fresh_db, second_id, first_id) is True
     assert _depends_on(fresh_db, third_id, second_id) is True
@@ -198,11 +244,13 @@ async def test_section_leaf_siblings_chain_by_current_sort_order(fresh_db) -> No
     assert _tree_item(payload, first_id)["actionable"] is True
     assert _tree_item(payload, second_id)["actionable"] is False
     assert _tree_item(payload, third_id)["actionable"] is False
+    assert _tree_item(payload, second_id)["needs"] == ["first"]
+    assert _tree_item(payload, third_id)["needs"] == ["second"]
 
 
 @pytest.mark.anyio
 async def test_section_leaf_chain_skips_subsection_siblings(fresh_db) -> None:
-    """Containers do not become implicit links in a section's leaf chain."""
+    """Containers do not become automatic links in a section's leaf chain."""
     async with _client() as client:
         section = await _create(client, {"title": "Section"})
         first = await _create(
@@ -227,6 +275,202 @@ async def test_section_leaf_chain_skips_subsection_siblings(fresh_db) -> None:
     assert _depends_on(fresh_db, second_id, first_id) is True
     assert _depends_on(fresh_db, second_id, subsection_id) is False
     assert _depends_on(fresh_db, second_id, nested_id) is False
+    assert _automatic_edges(fresh_db) == {(second_id, first_id)}
+
+
+@pytest.mark.anyio
+async def test_section_that_becomes_leaf_joins_automatic_chain(fresh_db) -> None:
+    """When a subsection loses its last child, it becomes an ordinary leaf."""
+    async with _client() as client:
+        parent = await _create(client, {"title": "Parent"})
+        parent_id = parent.json()["id"]
+        a = await _create(client, {"title": "A", "parent_id": parent_id})
+        section = await _create(client, {"title": "S", "parent_id": parent_id})
+        child = await _create(client, {"title": "X", "parent_id": section.json()["id"]})
+        b = await _create(client, {"title": "B", "parent_id": parent_id})
+
+        assert _automatic_edges(fresh_db) == {(b.json()["id"], a.json()["id"])}
+
+        deleted = await client.delete(f"/api/v1/items/{child.json()['id']}")
+
+    assert deleted.status_code == 200
+    assert _automatic_edges(fresh_db) == {
+        (section.json()["id"], a.json()["id"]),
+        (b.json()["id"], section.json()["id"]),
+    }
+
+
+@pytest.mark.anyio
+async def test_delete_automatic_dependency_removes_it_until_structure_changes(
+    fresh_db,
+) -> None:
+    """The dependency UI can remove an automatic edge like any other edge."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        first = await _create(
+            client, {"title": "first", "parent_id": section.json()["id"]}
+        )
+        second = await _create(
+            client, {"title": "second", "parent_id": section.json()["id"]}
+        )
+        tree_before = await _tree(client)
+        second_entry = _tree_item(tree_before.json(), second.json()["id"])
+
+        deleted = await _delete_dependency(client, second_entry["needs_edges"][0]["id"])
+        tree_after_delete = await _tree(client)
+
+        third = await _create(
+            client, {"title": "third", "parent_id": section.json()["id"]}
+        )
+
+    assert deleted.status_code == 200
+    assert _tree_item(tree_after_delete.json(), second.json()["id"])["needs"] == []
+    assert _automatic_edges(fresh_db) == {
+        (second.json()["id"], first.json()["id"]),
+        (third.json()["id"], second.json()["id"]),
+    }
+
+
+@pytest.mark.anyio
+async def test_same_section_lower_dependency_moves_source_as_automatic_edge(
+    fresh_db,
+) -> None:
+    """Adding A -> C in [A,B,C] moves A below C and owns A -> C as automatic."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        section_id = section.json()["id"]
+        a = await _create(client, {"title": "A", "parent_id": section_id})
+        b = await _create(client, {"title": "B", "parent_id": section_id})
+        c = await _create(client, {"title": "C", "parent_id": section_id})
+        a_id = a.json()["id"]
+        b_id = b.json()["id"]
+        c_id = c.json()["id"]
+
+        created = await _post_dependency(client, {"from_id": a_id, "to_id": c_id})
+        tree_after_dependency = await _tree(client)
+        edges_after_dependency = _automatic_edges(fresh_db)
+        moved_first = await _move(
+            client,
+            a_id,
+            {"new_parent_id": section_id, "position": "first"},
+        )
+
+    assert created.status_code == 200
+    assert created.json()["kind"] == "explicit"
+    assert [
+        entry["id"]
+        for entry in tree_after_dependency.json()
+        if entry["parent_id"] == section_id
+    ] == [b_id, c_id, a_id]
+    assert edges_after_dependency == {
+        (c_id, b_id),
+        (a_id, c_id),
+    }
+    assert moved_first.status_code == 200
+    assert _automatic_edges(fresh_db) == {
+        (b_id, a_id),
+        (c_id, b_id),
+    }
+    assert _user_edges(fresh_db) == set()
+
+
+@pytest.mark.anyio
+async def test_same_section_lower_dependency_preserves_target_successor(
+    fresh_db,
+) -> None:
+    """Inserting A after C leaves C's former successor D depending on C."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        section_id = section.json()["id"]
+        a = await _create(client, {"title": "A", "parent_id": section_id})
+        b = await _create(client, {"title": "B", "parent_id": section_id})
+        c = await _create(client, {"title": "C", "parent_id": section_id})
+        d = await _create(client, {"title": "D", "parent_id": section_id})
+
+        created = await _post_dependency(
+            client,
+            {"from_id": a.json()["id"], "to_id": c.json()["id"]},
+        )
+
+    assert created.status_code == 200
+    assert _automatic_edges(fresh_db) == {
+        (c.json()["id"], b.json()["id"]),
+        (a.json()["id"], c.json()["id"]),
+        (d.json()["id"], c.json()["id"]),
+    }
+
+
+@pytest.mark.anyio
+async def test_user_owned_same_section_edge_blocks_conflicting_auto_move(
+    fresh_db,
+) -> None:
+    """User-created rows after this feature are never treated as automatic."""
+    async with _client() as client:
+        section = await _create(client, {"title": "Section"})
+        section_id = section.json()["id"]
+        a = await _create(client, {"title": "A", "parent_id": section_id})
+        b = await _create(client, {"title": "B", "parent_id": section_id})
+        c = await _create(client, {"title": "C", "parent_id": section_id})
+        a_id = a.json()["id"]
+        c_id = c.json()["id"]
+
+        explicit = await _post_dependency(client, {"from_id": c_id, "to_id": a_id})
+        move_rejected = await _move(
+            client,
+            a_id,
+            {"new_parent_id": section_id, "after_id": c_id},
+        )
+        dependency_rejected = await _post_dependency(
+            client,
+            {"from_id": a_id, "to_id": c_id},
+        )
+
+    assert b.status_code == 200
+    assert explicit.status_code == 200
+    assert _user_edges(fresh_db) == {(c_id, a_id)}
+    assert move_rejected.status_code == 409
+    assert move_rejected.json() == {"detail": "dependency cycle rejected"}
+    assert dependency_rejected.status_code == 409
+    assert dependency_rejected.json() == {"detail": "dependency cycle rejected"}
+    assert _user_edges(fresh_db) == {(c_id, a_id)}
+
+
+@pytest.mark.anyio
+async def test_user_descendant_dependency_rejects_move_but_automatic_allows_it(
+    fresh_db,
+) -> None:
+    """Moving a dependency target under its dependent ignores stale auto edges."""
+    async with _client() as client:
+        a = await _create(client, {"title": "A"})
+        b = await _create(client, {"title": "B"})
+        explicit = await _post_dependency(
+            client,
+            {"from_id": a.json()["id"], "to_id": b.json()["id"]},
+        )
+        rejected = await _move(
+            client,
+            b.json()["id"],
+            {"new_parent_id": a.json()["id"], "position": "first"},
+        )
+
+        section = await _create(client, {"title": "Section"})
+        section_id = section.json()["id"]
+        auto_target = await _create(
+            client, {"title": "auto target", "parent_id": section_id}
+        )
+        auto_dependent = await _create(
+            client, {"title": "auto dependent", "parent_id": section_id}
+        )
+        moved = await _move(
+            client,
+            auto_target.json()["id"],
+            {"new_parent_id": auto_dependent.json()["id"], "position": "first"},
+        )
+
+    assert explicit.status_code == 200
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "dependency cycle rejected"}
+    assert moved.status_code == 200
 
 
 @pytest.mark.anyio
@@ -280,14 +524,22 @@ async def test_tree_exposes_explicit_dependency_edge_ids(fresh_db) -> None:
     before_entry = _tree_item(tree_before_rename.json(), ids["X"])
     assert before_entry["needs"] == ["deploy-db"]
     assert before_entry["needs_edges"] == [
-        {"id": created.json()["id"], "slug": "deploy-db"}
+        {
+            "id": created.json()["id"],
+            "slug": "deploy-db",
+            "automatic_chain": False,
+        }
     ]
 
     assert tree_after_rename.status_code == 200
     after_entry = _tree_item(tree_after_rename.json(), ids["X"])
     assert after_entry["needs"] == ["deploy-database"]
     assert after_entry["needs_edges"] == [
-        {"id": created.json()["id"], "slug": "deploy-database"}
+        {
+            "id": created.json()["id"],
+            "slug": "deploy-database",
+            "automatic_chain": False,
+        }
     ]
 
 
@@ -451,7 +703,7 @@ async def test_post_dependency_rejects_opposite_section_edge(fresh_db) -> None:
     assert created.status_code == 200
     assert rejected.status_code == 409
     assert rejected.json() == {"detail": "dependency cycle rejected"}
-    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["B"], ids["A"])}
+    assert _user_edges(fresh_db) == {(ids["B"], ids["A"])}
 
 
 @pytest.mark.anyio
@@ -472,7 +724,7 @@ async def test_post_dependency_rejects_inherited_section_cycle(fresh_db) -> None
     assert created.status_code == 200
     assert rejected.status_code == 409
     assert rejected.json() == {"detail": "dependency cycle rejected"}
-    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["B"], ids["A"])}
+    assert _user_edges(fresh_db) == {(ids["B"], ids["A"])}
 
 
 @pytest.mark.anyio
@@ -495,14 +747,14 @@ async def test_post_dependency_rejects_cycle_through_container_target(
     assert created.status_code == 200
     assert rejected.status_code == 409
     assert rejected.json() == {"detail": "dependency cycle rejected"}
-    assert _dependency_edges(fresh_db, kind="explicit") == {(ids["A"], ids["B"])}
+    assert _user_edges(fresh_db) == {(ids["A"], ids["B"])}
 
 
 @pytest.mark.anyio
-async def test_post_dependency_rejects_cycle_through_section_leaf_chain(
+async def test_post_dependency_to_lower_section_leaf_moves_source(
     fresh_db,
 ) -> None:
-    """D2: explicit edges cannot point back through a section's implicit chain."""
+    """A same-section dependency to a lower leaf is treated as a chain move."""
     async with _client() as client:
         section = await _create(client, {"title": "Section"})
         first = await _create(
@@ -516,10 +768,16 @@ async def test_post_dependency_rejects_cycle_through_section_leaf_chain(
             client,
             {"from_id": first.json()["id"], "to_id": second.json()["id"]},
         )
+        tree = await _tree(client)
 
-    assert rejected.status_code == 409
-    assert rejected.json() == {"detail": "dependency cycle rejected"}
-    assert _dependency_edges(fresh_db) == set()
+    assert rejected.status_code == 200
+    assert [
+        entry["id"]
+        for entry in tree.json()
+        if entry["parent_id"] == section.json()["id"]
+    ] == [second.json()["id"], first.json()["id"]]
+    assert _automatic_edges(fresh_db) == {(first.json()["id"], second.json()["id"])}
+    assert _user_edges(fresh_db) == set()
 
 
 @pytest.mark.anyio
@@ -542,7 +800,8 @@ async def test_delete_dependency_restores_section_leaf_actionability(
 
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted": True, "id": edge_id}
-    assert _dependency_rows(fresh_db) == []
+    assert _user_edges(fresh_db) == set()
+    assert _automatic_edges(fresh_db) == {(ids["B2"], ids["B1"])}
     assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["C"]}
 
 
@@ -577,7 +836,11 @@ async def test_delete_dependency_reconciles_tree_needs(
     entry = _tree_item(tree_after_delete.json(), dependent_id)
     assert entry["needs"] == ["target-two"]
     assert entry["needs_edges"] == [
-        {"id": second_edge.json()["id"], "slug": "target-two"}
+        {
+            "id": second_edge.json()["id"],
+            "slug": "target-two",
+            "automatic_chain": False,
+        }
     ]
 
 
@@ -597,14 +860,14 @@ async def test_deleted_dependency_does_not_reappear_after_later_edits(
 
         assert created.status_code == 200
         assert deleted.status_code == 200
-        assert _dependency_rows(fresh_db) == []
+        assert _user_edges(fresh_db) == set()
 
         patched = await _patch(client, ids["A"], {"title": "A renamed"})
         moved = await _move(client, ids["B2"], {"new_parent_id": None})
 
     assert patched.status_code == 200
     assert moved.status_code == 200
-    assert _dependency_rows(fresh_db) == []
+    assert _user_edges(fresh_db) == set()
 
 
 @pytest.mark.anyio
@@ -643,16 +906,16 @@ async def test_outline_leaf_children_chain_but_root_siblings_stay_independent(
 async def test_explicit_leaf_dependency_blocks_until_target_done(fresh_db) -> None:
     """A leaf-to-leaf dependency gates only the depending leaf."""
     async with _client() as client:
-        ids = await _build_outline(client)
+        ids = await _build_cross_product_pair(client)
 
-        _insert_explicit_edge(fresh_db, ids["B2"], ids["B1"])
+        _insert_explicit_edge(fresh_db, ids["X"], ids["deploy_db"])
 
-        assert _actionable(fresh_db) == {ids["A"], ids["B1"], ids["C"]}
+        assert _actionable(fresh_db) == {ids["deploy_db"]}
 
-        done = await _patch(client, ids["B1"], {"state": "done"})
+        done = await _patch(client, ids["deploy_db"], {"state": "done"})
         assert done.status_code == 200
 
-    assert _actionable(fresh_db) == {ids["A"], ids["B2"], ids["C"]}
+    assert _actionable(fresh_db) == {ids["X"]}
 
 
 @pytest.mark.anyio
@@ -697,19 +960,21 @@ async def test_structural_edits_preserve_explicit_edge_identity(fresh_db) -> Non
     async with _client() as client:
         a = await _create(client, {"title": "a"})
         b = await _create(client, {"title": "b"})
+        z = await _create(client, {"title": "z"})
         destination = await _create(client, {"title": "destination"})
         a_id = a.json()["id"]
         b_id = b.json()["id"]
+        z_id = z.json()["id"]
         destination_id = destination.json()["id"]
 
-        edge_id = _insert_explicit_edge(fresh_db, b_id, a_id)
+        edge_id = _insert_explicit_edge(fresh_db, b_id, z_id)
 
         indented = await _indent(client, b_id)
         assert indented.status_code == 200
         assert indented.json()["id"] == b_id
         assert indented.json()["parent_id"] == a_id
         assert _dependency_rows(fresh_db) == [
-            {"id": edge_id, "from_id": b_id, "to_id": a_id, "kind": "explicit"}
+            {"id": edge_id, "from_id": b_id, "to_id": z_id, "kind": "explicit"}
         ]
 
         outdented = await _outdent(client, b_id)
@@ -717,7 +982,7 @@ async def test_structural_edits_preserve_explicit_edge_identity(fresh_db) -> Non
         assert outdented.json()["id"] == b_id
         assert outdented.json()["parent_id"] is None
         assert _dependency_rows(fresh_db) == [
-            {"id": edge_id, "from_id": b_id, "to_id": a_id, "kind": "explicit"}
+            {"id": edge_id, "from_id": b_id, "to_id": z_id, "kind": "explicit"}
         ]
 
         moved = await _move(client, b_id, {"new_parent_id": destination_id})
@@ -726,7 +991,7 @@ async def test_structural_edits_preserve_explicit_edge_identity(fresh_db) -> Non
     assert moved.json()["id"] == b_id
     assert moved.json()["parent_id"] == destination_id
     assert _dependency_rows(fresh_db) == [
-        {"id": edge_id, "from_id": b_id, "to_id": a_id, "kind": "explicit"}
+        {"id": edge_id, "from_id": b_id, "to_id": z_id, "kind": "explicit"}
     ]
 
 

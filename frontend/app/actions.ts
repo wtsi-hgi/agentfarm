@@ -110,6 +110,10 @@ export type ChangesInput = {
   between?: readonly [string, string] | string | null
 }
 
+type MutationOptions = {
+  revalidate?: boolean
+}
+
 const PRIMARY_PATH = '/'
 
 function statusFromError(error: unknown): number | null {
@@ -156,10 +160,13 @@ async function authenticatedInit(init: RequestInit): Promise<RequestInit> {
 async function mutation<T>(
   path: string,
   schema: ZodSchema<T>,
-  init: RequestInit
+  init: RequestInit,
+  options: MutationOptions = {}
 ): Promise<T> {
   const result = await backendJson(path, schema, await authenticatedInit(init))
-  revalidatePath(PRIMARY_PATH)
+  if (options.revalidate ?? true) {
+    revalidatePath(PRIMARY_PATH)
+  }
   return result
 }
 
@@ -237,14 +244,17 @@ export async function fetchPriority() {
 }
 
 export async function createItem(input: CreateItemInput) {
-  return mutation('/api/v1/items', itemSchema, jsonInit('POST', input))
+  return mutation('/api/v1/items', itemSchema, jsonInit('POST', input), {
+    revalidate: false,
+  })
 }
 
 export async function patchItem(itemId: string, input: PatchItemInput) {
   return mutation(
     `/api/v1/items/${encodeURIComponent(itemId)}`,
     itemSchema,
-    jsonInit('PATCH', input)
+    jsonInit('PATCH', input),
+    { revalidate: false }
   )
 }
 
