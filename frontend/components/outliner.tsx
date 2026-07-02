@@ -2727,10 +2727,19 @@ export function Outliner({
                           draggingItemId ||
                           event.dataTransfer.getData('text/plain') ||
                           null
-                        const position = dropPosition(event)
+                        const previewDrop =
+                          dragPreview?.draggedItemId === draggedId &&
+                          item.id === draggedId &&
+                          !returningDraggedItem
+                            ? dragPreview
+                            : null
+                        const targetItemId =
+                          previewDrop?.targetItemId ?? item.id
+                        const position =
+                          previewDrop?.position ?? dropPosition(event)
                         clearDragState()
-                        if (draggedId) {
-                          void moveDragged(draggedId, item.id, position)
+                        if (draggedId && !returningDraggedItem) {
+                          void moveDragged(draggedId, targetItemId, position)
                         }
                       }}
                       className={cn(

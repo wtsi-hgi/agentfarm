@@ -969,6 +969,85 @@ describe('Outliner reorder controls', () => {
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
   })
 
+  it('persists a downward drag when the final drop lands on the preview row', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const transfer = dataTransfer()
+    stubRect(secondRow, 100, 160)
+
+    await dispatchDrag(dragHandle(firstRow), 'dragstart', transfer)
+    await dispatchDrag(secondRow, 'dragover', transfer, { clientY: 154 })
+
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+    await dispatchDrag(outlinerItem(container, 'first'), 'drop', transfer, {
+      clientY: 154,
+    })
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
+      new_parent_id: null,
+      position: 'after',
+      after_id: 'second',
+    })
+    expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+  })
+
+  it('persists moving an item into another section when the drop lands on the preview row', async () => {
+    const container = await render([
+      item({
+        id: 'source-section',
+        title: 'Source section',
+        sort_order: 1,
+        actionable: false,
+      }),
+      item({
+        id: 'moving-child',
+        title: 'Moving child',
+        parent_id: 'source-section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'destination-section',
+        title: 'Destination section',
+        sort_order: 2,
+        actionable: false,
+      }),
+    ])
+    const movingRow = outlinerItem(container, 'moving-child')
+    const destinationRow = outlinerItem(container, 'destination-section')
+    const transfer = dataTransfer()
+    stubRect(destinationRow, 100, 160)
+
+    await dispatchDrag(dragHandle(movingRow), 'dragstart', transfer)
+    await dispatchDrag(destinationRow, 'dragover', transfer, { clientY: 130 })
+
+    expect(outlinerItem(container, 'moving-child').dataset.dragPreview).toBe(
+      'true'
+    )
+    expect(renderedItemIds(container)).toEqual([
+      'source-section',
+      'destination-section',
+      'moving-child',
+    ])
+
+    await dispatchDrag(
+      outlinerItem(container, 'moving-child'),
+      'drop',
+      transfer,
+      {
+        clientY: 130,
+      }
+    )
+
+    expect(actionMocks.moveItem).toHaveBeenCalledWith('moving-child', {
+      new_parent_id: 'destination-section',
+      position: 'first',
+    })
+  })
+
   it('previews the dragged row in its landing slot before drop', async () => {
     const container = await renderElement(
       React.createElement(LocalReorderHarness)
