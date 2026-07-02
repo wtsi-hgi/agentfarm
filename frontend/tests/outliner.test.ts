@@ -463,11 +463,126 @@ describe('Outliner', () => {
       visibleOutlinerRows(items, expandedIds, {
         leverageSort: true,
         priorityItems,
+        view: 'up-next',
       })
         .filter((row) => priorityItems.some((item) => item.id === row.item.id))
         .map((row) => row.item.id)
     ).toEqual(['a1', 'b1', 'g1'])
     expect(items).toEqual(before)
+  })
+
+  it('keeps manual tree order when priority ranks prefer different roots, sections, and children', () => {
+    const items = [
+      item({
+        id: 'root-a',
+        title: 'Root A',
+        actionable: false,
+        sort_order: 1,
+      }),
+      item({
+        id: 'root-a-child-one',
+        title: 'Root A child one',
+        parent_id: 'root-a',
+        sort_order: 1,
+      }),
+      item({
+        id: 'root-b',
+        title: 'Root B',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'section-one',
+        title: 'Section one',
+        actionable: false,
+        parent_id: 'root-b',
+        sort_order: 1,
+      }),
+      item({
+        id: 'section-two',
+        title: 'Section two',
+        actionable: false,
+        parent_id: 'root-b',
+        sort_order: 2,
+      }),
+      item({
+        id: 'section-two-child-one',
+        title: 'Section two child one',
+        parent_id: 'section-two',
+        sort_order: 1,
+      }),
+      item({
+        id: 'section-two-child-two',
+        title: 'Section two child two',
+        parent_id: 'section-two',
+        sort_order: 2,
+      }),
+      item({
+        id: 'loose-root-b-child',
+        title: 'Loose root B child',
+        parent_id: 'root-b',
+        sort_order: 3,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(
+        items,
+        new Set(['root-a', 'root-b', 'section-one', 'section-two']),
+        {
+          leverageSort: true,
+          priorityItems: [
+            { id: 'section-two-child-two', rank: 1 },
+            { id: 'loose-root-b-child', rank: 2 },
+            { id: 'root-a-child-one', rank: 3 },
+          ],
+        }
+      ).map((row) => row.item.id)
+    ).toEqual([
+      'root-a',
+      'root-a-child-one',
+      'root-b',
+      'section-one',
+      'section-two',
+      'section-two-child-one',
+      'section-two-child-two',
+      'loose-root-b-child',
+    ])
+  })
+
+  it('keeps a moved completed root section above open roots in Tree when priority data exists', () => {
+    const items = [
+      item({
+        id: 'completed-root',
+        title: 'Completed root section',
+        actionable: false,
+        complete: true,
+        state: 'done',
+        sort_order: 1,
+        completed_at: '2026-06-29T01:00:00.000000Z',
+      }),
+      item({
+        id: 'completed-root-child',
+        title: 'Completed root child',
+        parent_id: 'completed-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'open-root',
+        title: 'Open root',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(['completed-root']), {
+        leverageSort: true,
+        priorityItems: [
+          { id: 'open-root', rank: 1 },
+          { id: 'completed-root-child', rank: 2 },
+        ],
+      }).map((row) => row.item.id)
+    ).toEqual(['completed-root', 'completed-root-child', 'open-root'])
   })
 
   it('keeps a section leaf chain in sort order during priority projection', () => {
@@ -503,7 +618,7 @@ describe('Outliner', () => {
     ).toEqual(['section', 'first', 'second'])
   })
 
-  it('keeps done rows at the end of priority projection without breaking a section chain', () => {
+  it('keeps done rows out of up-next priority projection without breaking section context', () => {
     const items = [
       item({
         id: 'section',
@@ -542,8 +657,9 @@ describe('Outliner', () => {
           { id: 'ready', rank: 2 },
           { id: 'second', rank: 3 },
         ],
+        view: 'up-next',
       }).map((row) => row.item.id)
-    ).toEqual(['ready', 'section', 'first', 'second'])
+    ).toEqual(['ready', 'section', 'second'])
   })
 
   it('ignores a section stored abandoned state for marker filtering and priority projection', () => {
@@ -592,7 +708,7 @@ describe('Outliner', () => {
     ).toEqual(['section', 'urgent-child', 'ready-root'])
   })
 
-  it('ranks unranked done rows after unranked not-done rows in priority projection', () => {
+  it('keeps manual root order in Tree when an unranked done row precedes an open row', () => {
     const items = [
       item({
         id: 'done',
@@ -614,7 +730,7 @@ describe('Outliner', () => {
         leverageSort: true,
         priorityItems: [],
       }).map((row) => row.item.id)
-    ).toEqual(['open', 'done'])
+    ).toEqual(['done', 'open'])
   })
 
   it('keeps collapsed child data available for expansion', () => {

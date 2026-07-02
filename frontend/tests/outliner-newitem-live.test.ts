@@ -1379,7 +1379,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(actionMocks.patchItem).toHaveBeenCalledWith('review-row', {
       state: 'done',
     })
-    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
     expect(getItemCheckbox(container, 'review-row').checked).toBe(true)
     expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
       'done'
@@ -1841,7 +1841,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('lets a recreated sibling id use normal root ordering after its local anchor is pruned', async () => {
+  it('lets a recreated sibling id use manual root ordering after its local anchor is pruned', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1878,8 +1878,8 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Restore created sibling from server'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'created-root-sibling',
+      'priority-anchor',
       'completed-root',
       'completed-child',
     ])

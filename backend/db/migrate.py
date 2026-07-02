@@ -114,7 +114,16 @@ def _run_once(
     if existing is not None:
         return
     callback(conn)
-    conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (migration_id,))
+    if "applied_at" in _columns(conn, "schema_migrations"):
+        conn.execute(
+            """
+            INSERT INTO schema_migrations (id, applied_at)
+            VALUES (?, CURRENT_TIMESTAMP)
+            """,
+            (migration_id,),
+        )
+    else:
+        conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (migration_id,))
 
 
 def apply_migrations(db_path: Path | str | None = None) -> None:

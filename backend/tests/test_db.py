@@ -323,6 +323,36 @@ def test_migration_backfills_automatic_leaf_chain_once(tmp_path) -> None:
     assert [row["id"] for row in migrations] == ["20260701_automatic_sibling_chain"]
 
 
+def test_migration_records_run_once_marker_in_legacy_timestamped_table(
+    tmp_path,
+) -> None:
+    """Existing DBs may have a non-null timestamp on migration markers."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+              id TEXT PRIMARY KEY,
+              applied_at TEXT NOT NULL
+            )
+            """
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, applied_at
+            FROM schema_migrations
+            WHERE id = '20260701_automatic_sibling_chain'
+            """
+        ).fetchone()
+
+    assert row is not None
+    assert row["applied_at"]
+
+
 def test_connection_has_foreign_keys_enabled(tmp_path) -> None:
     """Every connection enforces PRAGMA foreign_keys = ON (default is OFF)."""
     db_path = tmp_path / "agentfarm.db"

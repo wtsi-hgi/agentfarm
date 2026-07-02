@@ -1013,6 +1013,7 @@ function makeChildMap(
 
   const priorityRanks = makePriorityRanks(order.priorityItems)
   const view = order.view ?? 'tree'
+  const usePriorityRanks = order.leverageSort === true && view !== 'tree'
   const bestRankCache = new Map<string, number>()
 
   function bestPriorityRank(item: TreeItem): number {
@@ -1182,10 +1183,12 @@ function makeChildMap(
 
   function sortSectionUnits(units: TreeItem[][]) {
     units.sort((a, b) => {
-      const rankA = unitPriorityRank(a)
-      const rankB = unitPriorityRank(b)
-      if (rankA !== rankB) {
-        return rankA - rankB
+      if (usePriorityRanks) {
+        const rankA = unitPriorityRank(a)
+        const rankB = unitPriorityRank(b)
+        if (rankA !== rankB) {
+          return rankA - rankB
+        }
       }
 
       const completeOrder = unitDoneOrder(a, b)
@@ -1211,10 +1214,16 @@ function makeChildMap(
     }
 
     if (parentId === null) {
-      siblings.sort(priorityOrder)
+      siblings.sort(usePriorityRanks ? priorityOrder : treeOrder)
       if (view === 'tree') {
         applyLocalSiblingAnchors(siblings)
       }
+      applyExplicitSectionDependencyOrder(siblings)
+      continue
+    }
+
+    if (!usePriorityRanks) {
+      siblings.sort(treeOrder)
       applyExplicitSectionDependencyOrder(siblings)
       continue
     }

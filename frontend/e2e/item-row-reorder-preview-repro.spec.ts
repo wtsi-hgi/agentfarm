@@ -6,6 +6,7 @@ import {
   test,
   type APIRequestContext,
   type Page,
+  type TestInfo,
 } from '@playwright/test'
 
 import { deleteBackendItem, gotoPath, signInAs } from './helpers'
@@ -20,6 +21,10 @@ const arrowsScreenshotPath = path.join(
 const dragPreviewScreenshotPath = path.join(
   screenshotDir,
   'item-row-drag-preview-repro.png'
+)
+const moveAnywhereScreenshotPath = path.join(
+  screenshotDir,
+  'item-row-move-anywhere-repro.png'
 )
 
 type ItemSummary = {
@@ -124,6 +129,23 @@ async function backendFixtureTitles(
     .map((item) => item.title)
 }
 
+async function backendFixtureTree(
+  request: APIRequestContext,
+  sessionToken: string,
+  titlePrefix: string
+): Promise<TreeItemSummary[]> {
+  const response = await request.get(`${backendBaseUrl}/api/v1/tree`, {
+    headers: {
+      'x-agentfarm-session': sessionToken,
+    },
+  })
+  const body = await response.text()
+  expect(response.ok(), body).toBeTruthy()
+  return (JSON.parse(body) as TreeItemSummary[]).filter((item) =>
+    item.title.startsWith(titlePrefix)
+  )
+}
+
 async function fixtureArrowCounts(
   page: Page,
   titlePrefix: string
@@ -216,6 +238,47 @@ async function dragPreviewOver(
   return dataTransfer
 }
 
+async function dragRowWithPointer(
+  page: Page,
+  draggedItemId: string,
+  targetItemId: string,
+  zone: 'after' | 'before' | 'inside'
+) {
+  const targetRow = itemRow(page, targetItemId)
+  await targetRow.scrollIntoViewIfNeeded()
+  const targetBox = await targetRow.boundingBox()
+  if (!targetBox) {
+    throw new Error(`Expected target row ${targetItemId} to be visible`)
+  }
+
+  const targetY =
+    zone === 'before'
+      ? Math.max(4, targetBox.height * 0.1)
+      : zone === 'inside'
+        ? targetBox.height / 2
+        : Math.max(4, targetBox.height - targetBox.height * 0.1)
+
+  await itemRow(page, draggedItemId)
+    .getByRole('button', { name: 'Drag item' })
+    .dragTo(targetRow, {
+      force: true,
+      sourcePosition: { x: 8, y: 8 },
+      targetPosition: {
+        x: Math.min(180, Math.max(8, targetBox.width / 2)),
+        y: targetY,
+      },
+    })
+}
+
+async function captureMoveAnywhereRepro(page: Page, testInfo: TestInfo) {
+  await mkdir(screenshotDir, { recursive: true })
+  await page.screenshot({ path: moveAnywhereScreenshotPath, fullPage: true })
+  await testInfo.attach('move anywhere drag repro', {
+    path: moveAnywhereScreenshotPath,
+    contentType: 'image/png',
+  })
+}
+
 async function endDrag(
   page: Page,
   draggedItemId: string,
@@ -230,7 +293,251 @@ function titles(rows: readonly RowSnapshot[]): string[] {
   return rows.map((row) => row.title)
 }
 
+async function expectBackendFixtureTree(
+  request: APIRequestContext,
+  sessionToken: string,
+  titlePrefix: string,
+  expected: { parent_id: string | null; title: string }[],
+  message: string
+) {
+  await expect
+    .poll(
+      async () =>
+        (await backendFixtureTree(request, sessionToken, titlePrefix)).map(
+          (entry) => ({
+            parent_id: entry.parent_id,
+            title: entry.title,
+          })
+        ),
+      { message }
+    )
+    .toEqual(expected)
+}
+
 test.describe('item row reorder affordance', () => {
+  test('moves rows anywhere through the visible drag handle', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Move anywhere drag ${Date.now()}`
+    let rootA: ItemSummary | undefined
+    let rootB: ItemSummary | undefined
+
+    try {
+      rootA = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} root A`,
+      })
+      const rootChildOne = await createBackendItem(request, sessionToken, {
+        parent_id: rootA.id,
+        title: `${titlePrefix} root child one`,
+      })
+      const rootChildTwo = await createBackendItem(request, sessionToken, {
+        after_id: rootChildOne.id,
+        parent_id: rootA.id,
+        title: `${titlePrefix} root child two`,
+      })
+      const rootChildThree = await createBackendItem(request, sessionToken, {
+        after_id: rootChildTwo.id,
+        parent_id: rootA.id,
+        title: `${titlePrefix} root child three`,
+      })
+      rootB = await createBackendItem(request, sessionToken, {
+        after_id: rootA.id,
+        title: `${titlePrefix} root B`,
+      })
+      const sectionOne = await createBackendItem(request, sessionToken, {
+        parent_id: rootB.id,
+        title: `${titlePrefix} section one`,
+      })
+      const sectionOneChild = await createBackendItem(request, sessionToken, {
+        parent_id: sectionOne.id,
+        title: `${titlePrefix} section one child`,
+      })
+      const sectionTwo = await createBackendItem(request, sessionToken, {
+        after_id: sectionOne.id,
+        parent_id: rootB.id,
+        title: `${titlePrefix} section two`,
+      })
+      const sectionTailAnchor = await createBackendItem(request, sessionToken, {
+        after_id: sectionTwo.id,
+        parent_id: rootB.id,
+        title: `Move anywhere unfiltered anchor ${Date.now()}`,
+      })
+      const sectionTwoChild = await createBackendItem(request, sessionToken, {
+        parent_id: sectionTwo.id,
+        title: `${titlePrefix} section two child`,
+      })
+      const looseSectionChild = await createBackendItem(request, sessionToken, {
+        after_id: sectionTwoChild.id,
+        parent_id: sectionTwo.id,
+        title: `${titlePrefix} loose section child`,
+      })
+
+      await gotoPath(page, '/')
+      await expect(
+        itemRow(page, rootChildThree.id).getByRole('textbox', {
+          name: 'Item text',
+        })
+      ).toHaveValue(rootChildThree.title)
+      await expect(
+        itemRow(page, looseSectionChild.id).getByRole('textbox', {
+          name: 'Item text',
+        })
+      ).toHaveValue(looseSectionChild.title)
+
+      await dragRowWithPointer(
+        page,
+        rootChildThree.id,
+        rootChildOne.id,
+        'before'
+      )
+      await expectBackendFixtureTree(
+        request,
+        sessionToken,
+        titlePrefix,
+        [
+          { parent_id: null, title: rootA.title },
+          { parent_id: rootA.id, title: rootChildThree.title },
+          { parent_id: rootA.id, title: rootChildOne.title },
+          { parent_id: rootA.id, title: rootChildTwo.title },
+          { parent_id: null, title: rootB.title },
+          { parent_id: rootB.id, title: sectionOne.title },
+          { parent_id: sectionOne.id, title: sectionOneChild.title },
+          { parent_id: rootB.id, title: sectionTwo.title },
+          { parent_id: sectionTwo.id, title: sectionTwoChild.title },
+          { parent_id: sectionTwo.id, title: looseSectionChild.title },
+        ],
+        'upward drag should persist before the next browser gesture starts'
+      )
+
+      await dragRowWithPointer(page, rootChildOne.id, rootChildTwo.id, 'after')
+      await expectBackendFixtureTree(
+        request,
+        sessionToken,
+        titlePrefix,
+        [
+          { parent_id: null, title: rootA.title },
+          { parent_id: rootA.id, title: rootChildThree.title },
+          { parent_id: rootA.id, title: rootChildTwo.title },
+          { parent_id: rootA.id, title: rootChildOne.title },
+          { parent_id: null, title: rootB.title },
+          { parent_id: rootB.id, title: sectionOne.title },
+          { parent_id: sectionOne.id, title: sectionOneChild.title },
+          { parent_id: rootB.id, title: sectionTwo.title },
+          { parent_id: sectionTwo.id, title: sectionTwoChild.title },
+          { parent_id: sectionTwo.id, title: looseSectionChild.title },
+        ],
+        'downward drag should persist before the next browser gesture starts'
+      )
+
+      await dragRowWithPointer(
+        page,
+        sectionOneChild.id,
+        sectionTwo.id,
+        'inside'
+      )
+      await expectBackendFixtureTree(
+        request,
+        sessionToken,
+        titlePrefix,
+        [
+          { parent_id: null, title: rootA.title },
+          { parent_id: rootA.id, title: rootChildThree.title },
+          { parent_id: rootA.id, title: rootChildTwo.title },
+          { parent_id: rootA.id, title: rootChildOne.title },
+          { parent_id: null, title: rootB.title },
+          { parent_id: rootB.id, title: sectionOne.title },
+          { parent_id: rootB.id, title: sectionTwo.title },
+          { parent_id: sectionTwo.id, title: sectionOneChild.title },
+          { parent_id: sectionTwo.id, title: sectionTwoChild.title },
+          { parent_id: sectionTwo.id, title: looseSectionChild.title },
+        ],
+        'cross-section inside drag should persist before the next browser gesture starts'
+      )
+
+      await dragRowWithPointer(
+        page,
+        looseSectionChild.id,
+        sectionTailAnchor.id,
+        'before'
+      )
+      await expectBackendFixtureTree(
+        request,
+        sessionToken,
+        titlePrefix,
+        [
+          { parent_id: null, title: rootA.title },
+          { parent_id: rootA.id, title: rootChildThree.title },
+          { parent_id: rootA.id, title: rootChildTwo.title },
+          { parent_id: rootA.id, title: rootChildOne.title },
+          { parent_id: null, title: rootB.title },
+          { parent_id: rootB.id, title: sectionOne.title },
+          { parent_id: rootB.id, title: sectionTwo.title },
+          { parent_id: sectionTwo.id, title: sectionOneChild.title },
+          { parent_id: sectionTwo.id, title: sectionTwoChild.title },
+          { parent_id: rootB.id, title: looseSectionChild.title },
+        ],
+        'out-to-section-sibling drag should persist before the next browser gesture starts'
+      )
+
+      await dragRowWithPointer(
+        page,
+        rootChildTwo.id,
+        sectionTwoChild.id,
+        'before'
+      )
+
+      await captureMoveAnywhereRepro(page, testInfo)
+
+      await expectBackendFixtureTree(
+        request,
+        sessionToken,
+        titlePrefix,
+        [
+          { parent_id: null, title: rootA.title },
+          { parent_id: rootA.id, title: rootChildThree.title },
+          { parent_id: rootA.id, title: rootChildOne.title },
+          { parent_id: null, title: rootB.title },
+          { parent_id: rootB.id, title: sectionOne.title },
+          { parent_id: rootB.id, title: sectionTwo.title },
+          { parent_id: sectionTwo.id, title: sectionOneChild.title },
+          { parent_id: sectionTwo.id, title: rootChildTwo.title },
+          { parent_id: sectionTwo.id, title: sectionTwoChild.title },
+          { parent_id: rootB.id, title: looseSectionChild.title },
+        ],
+        'drag handles should persist upward, downward, cross-section, out-to-root, and cross-level moves'
+      )
+
+      await page.reload()
+      await expect
+        .poll(async () => titles(await fixtureRows(page, titlePrefix)), {
+          message:
+            'a fresh render should show the browser-dragged hierarchy in persisted order',
+        })
+        .toEqual([
+          rootA.title,
+          rootChildThree.title,
+          rootChildOne.title,
+          rootB.title,
+          sectionOne.title,
+          sectionTwo.title,
+          sectionOneChild.title,
+          rootChildTwo.title,
+          sectionTwoChild.title,
+          looseSectionChild.title,
+        ])
+    } finally {
+      if (rootB) {
+        await deleteBackendItem(request, sessionToken, rootB.id)
+      }
+      if (rootA) {
+        await deleteBackendItem(request, sessionToken, rootA.id)
+      }
+    }
+  })
+
   test('uses drag handles without row arrows and previews the landing slot', async ({
     page,
     request,
