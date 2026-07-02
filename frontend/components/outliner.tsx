@@ -2866,7 +2866,6 @@ export function Outliner({
     const returnsToOrigin =
       currentDragPreview !== null &&
       dragPreviewReturnsToOrigin(currentDragPreview)
-    suppressNextNativeDropRef.current = true
     clearDragState()
     if (currentDragPreview && !returnsToOrigin) {
       void moveDragged(
@@ -2960,7 +2959,6 @@ export function Outliner({
         mouseEvent.clientY
       )
       if (dependencyDropTarget) {
-        suppressNextNativeDropRef.current = true
         clearDragState()
         if (dependencyDropTarget.valid) {
           void addExplicitDependency(
