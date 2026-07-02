@@ -322,6 +322,25 @@ async function dispatchDrag(
   await flushReact()
 }
 
+async function dispatchMouse(
+  target: EventTarget,
+  type: string,
+  init: { button?: number; clientX?: number; clientY?: number } = {}
+) {
+  await act(async () => {
+    target.dispatchEvent(
+      new MouseEvent(type, {
+        bubbles: true,
+        button: init.button ?? 0,
+        cancelable: true,
+        clientX: init.clientX ?? 0,
+        clientY: init.clientY ?? 0,
+      })
+    )
+  })
+  await flushReact()
+}
+
 function stubRect(element: HTMLElement, top: number, bottom: number) {
   const rect = {
     x: 0,
@@ -339,6 +358,42 @@ function stubRect(element: HTMLElement, top: number, bottom: number) {
     configurable: true,
     value: () => rect,
   })
+}
+
+function stubElementsFromPoint(
+  elementsAtPoint: (clientX: number, clientY: number) => Element[]
+) {
+  const hadOwnElementsFromPoint = Object.prototype.hasOwnProperty.call(
+    document,
+    'elementsFromPoint'
+  )
+  const hadElementsFromPoint = 'elementsFromPoint' in document
+  const originalElementsFromPoint = document.elementsFromPoint
+
+  Object.defineProperty(document, 'elementsFromPoint', {
+    configurable: true,
+    value: vi.fn((clientX: number, clientY: number) =>
+      elementsAtPoint(clientX, clientY)
+    ),
+  })
+
+  return () => {
+    if (hadOwnElementsFromPoint) {
+      Object.defineProperty(document, 'elementsFromPoint', {
+        configurable: true,
+        value: originalElementsFromPoint,
+      })
+      return
+    }
+
+    Reflect.deleteProperty(document, 'elementsFromPoint')
+    if (hadElementsFromPoint && !('elementsFromPoint' in document)) {
+      Object.defineProperty(document, 'elementsFromPoint', {
+        configurable: true,
+        value: originalElementsFromPoint,
+      })
+    }
+  }
 }
 
 describe('Outliner reorder controls', () => {
@@ -993,6 +1048,52 @@ describe('Outliner reorder controls', () => {
       after_id: 'second',
     })
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+  })
+
+  it('keeps reordering when a coordinate drag crosses an invalid dependency target', async () => {
+    const container = await renderElement(
+      React.createElement(LocalReorderHarness)
+    )
+    const firstRow = outlinerItem(container, 'first')
+    const secondRow = outlinerItem(container, 'second')
+    const thirdRow = outlinerItem(container, 'third')
+    const firstDragHandle = dragHandle(firstRow)
+    const invalidDependencyTarget = labelledElement(
+      getDetailsPanel(container),
+      'Add dependency'
+    )
+    stubRect(firstRow, 100, 140)
+    stubRect(secondRow, 150, 190)
+    stubRect(thirdRow, 200, 240)
+    const restoreElementsFromPoint = stubElementsFromPoint((clientX) =>
+      clientX >= 400 ? [invalidDependencyTarget] : [firstDragHandle]
+    )
+
+    try {
+      await dispatchMouse(firstDragHandle, 'mousedown', {
+        clientX: 10,
+        clientY: 120,
+      })
+      await dispatchMouse(window, 'mousemove', { clientX: 10, clientY: 128 })
+      await dispatchMouse(window, 'mousemove', { clientX: 10, clientY: 185 })
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+      await dispatchMouse(window, 'mousemove', { clientX: 500, clientY: 185 })
+      expect(actionMocks.addDependency).not.toHaveBeenCalled()
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+
+      await dispatchMouse(window, 'mouseup', { clientX: 500, clientY: 185 })
+
+      expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
+        new_parent_id: null,
+        position: 'after',
+        after_id: 'second',
+      })
+      expect(actionMocks.addDependency).not.toHaveBeenCalled()
+      expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
+    } finally {
+      restoreElementsFromPoint()
+    }
   })
 
   it('persists moving an item into another section when the drop lands on the preview row', async () => {

@@ -2778,7 +2778,7 @@ export function Outliner({
       clientY
     )
     setCoordinateDependencyDropActive(Boolean(dependencyDropTarget?.valid))
-    return dependencyDropTarget
+    return dependencyDropTarget?.valid ? dependencyDropTarget : null
   }
 
   function updatePointerDragPreview(
