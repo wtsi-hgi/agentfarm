@@ -36,6 +36,12 @@ EXPECTED_INDEXES = {
     "idx_dependencies_to",
     "idx_dependencies_kind_from",
     "idx_dependencies_auto_chain_from",
+    "idx_item_notes_item_created",
+    "idx_prompt_response_entries_item_created",
+}
+EXPECTED_INDEX_COLUMNS = {
+    "idx_item_notes_item_created": ["item_id", "created_at", "id"],
+    "idx_prompt_response_entries_item_created": ["item_id", "created_at", "id"],
 }
 
 
@@ -59,6 +65,13 @@ def _index_names(db_path: Path) -> set[str]:
             """
         ).fetchall()
     return {row["name"] for row in rows}
+
+
+def _index_columns(db_path: Path, index_name: str) -> list[str]:
+    """Return the indexed columns for ``index_name`` in order."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(f"PRAGMA index_info({index_name})").fetchall()
+    return [row["name"] for row in rows]
 
 
 def _insert_item(conn: sqlite3.Connection, item_id: str) -> None:
@@ -117,6 +130,10 @@ def test_migration_creates_projection_indexes(tmp_path) -> None:
     apply_migrations(db_path)
 
     assert _index_names(db_path) == EXPECTED_INDEXES
+    assert {
+        index_name: _index_columns(db_path, index_name)
+        for index_name in EXPECTED_INDEX_COLUMNS
+    } == EXPECTED_INDEX_COLUMNS
 
 
 def test_migration_creates_parent_directory(tmp_path) -> None:

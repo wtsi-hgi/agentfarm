@@ -1,18 +1,7 @@
-import { mkdir } from 'node:fs/promises'
-import path from 'node:path'
-
 import { expect, test, type APIRequestContext } from '@playwright/test'
 
 import { createItem, gotoPath, signInAs } from './helpers'
 
-const itemCountSectionScreenshotPath = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '.tmp',
-  'agent',
-  'item-count-section-repro.png'
-)
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 
@@ -132,7 +121,7 @@ test.describe('Agent Farm app shell', () => {
   test('counts only leaf items in the app shell item metric', async ({
     page,
     request,
-  }) => {
+  }, testInfo) => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Item count section repro ${Date.now()}`
     const section = await createItem(
@@ -165,12 +154,14 @@ test.describe('Agent Farm app shell', () => {
       ).toBeVisible()
       await expect(itemMetric).toBeVisible()
 
-      await mkdir(path.dirname(itemCountSectionScreenshotPath), {
-        recursive: true,
-      })
+      const screenshotPath = testInfo.outputPath('item-count-section-repro.png')
       await page.screenshot({
         fullPage: true,
-        path: itemCountSectionScreenshotPath,
+        path: screenshotPath,
+      })
+      await testInfo.attach('item-count-section-repro', {
+        path: screenshotPath,
+        contentType: 'image/png',
       })
 
       await expect(itemMetric).toHaveText(String(expectedLeafItemCount))
