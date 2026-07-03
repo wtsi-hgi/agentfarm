@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Scratchpad } from '@/components/scratchpad'
 import type { Scratchpad as ScratchpadState } from '@/lib/contracts'
+import { SCRATCHPAD_MIN_HEIGHT } from '@/lib/scratchpad'
 
 const actionMocks = vi.hoisted(() => ({
   updateScratchpad: vi.fn(),
@@ -144,6 +145,19 @@ async function pointerDragVertically(
   await flushReact()
 }
 
+async function beginPointerResize(element: HTMLElement, startY: number) {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientY: startY,
+      })
+    )
+  })
+  await flushReact()
+}
+
 function notifyResizeObservers() {
   for (const resizeObserver of activeResizeObservers) {
     resizeObserver.notify()
@@ -253,5 +267,31 @@ describe('Scratchpad', () => {
     expect(
       document.documentElement.style.getPropertyValue(reservedSpaceProperty)
     ).toBe('310px')
+  })
+
+  it('opens a minimized scratchpad at the resize baseline before dragging', async () => {
+    const initialScratchpad = {
+      body: 'Owner scratch',
+      height: 310,
+      minimized: true,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:00:00.000000Z',
+    } satisfies ScratchpadState
+    const container = await render(
+      React.createElement(Scratchpad, {
+        docked: true,
+        editable: true,
+        initialScratchpad,
+      })
+    )
+    const scratchpad = container.querySelector('[data-scratchpad-panel="true"]')
+    if (!(scratchpad instanceof HTMLElement)) {
+      throw new Error('Missing scratchpad panel')
+    }
+
+    await beginPointerResize(getButton(container, 'Resize scratch pad'), 300)
+
+    expect(scratchpad.dataset.scratchpadMinimized).toBe('false')
+    expect(scratchpad.style.height).toBe(`${SCRATCHPAD_MIN_HEIGHT}px`)
   })
 })

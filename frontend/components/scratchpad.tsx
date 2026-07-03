@@ -269,6 +269,9 @@ export function Scratchpad({
     event.preventDefault()
     const startY = event.clientY
     const startHeight = minimized ? SCRATCHPAD_MIN_HEIGHT : height
+    if (minimized) {
+      setHeight(startHeight)
+    }
     setMinimized(false)
 
     function handlePointerMove(pointerEvent: PointerEvent) {
