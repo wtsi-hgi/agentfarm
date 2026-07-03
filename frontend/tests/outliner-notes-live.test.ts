@@ -205,6 +205,29 @@ async function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
   await flushReact()
 }
 
+function pointerEvent(type: string, init: PointerEventInit) {
+  if (typeof PointerEvent === 'function') {
+    return new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      ...init,
+    })
+  }
+
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: init.button,
+    clientY: init.clientY,
+  }) as PointerEvent
+  Object.defineProperty(event, 'pointerId', {
+    configurable: true,
+    value: init.pointerId ?? 1,
+  })
+  return event
+}
+
 async function pointerDragVertically(
   element: HTMLElement,
   startY: number,
@@ -212,22 +235,22 @@ async function pointerDragVertically(
 ) {
   await act(async () => {
     element.dispatchEvent(
-      new MouseEvent('pointerdown', {
-        bubbles: true,
+      pointerEvent('pointerdown', {
         button: 0,
         clientY: startY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointermove', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
         clientY: endY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointerup', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointerup', {
         clientY: endY,
+        pointerId: 1,
       })
     )
   })
@@ -242,28 +265,28 @@ async function pointerCancelAfterVerticalResize(
 ) {
   await act(async () => {
     element.dispatchEvent(
-      new MouseEvent('pointerdown', {
-        bubbles: true,
+      pointerEvent('pointerdown', {
         button: 0,
         clientY: startY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointermove', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
         clientY: moveY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointercancel', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointercancel', {
         clientY: moveY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointermove', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
         clientY: afterCancelY,
+        pointerId: 1,
       })
     )
   })

@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Scratchpad } from '@/components/scratchpad'
 import type { Scratchpad as ScratchpadState } from '@/lib/contracts'
-import { SCRATCHPAD_MIN_HEIGHT } from '@/lib/scratchpad'
+import {
+  SCRATCHPAD_MIN_HEIGHT,
+  SCRATCHPAD_SAVE_DELAY_MS,
+} from '@/lib/scratchpad'
 
 const actionMocks = vi.hoisted(() => ({
   updateScratchpad: vi.fn(),
@@ -116,6 +119,29 @@ async function click(element: HTMLElement) {
   await flushReact()
 }
 
+function pointerEvent(type: string, init: PointerEventInit) {
+  if (typeof PointerEvent === 'function') {
+    return new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      ...init,
+    })
+  }
+
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: init.button,
+    clientY: init.clientY,
+  }) as PointerEvent
+  Object.defineProperty(event, 'pointerId', {
+    configurable: true,
+    value: init.pointerId ?? 1,
+  })
+  return event
+}
+
 async function pointerDragVertically(
   element: HTMLElement,
   startY: number,
@@ -123,22 +149,22 @@ async function pointerDragVertically(
 ) {
   await act(async () => {
     element.dispatchEvent(
-      new MouseEvent('pointerdown', {
-        bubbles: true,
+      pointerEvent('pointerdown', {
         button: 0,
         clientY: startY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointermove', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
         clientY: endY,
+        pointerId: 1,
       })
     )
-    window.dispatchEvent(
-      new MouseEvent('pointerup', {
-        bubbles: true,
+    element.dispatchEvent(
+      pointerEvent('pointerup', {
         clientY: endY,
+        pointerId: 1,
       })
     )
   })
@@ -148,10 +174,46 @@ async function pointerDragVertically(
 async function beginPointerResize(element: HTMLElement, startY: number) {
   await act(async () => {
     element.dispatchEvent(
-      new MouseEvent('pointerdown', {
-        bubbles: true,
+      pointerEvent('pointerdown', {
         button: 0,
         clientY: startY,
+        pointerId: 1,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function pointerCancelAfterVerticalResize(
+  element: HTMLElement,
+  startY: number,
+  moveY: number,
+  afterCancelY: number
+) {
+  await act(async () => {
+    element.dispatchEvent(
+      pointerEvent('pointerdown', {
+        button: 0,
+        clientY: startY,
+        pointerId: 1,
+      })
+    )
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
+        clientY: moveY,
+        pointerId: 1,
+      })
+    )
+    element.dispatchEvent(
+      pointerEvent('pointercancel', {
+        clientY: moveY,
+        pointerId: 1,
+      })
+    )
+    element.dispatchEvent(
+      pointerEvent('pointermove', {
+        clientY: afterCancelY,
+        pointerId: 1,
       })
     )
   })
@@ -293,5 +355,82 @@ describe('Scratchpad', () => {
 
     expect(scratchpad.dataset.scratchpadMinimized).toBe('false')
     expect(scratchpad.style.height).toBe(`${SCRATCHPAD_MIN_HEIGHT}px`)
+  })
+
+  it('stops resizing after pointer cancellation', async () => {
+    const initialScratchpad = {
+      body: 'Owner scratch',
+      height: 240,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:00:00.000000Z',
+    } satisfies ScratchpadState
+    const container = await render(
+      React.createElement(Scratchpad, {
+        docked: true,
+        editable: true,
+        initialScratchpad,
+      })
+    )
+    const scratchpad = container.querySelector('[data-scratchpad-panel="true"]')
+    if (!(scratchpad instanceof HTMLElement)) {
+      throw new Error('Missing scratchpad panel')
+    }
+
+    await pointerCancelAfterVerticalResize(
+      getButton(container, 'Resize scratch pad'),
+      300,
+      230,
+      100
+    )
+
+    expect(scratchpad.style.height).toBe('310px')
+  })
+
+  it('autosaves owner scratchpad resize changes', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Owner scratch',
+        height: input.height ?? 240,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+    const initialScratchpad = {
+      body: 'Owner scratch',
+      height: 240,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:00:00.000000Z',
+    } satisfies ScratchpadState
+    const container = await render(
+      React.createElement(Scratchpad, {
+        docked: true,
+        editable: true,
+        initialScratchpad,
+      })
+    )
+
+    await pointerDragVertically(
+      getButton(container, 'Resize scratch pad'),
+      300,
+      230
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Owner scratch',
+      height: 310,
+      minimized: false,
+    })
   })
 })

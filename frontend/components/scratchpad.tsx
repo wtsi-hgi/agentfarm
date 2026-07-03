@@ -33,6 +33,12 @@ type DockedFrame = {
   right: number
 }
 
+type ResizeDrag = {
+  pointerId: number
+  startHeight: number
+  startY: number
+}
+
 function clampHeight(height: number): number {
   return Math.min(
     SCRATCHPAD_MAX_HEIGHT,
@@ -56,12 +62,43 @@ function statusLabel(editable: boolean, saveStatus: SaveStatus): string | null {
   return null
 }
 
+function captureResizePointer(handle: HTMLButtonElement, pointerId: number) {
+  if (typeof handle.setPointerCapture !== 'function') {
+    return
+  }
+
+  try {
+    handle.setPointerCapture(pointerId)
+  } catch {
+    return
+  }
+}
+
+function releaseResizePointer(handle: HTMLButtonElement, pointerId: number) {
+  if (typeof handle.releasePointerCapture !== 'function') {
+    return
+  }
+
+  try {
+    if (
+      typeof handle.hasPointerCapture === 'function' &&
+      !handle.hasPointerCapture(pointerId)
+    ) {
+      return
+    }
+    handle.releasePointerCapture(pointerId)
+  } catch {
+    return
+  }
+}
+
 export function Scratchpad({
   docked = false,
   editable,
   initialScratchpad = DEFAULT_SCRATCHPAD,
 }: ScratchpadProps) {
   const panelRef = React.useRef<HTMLElement>(null)
+  const resizeHandleRef = React.useRef<HTMLButtonElement>(null)
   const [body, setBody] = React.useState(initialScratchpad.body)
   const [height, setHeight] = React.useState(
     clampHeight(initialScratchpad.height)
@@ -71,6 +108,7 @@ export function Scratchpad({
   const [dockedFrame, setDockedFrame] = React.useState<DockedFrame | null>(null)
   const firstSaveEffect = React.useRef(true)
   const latestSaveId = React.useRef(0)
+  const activeResize = React.useRef<ResizeDrag | null>(null)
   const savedStatusTimeout = React.useRef<number | null>(null)
 
   const clearSavedStatusTimeout = React.useCallback(() => {
@@ -130,6 +168,18 @@ export function Scratchpad({
   }, [body, clearSavedStatusTimeout, editable, height, minimized])
 
   React.useEffect(() => clearSavedStatusTimeout, [clearSavedStatusTimeout])
+
+  React.useEffect(
+    () => () => {
+      const resize = activeResize.current
+      const handle = resizeHandleRef.current
+      activeResize.current = null
+      if (resize && handle) {
+        releaseResizePointer(handle, resize.pointerId)
+      }
+    },
+    []
+  )
 
   React.useLayoutEffect(() => {
     const root = document.documentElement
@@ -267,27 +317,41 @@ export function Scratchpad({
     }
 
     event.preventDefault()
+    captureResizePointer(event.currentTarget, event.pointerId)
     const startY = event.clientY
     const startHeight = minimized ? SCRATCHPAD_MIN_HEIGHT : height
+    activeResize.current = {
+      pointerId: event.pointerId,
+      startHeight,
+      startY,
+    }
     if (minimized) {
       setHeight(startHeight)
     }
     setMinimized(false)
+  }
 
-    function handlePointerMove(pointerEvent: PointerEvent) {
-      pointerEvent.preventDefault()
-      setHeight(clampHeight(startHeight + startY - pointerEvent.clientY))
+  function handleResizePointerMove(
+    event: React.PointerEvent<HTMLButtonElement>
+  ) {
+    const resize = activeResize.current
+    if (!resize || event.pointerId !== resize.pointerId) {
+      return
     }
 
-    function finishResize() {
-      window.removeEventListener('pointermove', handlePointerMove, true)
-      window.removeEventListener('pointerup', finishResize, true)
-      window.removeEventListener('pointercancel', finishResize, true)
+    event.preventDefault()
+    setHeight(clampHeight(resize.startHeight + resize.startY - event.clientY))
+  }
+
+  function finishResize(event: React.PointerEvent<HTMLButtonElement>) {
+    const resize = activeResize.current
+    if (!resize || event.pointerId !== resize.pointerId) {
+      return
     }
 
-    window.addEventListener('pointermove', handlePointerMove, true)
-    window.addEventListener('pointerup', finishResize, true)
-    window.addEventListener('pointercancel', finishResize, true)
+    event.preventDefault()
+    activeResize.current = null
+    releaseResizePointer(event.currentTarget, resize.pointerId)
   }
 
   const panelStyle = React.useMemo<React.CSSProperties | undefined>(() => {
@@ -322,11 +386,16 @@ export function Scratchpad({
     >
       <header className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-2">
         <button
+          ref={resizeHandleRef}
           type="button"
           aria-label="Resize scratch pad"
           title="Resize"
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 w-9 cursor-ns-resize items-center justify-center rounded-md outline-none focus-visible:ring-2"
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 w-9 cursor-ns-resize touch-none items-center justify-center rounded-md outline-none focus-visible:ring-2"
           onPointerDown={beginResize}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={finishResize}
+          onPointerCancel={finishResize}
+          onLostPointerCapture={finishResize}
         >
           <GripHorizontal className="size-4" aria-hidden="true" />
         </button>
