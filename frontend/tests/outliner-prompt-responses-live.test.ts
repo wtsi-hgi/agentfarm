@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
 import type { PromptResponseEntry, TreeItem } from '@/lib/contracts'
+import { SCRATCHPAD_SAVE_DELAY_MS } from '@/lib/scratchpad'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -449,7 +450,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       'Collected prompt text\nPaste into response'
     )
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(350)
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
     })
     await flushReact()
 
