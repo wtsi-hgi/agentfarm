@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
 import type { Note, TreeItem } from '@/lib/contracts'
+import {
+  SCRATCHPAD_SAVE_DELAY_MS,
+  SCRATCHPAD_SAVED_STATUS_MS,
+} from '@/lib/scratchpad'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -560,7 +564,7 @@ describe('Outliner notes overlay', () => {
       'Collected note text\nPaste into prompt'
     )
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(350)
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
     })
     await flushReact()
 
@@ -569,6 +573,47 @@ describe('Outliner notes overlay', () => {
       height: 260,
       minimized: false,
     })
+    expect(scratchpad?.textContent).toContain('Saved')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVED_STATUS_MS)
+    })
+    await flushReact()
+    expect(scratchpad?.textContent).not.toContain('Saved')
+    expect(scratchpad?.textContent).not.toContain('Autosaved')
+    vi.useRealTimers()
+  })
+
+  it('does not show an autosave status on a clean persisted scratchpad load', async () => {
+    vi.useFakeTimers()
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Persisted scratchpad text',
+          height: 260,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+
+    const scratchpad = container.querySelector('[data-scratchpad-panel="true"]')
+
+    expect(scratchpad).toBeInstanceOf(HTMLElement)
+    expect(scratchpad?.textContent).not.toContain('Autosaved')
+    expect(scratchpad?.textContent).not.toContain('Saved')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(
+        SCRATCHPAD_SAVE_DELAY_MS + SCRATCHPAD_SAVED_STATUS_MS
+      )
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).not.toHaveBeenCalled()
+    expect(scratchpad?.textContent).not.toContain('Autosaved')
+    expect(scratchpad?.textContent).not.toContain('Saved')
     vi.useRealTimers()
   })
 
@@ -597,7 +642,7 @@ describe('Outliner notes overlay', () => {
     expect((textarea as HTMLTextAreaElement).readOnly).toBe(true)
     await click(minimize)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(350)
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
     })
     await flushReact()
 
@@ -638,10 +683,11 @@ describe('Outliner notes overlay', () => {
     )
     const resize = getButton(container, 'Resize scratch pad')
     const minimize = getButton(container, 'Minimize scratch pad')
+    const scratchpad = container.querySelector('[data-scratchpad-panel="true"]')
 
     await pointerDragVertically(resize, 300, 230)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(350)
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
     })
     await flushReact()
 
@@ -650,10 +696,11 @@ describe('Outliner notes overlay', () => {
       height: 310,
       minimized: false,
     })
+    expect(scratchpad?.textContent).toContain('Saved')
 
     await click(minimize)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(350)
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
     })
     await flushReact()
 
@@ -662,5 +709,6 @@ describe('Outliner notes overlay', () => {
       height: 310,
       minimized: true,
     })
+    expect(scratchpad?.textContent).toContain('Saved')
   })
 })

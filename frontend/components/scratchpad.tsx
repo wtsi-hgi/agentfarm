@@ -16,6 +16,7 @@ import {
   SCRATCHPAD_MAX_HEIGHT,
   SCRATCHPAD_MIN_HEIGHT,
   SCRATCHPAD_SAVE_DELAY_MS,
+  SCRATCHPAD_SAVED_STATUS_MS,
 } from '@/lib/scratchpad'
 import { cn } from '@/lib/utils'
 
@@ -39,7 +40,7 @@ function clampHeight(height: number): number {
   )
 }
 
-function statusLabel(editable: boolean, saveStatus: SaveStatus): string {
+function statusLabel(editable: boolean, saveStatus: SaveStatus): string | null {
   if (!editable) {
     return 'Read only'
   }
@@ -52,7 +53,7 @@ function statusLabel(editable: boolean, saveStatus: SaveStatus): string {
   if (saveStatus === 'error') {
     return 'Save failed'
   }
-  return 'Autosaved'
+  return null
 }
 
 export function Scratchpad({
@@ -70,16 +71,30 @@ export function Scratchpad({
   const [dockedFrame, setDockedFrame] = React.useState<DockedFrame | null>(null)
   const firstSaveEffect = React.useRef(true)
   const latestSaveId = React.useRef(0)
+  const savedStatusTimeout = React.useRef<number | null>(null)
+
+  const clearSavedStatusTimeout = React.useCallback(() => {
+    if (savedStatusTimeout.current === null) {
+      return
+    }
+    window.clearTimeout(savedStatusTimeout.current)
+    savedStatusTimeout.current = null
+  }, [])
 
   React.useEffect(() => {
     setBody(initialScratchpad.body)
     setHeight(clampHeight(initialScratchpad.height))
     setMinimized(initialScratchpad.minimized)
     firstSaveEffect.current = true
-  }, [initialScratchpad])
+    latestSaveId.current += 1
+    clearSavedStatusTimeout()
+    setSaveStatus('idle')
+  }, [clearSavedStatusTimeout, initialScratchpad])
 
   React.useEffect(() => {
     if (!editable) {
+      clearSavedStatusTimeout()
+      setSaveStatus('idle')
       return
     }
     if (firstSaveEffect.current) {
@@ -89,12 +104,19 @@ export function Scratchpad({
 
     const saveId = latestSaveId.current + 1
     latestSaveId.current = saveId
+    clearSavedStatusTimeout()
     setSaveStatus('saving')
     const timeout = window.setTimeout(() => {
       void updateScratchpad({ body, height, minimized })
         .then(() => {
           if (latestSaveId.current === saveId) {
             setSaveStatus('saved')
+            savedStatusTimeout.current = window.setTimeout(() => {
+              if (latestSaveId.current === saveId) {
+                setSaveStatus('idle')
+              }
+              savedStatusTimeout.current = null
+            }, SCRATCHPAD_SAVED_STATUS_MS)
           }
         })
         .catch(() => {
@@ -105,7 +127,9 @@ export function Scratchpad({
     }, SCRATCHPAD_SAVE_DELAY_MS)
 
     return () => window.clearTimeout(timeout)
-  }, [body, editable, height, minimized])
+  }, [body, clearSavedStatusTimeout, editable, height, minimized])
+
+  React.useEffect(() => clearSavedStatusTimeout, [clearSavedStatusTimeout])
 
   React.useLayoutEffect(() => {
     const root = document.documentElement
@@ -266,6 +290,7 @@ export function Scratchpad({
     }
     return Object.keys(style).length > 0 ? style : undefined
   }, [docked, dockedFrame, height, minimized])
+  const saveStatusText = statusLabel(editable, saveStatus)
 
   return (
     <section
@@ -300,15 +325,18 @@ export function Scratchpad({
             Scratch pad
           </h2>
         </div>
-        <span
-          className={cn(
-            'text-muted-foreground shrink-0 text-xs',
-            saveStatus === 'error' && 'text-destructive'
-          )}
-          role={saveStatus === 'error' ? 'alert' : undefined}
-        >
-          {statusLabel(editable, saveStatus)}
-        </span>
+        {saveStatusText ? (
+          <span
+            className={cn(
+              'text-muted-foreground shrink-0 text-xs transition-opacity',
+              saveStatus === 'error' && 'text-destructive'
+            )}
+            aria-live="polite"
+            role={saveStatus === 'error' ? 'alert' : undefined}
+          >
+            {saveStatusText}
+          </span>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
