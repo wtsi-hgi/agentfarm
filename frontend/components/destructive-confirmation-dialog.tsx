@@ -6,7 +6,7 @@ import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-type DestructiveConfirmationDialogProps = {
+export type DestructiveConfirmationDialogProps = {
   open: boolean
   title: string
   description: React.ReactNode

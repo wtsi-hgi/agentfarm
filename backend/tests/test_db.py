@@ -3,9 +3,9 @@
 These assert observable behaviour of the public DB surface:
 
 * ``apply_migrations`` creates the schema tables and is idempotent.
-* ``get_connection`` enforces ``PRAGMA foreign_keys = ON`` and sets a
-  ``sqlite3.Row`` row factory, so the schema's ``ON DELETE CASCADE`` actually
-  cascades (relied on by later delete-cascade stories).
+* ``get_connection`` enforces SQLite pragmas for foreign keys and request
+  overlap, and sets a ``sqlite3.Row`` row factory, so the schema's ``ON DELETE
+  CASCADE`` actually cascades (relied on by later delete-cascade stories).
 
 All DB paths use pytest's ``tmp_path`` so nothing is written outside the test
 sandbox.
@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from threading import Event, Thread
 
-from db.connection import get_connection
+from db.connection import SQLITE_BUSY_TIMEOUT_MS, get_connection, get_write_connection
 from db.migrate import apply_migrations
 
 EXPECTED_TABLES = {
@@ -25,6 +26,7 @@ EXPECTED_TABLES = {
     "comments",
     "item_notes",
     "prompt_response_entries",
+    "scratchpad",
     "item_state_changes",
     "markers",
     "runs",
@@ -144,6 +146,29 @@ def test_migration_creates_parent_directory(tmp_path) -> None:
 
     assert db_path.exists()
     assert _table_names(db_path) == EXPECTED_TABLES
+
+
+def test_scratchpad_schema_defaults_to_minimized(tmp_path) -> None:
+    """Scratchpad rows created with DB defaults match the app's empty state."""
+    db_path = tmp_path / "agentfarm.db"
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        conn.execute("INSERT INTO scratchpad (id) VALUES ('primary')")
+        row = conn.execute(
+            """
+            SELECT body, height, minimized, updated_by, updated_at
+            FROM scratchpad
+            WHERE id = 'primary'
+            """
+        ).fetchone()
+
+    assert row["body"] == ""
+    assert row["height"] == 220
+    assert row["minimized"] == 1
+    assert row["updated_by"] is None
+    assert row["updated_at"] is None
 
 
 def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None:
@@ -362,6 +387,69 @@ def test_connection_has_foreign_keys_enabled(tmp_path) -> None:
         (foreign_keys,) = conn.execute("PRAGMA foreign_keys").fetchone()
 
     assert foreign_keys == 1
+
+
+def test_connection_waits_for_short_lived_sqlite_locks(tmp_path) -> None:
+    """Connections tolerate normal overlapping request reads and writes."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        (busy_timeout,) = conn.execute("PRAGMA busy_timeout").fetchone()
+        (journal_mode,) = conn.execute("PRAGMA journal_mode").fetchone()
+
+    assert busy_timeout == SQLITE_BUSY_TIMEOUT_MS
+    assert journal_mode == "wal"
+
+
+def test_write_connection_serializes_until_commit(tmp_path) -> None:
+    """Overlapping write requests enter SQLite one at a time through commit."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+    holder_ready = Event()
+    release_holder = Event()
+    contender_entered = Event()
+    errors: list[BaseException] = []
+
+    def hold_write_transaction() -> None:
+        try:
+            with get_write_connection(db_path) as conn:
+                _insert_item(conn, "held-writer")
+                holder_ready.set()
+                release_holder.wait(timeout=2)
+        except BaseException as exc:
+            errors.append(exc)
+            holder_ready.set()
+
+    def contend_for_write_transaction() -> None:
+        try:
+            with get_write_connection(db_path) as conn:
+                contender_entered.set()
+                _insert_item(conn, "waiting-writer")
+        except BaseException as exc:
+            errors.append(exc)
+
+    holder = Thread(target=hold_write_transaction)
+    contender = Thread(target=contend_for_write_transaction)
+    holder.start()
+    assert holder_ready.wait(timeout=1)
+
+    contender.start()
+    assert not contender_entered.wait(timeout=0.05)
+
+    release_holder.set()
+    holder.join(timeout=1)
+    contender.join(timeout=1)
+
+    assert not holder.is_alive()
+    assert not contender.is_alive()
+    assert not errors
+    assert contender_entered.is_set()
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT id FROM items ORDER BY id").fetchall()
+
+    assert [row["id"] for row in rows] == ["held-writer", "waiting-writer"]
 
 
 def test_connection_row_factory_is_sqlite_row(tmp_path) -> None:

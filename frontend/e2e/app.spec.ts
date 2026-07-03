@@ -156,6 +156,7 @@ test.describe('Agent Farm app shell', () => {
 
       const screenshotPath = testInfo.outputPath('item-count-section-repro.png')
       await page.screenshot({
+        caret: 'initial',
         fullPage: true,
         path: screenshotPath,
       })

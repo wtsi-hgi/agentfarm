@@ -5,6 +5,8 @@ import {
   type Page,
 } from '@playwright/test'
 
+import { STATE_OPTIONS } from '../lib/state-metadata'
+
 import { deleteBackendItem, gotoPath, signInAs } from './helpers'
 
 type TreeItemSummary = {
@@ -22,6 +24,23 @@ type CreateItemInput = {
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 const childItemCount = 30
+const nestedSectionCount = 3
+const nestedSubsectionCount = 2
+const nestedLeafCount = 12
+const nestedFixtureItemCount =
+  1 +
+  nestedSectionCount +
+  nestedSectionCount * nestedSubsectionCount +
+  nestedSectionCount * nestedSubsectionCount * nestedLeafCount
+const requiredRowControlLabels = [
+  'Drag item',
+  'Add sibling',
+  'Open notes',
+  'Open prompt/response timeline',
+  'Delete item',
+] as const
+const loadBudgetMs = 1000
+const measuredLoadCount = 10
 
 async function createBackendItem(
   request: APIRequestContext,
@@ -62,12 +81,210 @@ async function seedLargeSection(
   return root
 }
 
+async function seedNestedSections(
+  request: APIRequestContext,
+  sessionToken: string,
+  titlePrefix: string
+) {
+  const titles: string[] = []
+  const rootTitle = `${titlePrefix} root`
+  const root = await createBackendItem(request, sessionToken, {
+    title: rootTitle,
+    parent_id: null,
+  })
+  titles.push(rootTitle)
+
+  try {
+    for (
+      let sectionIndex = 0;
+      sectionIndex < nestedSectionCount;
+      sectionIndex += 1
+    ) {
+      const sectionTitle = `${titlePrefix} section ${sectionIndex + 1}`
+      const section = await createBackendItem(request, sessionToken, {
+        title: sectionTitle,
+        parent_id: root.id,
+      })
+      titles.push(sectionTitle)
+
+      for (
+        let subsectionIndex = 0;
+        subsectionIndex < nestedSubsectionCount;
+        subsectionIndex += 1
+      ) {
+        const subsectionTitle = `${titlePrefix} section ${
+          sectionIndex + 1
+        }.${subsectionIndex + 1}`
+        const subsection = await createBackendItem(request, sessionToken, {
+          title: subsectionTitle,
+          parent_id: section.id,
+        })
+        titles.push(subsectionTitle)
+
+        for (let leafIndex = 0; leafIndex < nestedLeafCount; leafIndex += 1) {
+          const leafTitle = `${titlePrefix} item ${sectionIndex + 1}.${
+            subsectionIndex + 1
+          }.${leafIndex + 1}`
+          await createBackendItem(request, sessionToken, {
+            title: leafTitle,
+            parent_id: subsection.id,
+          })
+          titles.push(leafTitle)
+        }
+      }
+    }
+  } catch (error) {
+    await deleteBackendItem(request, sessionToken, root.id)
+    throw error
+  }
+
+  return { root, titles }
+}
+
 async function waitForRenderedItemCount(page: Page, minimumItems: number) {
   const itemInputs = page.getByRole('textbox', { name: 'Item text' })
   await expect
     .poll(async () => itemInputs.count())
     .toBeGreaterThanOrEqual(minimumItems)
   return itemInputs
+}
+
+async function waitForNestedFixtureReady(
+  page: Page,
+  fixtureTitles: readonly string[]
+) {
+  const expectedStateValues = STATE_OPTIONS.map((option) => option.value)
+
+  const readyAt = await page.waitForFunction(
+    ({ expectedStateValues, fixtureTitles, requiredControlLabels }) => {
+      const titleInputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          '[data-mode] input[aria-label="Item text"]'
+        )
+      )
+      if (titleInputs.length < fixtureTitles.length) {
+        return false
+      }
+      const rowTitleSet = new Set(titleInputs.map((input) => input.value))
+      if (!fixtureTitles.every((title) => rowTitleSet.has(title))) {
+        return false
+      }
+
+      const rows = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-mode]')
+      )
+      if (rows.length < fixtureTitles.length) {
+        return false
+      }
+
+      const firstRow = rows[0]
+      const rowControlIcons = (row: HTMLElement) =>
+        Array.from(
+          row.querySelectorAll<HTMLButtonElement>('button[aria-label]')
+        ).flatMap((button): [string, SVGElement][] => {
+          const label = button.getAttribute('aria-label')
+          const icon = button.querySelector<SVGElement>('svg')
+          return label && icon ? [[label, icon]] : []
+        })
+      const firstRowIconsByLabel = new Map(
+        firstRow ? rowControlIcons(firstRow) : []
+      )
+      const firstRowControlIcons = firstRow
+        ? requiredControlLabels
+            .map((label) => firstRowIconsByLabel.get(label) ?? null)
+            .filter((icon): icon is SVGElement => icon !== null)
+        : []
+      const rowControlsReady =
+        rows.length > 0 &&
+        rows.every((row) => {
+          const labelsWithIcons = new Set(
+            rowControlIcons(row).map(([label]) => label)
+          )
+          return requiredControlLabels.every((label) =>
+            labelsWithIcons.has(label)
+          )
+        })
+      const firstRowControlIconsVisible =
+        firstRowControlIcons.length === requiredControlLabels.length &&
+        firstRowControlIcons.every((icon) => {
+          const rect = icon.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0
+        })
+
+      const stateSelectors = Array.from(
+        document.querySelectorAll<HTMLSelectElement>(
+          'select[aria-label="Item state"]'
+        )
+      )
+      const stateSelectorsReady =
+        stateSelectors.length > 0 &&
+        stateSelectors.every((selector) => {
+          const optionValues = new Set(
+            Array.from(selector.options, (option) => option.value)
+          )
+          return expectedStateValues.every((value) => optionValues.has(value))
+        })
+      const scratchpad = document.querySelector<HTMLElement>(
+        '[data-scratchpad-panel="true"]'
+      )
+      const scratchpadRect = scratchpad?.getBoundingClientRect()
+      const scratchpadReady =
+        scratchpad !== null &&
+        scratchpadRect !== undefined &&
+        scratchpadRect.width > 0 &&
+        scratchpadRect.height > 0
+
+      const ready =
+        rowControlsReady &&
+        firstRowControlIconsVisible &&
+        stateSelectorsReady &&
+        scratchpadReady
+      return ready ? performance.now() : false
+    },
+    {
+      expectedStateValues,
+      fixtureTitles: [...fixtureTitles],
+      requiredControlLabels: [...requiredRowControlLabels],
+    },
+    {
+      polling: 10,
+      timeout: 10_000,
+    }
+  )
+  const readyAtMs = await readyAt.jsonValue()
+  await readyAt.dispose()
+  if (typeof readyAtMs !== 'number') {
+    throw new Error('Expected browser readiness timestamp')
+  }
+  return readyAtMs
+}
+
+async function gotoMeasuredHome(page: Page) {
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+      return
+    } catch (error) {
+      lastError = error
+      if (!String(error).includes('ERR_CONNECTION_REFUSED')) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to open /')
+}
+
+async function measureVisibleHomeLoad(
+  page: Page,
+  fixtureTitles: readonly string[]
+) {
+  await page.goto('about:blank')
+  await gotoMeasuredHome(page)
+  return waitForNestedFixtureReady(page, fixtureTitles)
 }
 
 test.describe('many-item outliner editing', () => {
@@ -110,6 +327,75 @@ test.describe('many-item outliner editing', () => {
         .toBeGreaterThanOrEqual(childItemCount + 1)
     } finally {
       if (root) {
+        await deleteBackendItem(request, sessionToken, root.id)
+      }
+    }
+  })
+
+  test('loads a 30+ item nested outline in under one second', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Nested load performance ${Date.now()}`
+    let root: TreeItemSummary | undefined
+
+    try {
+      const fixture = await seedNestedSections(
+        request,
+        sessionToken,
+        titlePrefix
+      )
+      root = fixture.root
+
+      await gotoPath(page, '/')
+      await waitForNestedFixtureReady(page, fixture.titles)
+      await page.waitForLoadState('networkidle')
+
+      const timings: number[] = []
+      for (let loadIndex = 0; loadIndex < measuredLoadCount; loadIndex += 1) {
+        timings.push(await measureVisibleHomeLoad(page, fixture.titles))
+      }
+
+      const screenshotPath = testInfo.outputPath(
+        'nested-load-performance-repro.png'
+      )
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: screenshotPath,
+      })
+      await testInfo.attach('nested-load-performance-repro', {
+        path: screenshotPath,
+        contentType: 'image/png',
+      })
+
+      const timingEvidence = {
+        budgetMs: loadBudgetMs,
+        fixtureItemCount: nestedFixtureItemCount,
+        timingsMs: timings.map((timing) => Math.round(timing)),
+      }
+      await testInfo.attach('nested-load-performance-timings', {
+        body: JSON.stringify(timingEvidence, null, 2),
+        contentType: 'application/json',
+      })
+      console.log(
+        `nested outline visible load timings: ${timingEvidence.timingsMs.join(
+          ', '
+        )} ms`
+      )
+
+      expect(
+        Math.max(...timings),
+        `expected every nested outline load to stay under ${loadBudgetMs} ms; timings were ${timingEvidence.timingsMs.join(
+          ', '
+        )} ms`
+      ).toBeLessThan(loadBudgetMs)
+    } finally {
+      if (root) {
+        await page.goto('about:blank')
         await deleteBackendItem(request, sessionToken, root.id)
       }
     }

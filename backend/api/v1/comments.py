@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_identity
-from db.connection import get_db
+from db.connection import get_db, get_write_db
 from services.clock import now
 from services.identity import current_actor
 
@@ -54,7 +54,7 @@ async def create_comment(
     item_id: str,
     payload: CommentCreate,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> CommentOut:
     """Create a comment on an existing item, authored by the current actor."""
     if not _item_exists(conn, item_id):
@@ -78,7 +78,7 @@ async def create_comment(
 async def list_comments(
     item_id: str,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[CommentOut]:
     """List an item's comments flat, ordered by creation time ascending."""
     if not _item_exists(conn, item_id):
@@ -101,7 +101,7 @@ async def update_comment(
     comment_id: str,
     payload: CommentUpdate,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> CommentOut:
     """Edit a comment body, allowed only for its original author."""
     existing = _comment_row_or_404(conn, comment_id)
@@ -121,7 +121,7 @@ async def update_comment(
 async def delete_comment(
     comment_id: str,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> DeletedResponse:
     """Delete a comment, allowed only for its original author."""
     existing = _comment_row_or_404(conn, comment_id)

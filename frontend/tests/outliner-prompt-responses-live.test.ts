@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
 import type { PromptResponseEntry, TreeItem } from '@/lib/contracts'
+import { SCRATCHPAD_SAVE_DELAY_MS } from '@/lib/scratchpad'
 
 const actionMocks = vi.hoisted(() => ({
   addDependency: vi.fn(),
@@ -26,10 +27,12 @@ const actionMocks = vi.hoisted(() => ({
   fetchMarkers: vi.fn(),
   fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
   patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
 }))
 
 vi.mock('@/app/actions', () => actionMocks)
@@ -94,6 +97,18 @@ async function flushReact() {
   })
 }
 
+async function flushDeferredWork() {
+  await flushReact()
+  await act(async () => {
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0)
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+  })
+  await flushReact()
+}
+
 async function render(element: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -148,14 +163,21 @@ function getDetailsPanel(container: ParentNode) {
   return panel
 }
 
-function getTimelineDialog() {
-  const dialog = document.body.querySelector(
-    '[role="dialog"][aria-modal="true"]'
-  )
-  if (!(dialog instanceof HTMLElement)) {
-    throw new Error('Missing prompt/response timeline dialog')
+async function getTimelineDialog() {
+  await act(async () => {
+    await import('@/components/prompt-response-timeline-dialog')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const dialog = document.body.querySelector(
+      '[role="dialog"][aria-modal="true"]'
+    )
+    if (dialog instanceof HTMLElement) {
+      return dialog
+    }
+    await flushDeferredWork()
   }
-  return dialog
+  throw new Error('Missing prompt/response timeline dialog')
 }
 
 async function click(element: HTMLElement) {
@@ -277,7 +299,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'root', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const headings = Array.from(dialog.querySelectorAll('h3, h4')).map(
       (heading) => heading.textContent
     )
@@ -321,7 +343,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'root', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const lists = dialog.querySelectorAll('ol')
     const items = lists[0]?.querySelectorAll('li') ?? []
 
@@ -358,7 +380,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'leaf', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const header = dialog.querySelector('header')
     const breadcrumb = dialog.querySelector('nav[aria-label="Item location"]')
     if (!(header instanceof HTMLElement)) {
@@ -379,6 +401,69 @@ describe('Outliner prompt/response timeline overlay', () => {
     expect(header.textContent?.indexOf('Implementation section')).toBeLessThan(
       header.textContent?.indexOf('Prompt target') ?? -1
     )
+  })
+
+  it('keeps the scratchpad visible and editable while the prompt/response timeline is open', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Collected prompt text',
+        height: input.height ?? 260,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Collected prompt text',
+          height: 260,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+
+    await click(
+      getItemButton(container, 'root', 'Open prompt/response timeline')
+    )
+    const dialog = await getTimelineDialog()
+    const scratchpad = document.body.querySelector(
+      '[data-scratchpad-panel="true"]'
+    )
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Scratch pad notes"]'
+    )
+
+    expect(dialog.textContent).toContain('Root project')
+    expect(scratchpad).toBeInstanceOf(HTMLElement)
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement)
+    expect((textarea as HTMLTextAreaElement).readOnly).toBe(false)
+
+    await changeTextarea(
+      textarea as HTMLTextAreaElement,
+      'Collected prompt text\nPaste into response'
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Collected prompt text\nPaste into response',
+      height: 260,
+      minimized: false,
+    })
+    vi.useRealTimers()
   })
 
   it('adds prompt and response entries with server timestamps visible', async () => {
@@ -417,7 +502,7 @@ describe('Outliner prompt/response timeline overlay', () => {
 
     await click(timelineButton)
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const body = getTextarea(dialog, 'Prompt or response body')
 
     await changeTextarea(body, 'Please inspect the failure.')

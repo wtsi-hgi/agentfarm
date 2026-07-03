@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS prompt_response_entries (
   created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS scratchpad (
+  id          TEXT PRIMARY KEY CHECK (id = 'primary'),
+  body        TEXT NOT NULL DEFAULT '',
+  height      INTEGER NOT NULL DEFAULT 220,
+  minimized   INTEGER NOT NULL DEFAULT 1,
+  updated_by  TEXT,
+  updated_at  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS item_state_changes (
   id          TEXT PRIMARY KEY,
   item_id     TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

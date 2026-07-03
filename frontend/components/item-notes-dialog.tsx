@@ -16,11 +16,12 @@ import {
   ItemDialogHeading,
   type ItemDialogBreadcrumb,
 } from '@/components/item-dialog-heading'
+import { ITEM_DIALOG_HISTORY_CLASS } from '@/components/item-dialog-layout'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
 
-type ItemNotesDialogProps = {
+export type ItemNotesDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void
@@ -178,12 +179,13 @@ export function ItemNotesDialog({
   }
 
   return (
-    <div className="bg-background/85 fixed inset-0 z-40 p-2 backdrop-blur-sm sm:p-4">
+    <div className="bg-background/85 fixed inset-x-0 top-0 bottom-[var(--scratchpad-reserved-bottom,0px)] z-40 flex p-2 backdrop-blur-sm sm:p-4 lg:bottom-0">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="bg-background border-border mx-auto flex h-[calc(100vh-1rem)] w-full max-w-6xl flex-col rounded-md border shadow-xl sm:h-[calc(100vh-2rem)]"
+        data-item-dialog-panel="true"
+        className="bg-background border-border mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col rounded-md border shadow-xl"
       >
         <header className="border-border flex items-start justify-between gap-3 border-b px-4 py-3 sm:px-5">
           <div className="min-w-0">
@@ -211,7 +213,8 @@ export function ItemNotesDialog({
 
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div
-            className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5"
+            className={ITEM_DIALOG_HISTORY_CLASS}
+            data-item-dialog-history="true"
             aria-label="Note history"
           >
             {loading ? (
@@ -327,7 +330,8 @@ export function ItemNotesDialog({
           </div>
 
           <form
-            className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 border-t p-4 lg:border-t-0 lg:border-l"
+            data-item-dialog-entry-form="true"
+            className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
             onSubmit={addNote}
           >
             <div className="flex items-center gap-2">
@@ -344,7 +348,7 @@ export function ItemNotesDialog({
               onChange={(event) => setDraft(event.target.value)}
               disabled={saving}
               aria-label="New note body"
-              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-56 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
             />
             <Button
               type="submit"

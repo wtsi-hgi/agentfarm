@@ -11,6 +11,7 @@ import {
   dependencySchema,
   farmContextSchema,
   healthResponseSchema,
+  homePayloadSchema,
   itemActivityListSchema,
   itemSchema,
   loginResponseSchema,
@@ -26,6 +27,7 @@ import {
   promptResponseEntrySchema,
   runListSchema,
   runSchema,
+  scratchpadSchema,
   treeSchema,
   type Effort,
   type MarkerChangeField,
@@ -103,6 +105,12 @@ export type NoteInput = {
 export type PromptResponseEntryInput = {
   kind: PromptResponseKind
   body: string
+}
+
+export type ScratchpadInput = {
+  body?: string
+  height?: number
+  minimized?: boolean
 }
 
 export type MarkerInput = {
@@ -247,6 +255,10 @@ export async function fetchTree() {
 
 export async function fetchPriority() {
   return authenticatedRead('/api/v1/priority', priorityResponseSchema)
+}
+
+export async function fetchHomePayload() {
+  return authenticatedRead('/api/v1/home', homePayloadSchema)
 }
 
 export async function createItem(input: CreateItemInput) {
@@ -412,6 +424,19 @@ export async function createPromptResponseEntry(
     `/api/v1/items/${encodeURIComponent(itemId)}/prompt-responses`,
     promptResponseEntrySchema,
     jsonInit('POST', input)
+  )
+}
+
+export async function fetchScratchpad() {
+  return authenticatedRead('/api/v1/scratchpad', scratchpadSchema)
+}
+
+export async function updateScratchpad(input: ScratchpadInput) {
+  return mutation(
+    '/api/v1/scratchpad',
+    scratchpadSchema,
+    jsonInit('PATCH', input),
+    { revalidate: false }
   )
 }
 

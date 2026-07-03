@@ -26,10 +26,12 @@ const actionMocks = vi.hoisted(() => ({
   fetchMarkers: vi.fn(),
   fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
   patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
 }))
 
 vi.mock('@/app/actions', () => actionMocks)
@@ -119,6 +121,14 @@ async function flushReact() {
     await Promise.resolve()
     await Promise.resolve()
   })
+}
+
+async function flushDeferredWork() {
+  await flushReact()
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await flushReact()
 }
 
 async function render(element: React.ReactElement) {
@@ -271,6 +281,37 @@ function getCodeBlock(container: ParentNode, text: string) {
   return codeBlock
 }
 
+async function waitForText(container: ParentNode, text: string) {
+  await act(async () => {
+    await import('@/components/markdown-content')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if ((container.textContent ?? '').includes(text)) {
+      return
+    }
+    await flushDeferredWork()
+  }
+  expect(container.textContent).toContain(text)
+}
+
+async function waitForCodeBlock(container: ParentNode, text: string) {
+  await act(async () => {
+    await import('@/components/markdown-content')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const codeBlock = Array.from(container.querySelectorAll('pre code')).find(
+      (node) => node.textContent?.trim() === text
+    )
+    if (codeBlock instanceof HTMLElement) {
+      return codeBlock
+    }
+    await flushDeferredWork()
+  }
+  return getCodeBlock(container, text)
+}
+
 function getButton(container: ParentNode, ariaLabel: string) {
   const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(button instanceof HTMLButtonElement)) {
@@ -300,16 +341,6 @@ function expectFieldActionRow(
   )
 }
 
-function getDialog() {
-  const dialog = document.body.querySelector(
-    '[role="alertdialog"][aria-modal="true"]'
-  )
-  if (!(dialog instanceof HTMLElement)) {
-    throw new Error('Missing confirmation dialog')
-  }
-  return dialog
-}
-
 function queryDialog() {
   const dialog = document.body.querySelector(
     '[role="alertdialog"][aria-modal="true"]'
@@ -317,8 +348,23 @@ function queryDialog() {
   return dialog instanceof HTMLElement ? dialog : null
 }
 
-function getDialogButton(ariaLabel: string) {
-  return getButton(getDialog(), ariaLabel)
+async function getDialog() {
+  await act(async () => {
+    await import('@/components/destructive-confirmation-dialog')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const dialog = queryDialog()
+    if (dialog) {
+      return dialog
+    }
+    await flushDeferredWork()
+  }
+  throw new Error('Missing confirmation dialog')
+}
+
+async function getDialogButton(ariaLabel: string) {
+  return getButton(await getDialog(), ariaLabel)
 }
 
 function getOptionalButton(container: ParentNode, ariaLabel: string) {
@@ -492,17 +538,17 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getItemButton(container, 'root', 'Delete item'))
 
-    expect(getDialog().textContent).toContain('Delete item')
+    expect((await getDialog()).textContent).toContain('Delete item')
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel'))
+    await click(await getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
     expect(getItemInput(container, 'root').value).toBe('Root project')
 
     await click(getItemButton(container, 'root', 'Delete item'))
-    await click(getDialogButton('Delete item'))
+    await click(await getDialogButton('Delete item'))
 
     expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
@@ -523,17 +569,17 @@ describe('Outliner comment target lifecycle', () => {
 
     await keyDown(getItemInput(container, 'root'), 'Delete', { ctrlKey: true })
 
-    expect(getDialog().textContent).toContain('Delete item')
+    expect((await getDialog()).textContent).toContain('Delete item')
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel'))
+    await click(await getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteItem).not.toHaveBeenCalled()
     expect(getItemInput(container, 'root').value).toBe('Root project')
 
     await keyDown(getItemInput(container, 'root'), 'Delete', { ctrlKey: true })
-    await click(getDialogButton('Delete item'))
+    await click(await getDialogButton('Delete item'))
 
     expect(actionMocks.deleteItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
@@ -557,12 +603,12 @@ describe('Outliner comment target lifecycle', () => {
     await changeInput(input, 'Renamed root')
     await keyDown(input, 'Enter')
 
-    expect(getDialog().textContent).toContain('Remove dependency')
-    expect(getDialog().textContent).toContain('deploy-db')
+    expect((await getDialog()).textContent).toContain('Remove dependency')
+    expect((await getDialog()).textContent).toContain('deploy-db')
     expect(actionMocks.patchItem).not.toHaveBeenCalled()
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel'))
+    await click(await getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.patchItem).not.toHaveBeenCalled()
@@ -588,7 +634,7 @@ describe('Outliner comment target lifecycle', () => {
 
     await changeInput(input, 'Renamed root')
     await keyDown(input, 'Enter')
-    await click(getDialogButton('Remove dependency'))
+    await click(await getDialogButton('Remove dependency'))
 
     expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
     expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
@@ -628,17 +674,17 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getButton(detailsPanel, 'Delete comment'))
 
-    expect(getDialog().textContent).toContain('Delete comment')
+    expect((await getDialog()).textContent).toContain('Delete comment')
     expect(actionMocks.deleteComment).not.toHaveBeenCalled()
 
-    await click(getDialogButton('Cancel'))
+    await click(await getDialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteComment).not.toHaveBeenCalled()
     expect(detailsPanel.textContent).toContain('Looks ready')
 
     await click(getButton(detailsPanel, 'Delete comment'))
-    await click(getDialogButton('Delete comment'))
+    await click(await getDialogButton('Delete comment'))
 
     expect(actionMocks.deleteComment).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteComment).toHaveBeenCalledWith('comment-1')
@@ -663,7 +709,7 @@ describe('Outliner comment target lifecycle', () => {
 
     await click(getItemRow(container, 'child'))
     await click(getItemButton(container, 'root', 'Delete item'))
-    await click(getDialogButton('Delete item'))
+    await click(await getDialogButton('Delete item'))
     await rejectPendingChildCommentLoads()
 
     expect(actionMocks.deleteItem).toHaveBeenCalledWith('root')
@@ -747,14 +793,14 @@ describe('Outliner comment target lifecycle', () => {
     expect(getLink(detailsPanel, 'Open repository URL').textContent).toBe(
       repositoryUrl
     )
-    expect(detailsPanel.textContent).toContain('Root plan')
+    await waitForText(detailsPanel, 'Root plan')
     expect(getOptionalTextarea(detailsPanel, 'Item description')).toBeNull()
     expect(getButton(detailsPanel, 'Edit description').disabled).toBe(false)
     expect(getOptionalTextarea(detailsPanel, 'Root usage')).toBeNull()
     expect(getButton(detailsPanel, 'Edit usage').disabled).toBe(false)
-    expect(getCodeBlock(detailsPanel, 'make test').textContent).toBe(
-      'make test'
-    )
+    expect(
+      (await waitForCodeBlock(detailsPanel, 'make test')).textContent
+    ).toBe('make test')
     expect(getOptionalButton(detailsPanel, 'Save details')).toBeNull()
     expectFieldActionRow(detailsPanel, 'Repository', 'Edit repository URL')
     expectFieldActionRow(detailsPanel, 'Description', 'Edit description')
@@ -841,7 +887,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(actionMocks.patchItem).toHaveBeenLastCalledWith('root', {
       description: 'Build the first usable pass',
     })
-    expect(container.textContent).toContain('Build the first usable pass')
+    await waitForText(container, 'Build the first usable pass')
     expect(getOptionalTextarea(container, 'Item description')).toBeNull()
     expect(getButton(container, 'Edit description').disabled).toBe(false)
 
@@ -876,7 +922,9 @@ describe('Outliner comment target lifecycle', () => {
     expect(
       getLinkByText(container, 'https://docs.example.com/start').href
     ).toBe('https://docs.example.com/start')
-    expect(getCodeBlock(container, 'make run').textContent).toBe('make run')
+    expect((await waitForCodeBlock(container, 'make run')).textContent).toBe(
+      'make run'
+    )
   })
 
   it('edits a saved root repository URL through field-level save controls', async () => {
@@ -965,11 +1013,13 @@ describe('Outliner comment target lifecycle', () => {
     expect(getOptionalTextarea(container, 'Item description')).toBeNull()
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
     expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
-    expect(container.textContent).toContain('Existing plan')
+    await waitForText(container, 'Existing plan')
     expect(getLink(container, 'Open repository URL').textContent).toBe(
       'https://github.com/example/root-project'
     )
-    expect(getCodeBlock(container, 'make lint').textContent).toBe('make lint')
+    expect((await waitForCodeBlock(container, 'make lint')).textContent).toBe(
+      'make lint'
+    )
   })
 
   it('shows saved Description as safe rendered content with clickable links until edited', async () => {
@@ -1024,7 +1074,7 @@ describe('Outliner comment target lifecycle', () => {
     expect(
       getLinkByText(detailsPanel, 'https://docs.example.com/next').href
     ).toBe('https://docs.example.com/next')
-    expect(detailsPanel.textContent).toContain('make test')
+    await waitForText(detailsPanel, 'make test')
   })
 
   it('keeps each field save disabled until that field differs from persisted values', async () => {
@@ -1123,9 +1173,9 @@ describe('Outliner comment target lifecycle', () => {
     expect(initialLink.href).toBe('https://docs.example.com/usage')
     expect(initialLink.target).toBe('_blank')
     expect(initialLink.rel).toBe('noreferrer')
-    expect(getCodeBlock(detailsPanel, 'pnpm test').textContent).toBe(
-      'pnpm test'
-    )
+    expect(
+      (await waitForCodeBlock(detailsPanel, 'pnpm test')).textContent
+    ).toBe('pnpm test')
 
     await click(getButton(detailsPanel, 'Copy code block'))
 
@@ -1146,10 +1196,10 @@ describe('Outliner comment target lifecycle', () => {
       usage: savedUsage,
     })
     expect(getOptionalTextarea(detailsPanel, 'Root usage')).toBeNull()
-    expect(detailsPanel.textContent).toContain('Run the complete gate.')
-    expect(getCodeBlock(detailsPanel, 'make test').textContent).toBe(
-      'make test'
-    )
+    await waitForText(detailsPanel, 'Run the complete gate.')
+    expect(
+      (await waitForCodeBlock(detailsPanel, 'make test')).textContent
+    ).toBe('make test')
   })
 
   it('resets field edit states and drafts when the selected item changes', async () => {
@@ -1196,7 +1246,7 @@ describe('Outliner comment target lifecycle', () => {
     await click(getItemRow(container, 'child'))
 
     expect(getDetailsPanel(container).textContent).toContain('Child task')
-    expect(getDetailsPanel(container).textContent).toContain('Child plan')
+    await waitForText(getDetailsPanel(container), 'Child plan')
     expect(getOptionalTextarea(container, 'Item description')).toBeNull()
     expect(getButton(container, 'Edit description').disabled).toBe(false)
     expect(getOptionalButton(container, 'Save description')).toBeNull()
@@ -1206,7 +1256,7 @@ describe('Outliner comment target lifecycle', () => {
     await click(getItemRow(container, 'root'))
 
     expect(getDetailsPanel(container).textContent).toContain('Root project')
-    expect(getDetailsPanel(container).textContent).toContain('Root plan')
+    await waitForText(getDetailsPanel(container), 'Root plan')
     expect(getOptionalTextarea(container, 'Item description')).toBeNull()
     expect(getOptionalButton(container, 'Save description')).toBeNull()
     expect(getLink(container, 'Open repository URL').textContent).toBe(
@@ -1214,7 +1264,9 @@ describe('Outliner comment target lifecycle', () => {
     )
     expect(getOptionalInput(container, 'Repository URL')).toBeNull()
     expect(getOptionalTextarea(container, 'Root usage')).toBeNull()
-    expect(getCodeBlock(container, 'make lint').textContent).toBe('make lint')
+    expect((await waitForCodeBlock(container, 'make lint')).textContent).toBe(
+      'make lint'
+    )
   })
 
   it('does not show repository URL controls for non-root items', async () => {

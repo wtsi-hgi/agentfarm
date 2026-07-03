@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 type MarkerControlsProps = {
   initialMarkers?: readonly Marker[]
   onFilterChange: (itemIds: readonly string[] | null) => void
+  refreshOnMount?: boolean
   className?: string
 }
 
@@ -21,6 +22,8 @@ const CHANGE_FIELDS = [
   { value: 'completed', label: 'Completed' },
 ] satisfies readonly { value: MarkerChangeField; label: string }[]
 
+const EMPTY_MARKERS: readonly Marker[] = []
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -29,8 +32,9 @@ function formatLocalDate(date: Date) {
 }
 
 export function MarkerControls({
-  initialMarkers = [],
+  initialMarkers = EMPTY_MARKERS,
   onFilterChange,
+  refreshOnMount = true,
   className,
 }: MarkerControlsProps) {
   const [markers, setMarkers] = React.useState<Marker[]>(() => [
@@ -42,6 +46,7 @@ export function MarkerControls({
   const [field, setField] = React.useState<MarkerChangeField>('changed')
   const [status, setStatus] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const previousInitialMarkers = React.useRef(initialMarkers)
 
   const loadMarkers = React.useCallback(async () => {
     try {
@@ -54,8 +59,18 @@ export function MarkerControls({
   }, [])
 
   React.useEffect(() => {
-    void loadMarkers()
-  }, [loadMarkers])
+    if (previousInitialMarkers.current === initialMarkers) {
+      return
+    }
+    previousInitialMarkers.current = initialMarkers
+    setMarkers([...initialMarkers])
+  }, [initialMarkers])
+
+  React.useEffect(() => {
+    if (refreshOnMount) {
+      void loadMarkers()
+    }
+  }, [loadMarkers, refreshOnMount])
 
   async function createNamedMarker(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()

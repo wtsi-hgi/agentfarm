@@ -105,6 +105,15 @@ export const priorityResponseSchema = z.array(priorityItemSchema)
 
 export type PriorityItem = z.infer<typeof priorityItemSchema>
 
+export const homePriorityItemSchema = z
+  .object({
+    id: z.string(),
+    rank: z.number().int().positive(),
+  })
+  .strict()
+
+export type HomePriorityItem = z.infer<typeof homePriorityItemSchema>
+
 export const treeDependencyEdgeSchema = z
   .object({
     id: z.string(),
@@ -220,6 +229,18 @@ export const promptResponseEntryListSchema = z.array(promptResponseEntrySchema)
 
 export type PromptResponseEntry = z.infer<typeof promptResponseEntrySchema>
 
+export const scratchpadSchema = z
+  .object({
+    body: z.string(),
+    height: z.number().int().min(120).max(640),
+    minimized: z.boolean(),
+    updated_by: z.string().nullable(),
+    updated_at: z.string().nullable(),
+  })
+  .strict()
+
+export type Scratchpad = z.infer<typeof scratchpadSchema>
+
 export const itemActivitySchema = z
   .object({
     id: z.string(),
@@ -248,6 +269,19 @@ export const markerSchema = z
 export const markerListSchema = z.array(markerSchema)
 
 export type Marker = z.infer<typeof markerSchema>
+
+export const homePayloadSchema = z
+  .object({
+    owner_username: z.string().min(1),
+    session: whoamiSchema,
+    items: treeSchema,
+    priority_items: z.array(homePriorityItemSchema),
+    markers: markerListSchema,
+    scratchpad: scratchpadSchema,
+  })
+  .strict()
+
+export type HomePayload = z.infer<typeof homePayloadSchema>
 
 export const markerChangeFieldSchema = z.enum([
   'created',

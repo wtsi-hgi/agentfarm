@@ -27,10 +27,12 @@ const actionMocks = vi.hoisted(() => ({
   fetchMarkers: vi.fn(),
   fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
   patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
 }))
 
 vi.mock('@/app/actions', () => actionMocks)
@@ -88,6 +90,14 @@ async function flushReact() {
     await Promise.resolve()
     await Promise.resolve()
   })
+}
+
+async function flushDeferredWork() {
+  await flushReact()
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await flushReact()
 }
 
 async function renderElement(element: React.ReactElement) {
@@ -150,16 +160,6 @@ function labelledElement(container: ParentNode, ariaLabel: string) {
   return element
 }
 
-function getDialog() {
-  const dialog = document.body.querySelector(
-    '[role="alertdialog"][aria-modal="true"]'
-  )
-  if (!(dialog instanceof HTMLElement)) {
-    throw new Error('Missing confirmation dialog')
-  }
-  return dialog
-}
-
 function queryDialog() {
   const dialog = document.body.querySelector(
     '[role="alertdialog"][aria-modal="true"]'
@@ -167,8 +167,23 @@ function queryDialog() {
   return dialog instanceof HTMLElement ? dialog : null
 }
 
-function dialogButton(ariaLabel: string) {
-  return button(getDialog(), ariaLabel)
+async function getDialog() {
+  await act(async () => {
+    await import('@/components/destructive-confirmation-dialog')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const dialog = queryDialog()
+    if (dialog) {
+      return dialog
+    }
+    await flushDeferredWork()
+  }
+  throw new Error('Missing confirmation dialog')
+}
+
+async function dialogButton(ariaLabel: string) {
+  return button(await getDialog(), ariaLabel)
 }
 
 function dragHandle(element: ParentNode) {
@@ -669,12 +684,12 @@ describe('Outliner reorder controls', () => {
     await click(button(detailsPanel, 'Edit dependencies'))
     await click(button(detailsPanel, 'Remove dependency Blocking section'))
 
-    expect(getDialog().textContent).toContain('Remove dependency')
-    expect(getDialog().textContent).toContain('Blocking section')
-    expect(getDialog().textContent).toContain('>blocking-section')
+    expect((await getDialog()).textContent).toContain('Remove dependency')
+    expect((await getDialog()).textContent).toContain('Blocking section')
+    expect((await getDialog()).textContent).toContain('>blocking-section')
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(dialogButton('Cancel'))
+    await click(await dialogButton('Cancel'))
 
     expect(queryDialog()).toBeNull()
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
@@ -704,7 +719,7 @@ describe('Outliner reorder controls', () => {
 
     expect(actionMocks.deleteDependency).not.toHaveBeenCalled()
 
-    await click(dialogButton('Remove dependency'))
+    await click(await dialogButton('Remove dependency'))
 
     expect(actionMocks.deleteDependency).toHaveBeenCalledTimes(1)
     expect(actionMocks.deleteDependency).toHaveBeenCalledWith('dep-1')
@@ -739,7 +754,7 @@ describe('Outliner reorder controls', () => {
 
     await click(button(detailsPanel, 'Edit dependencies'))
     await click(button(detailsPanel, 'Remove dependency Blocking section'))
-    await click(dialogButton('Remove dependency'))
+    await click(await dialogButton('Remove dependency'))
 
     expect(removeDependency).toHaveBeenCalledTimes(1)
     expect(removeDependency).toHaveBeenCalledWith('dep-1')
@@ -775,11 +790,13 @@ describe('Outliner reorder controls', () => {
 
     await click(button(detailsPanel, 'Edit dependencies'))
     await click(button(detailsPanel, 'Remove dependency Blocking section'))
-    await click(dialogButton('Remove dependency'))
+    await click(await dialogButton('Remove dependency'))
 
     expect(removeDependency).toHaveBeenCalledTimes(1)
     expect(queryDialog()).not.toBeNull()
-    expect(getDialog().textContent).toContain('Unable to remove dependency')
+    expect((await getDialog()).textContent).toContain(
+      'Unable to remove dependency'
+    )
     expect(detailsPanel.textContent).toContain('>blocking-section')
   })
 
@@ -984,7 +1001,7 @@ describe('Outliner reorder controls', () => {
     await click(itemInput(container, 'b'))
     await click(button(getDetailsPanel(container), 'Edit dependencies'))
     await click(button(getDetailsPanel(container), 'Remove dependency A'))
-    await click(dialogButton('Remove dependency'))
+    await click(await dialogButton('Remove dependency'))
 
     expect(getDetailsPanel(container).textContent).toContain(
       'No explicit dependencies'

@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import dynamic from 'next/dynamic'
 import {
   Check,
   Clock3,
@@ -24,15 +25,15 @@ import {
   fetchItemActivity,
   patchItem,
 } from '@/app/actions'
-import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
-import { MarkdownContent } from '@/components/markdown-content'
+import type { DestructiveConfirmationDialogProps } from '@/components/destructive-confirmation-dialog'
+import type { MarkdownContentProps } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { Comment, ItemActivity, TreeItem } from '@/lib/contracts'
 import { STATE_LABELS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
-type CommentsPanelProps = {
+export type CommentsPanelProps = {
   item: TreeItem | null
   allItems?: readonly TreeItem[]
   activityRefreshKey?: number
@@ -56,6 +57,69 @@ type PendingDependencyRemoval = {
   label: string
   slug: string
   itemTitle: string
+}
+
+const MarkdownContent = dynamic<MarkdownContentProps>(() =>
+  import('@/components/markdown-content').then(
+    (module) => module.MarkdownContent
+  )
+)
+
+const DestructiveConfirmationDialog =
+  dynamic<DestructiveConfirmationDialogProps>(
+    () =>
+      import('@/components/destructive-confirmation-dialog').then(
+        (module) => module.DestructiveConfirmationDialog
+      ),
+    { ssr: false }
+  )
+
+type IdleSchedulingWindow = Window & {
+  cancelIdleCallback?: (handle: number) => void
+  requestIdleCallback?: (
+    callback: IdleRequestCallback,
+    options?: IdleRequestOptions
+  ) => number
+}
+
+const INITIAL_DETAIL_LOAD_DELAY_MS = process.env.NODE_ENV === 'test' ? 0 : 1000
+
+function scheduleInitialDetailLoad(callback: () => void): () => void {
+  if (typeof window === 'undefined') {
+    return () => {}
+  }
+
+  if (INITIAL_DETAIL_LOAD_DELAY_MS === 0) {
+    return scheduleIdleCallback(callback)
+  }
+
+  let idleCleanup: (() => void) | null = null
+  const timeout = window.setTimeout(() => {
+    idleCleanup = scheduleIdleCallback(callback)
+  }, INITIAL_DETAIL_LOAD_DELAY_MS)
+
+  return () => {
+    window.clearTimeout(timeout)
+    idleCleanup?.()
+  }
+}
+
+function scheduleIdleCallback(callback: () => void): () => void {
+  const idleWindow = window as IdleSchedulingWindow
+  if (idleWindow.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(callback)
+    return () => idleWindow.cancelIdleCallback?.(handle)
+  }
+
+  let cancelled = false
+  queueMicrotask(() => {
+    if (!cancelled) {
+      callback()
+    }
+  })
+  return () => {
+    cancelled = true
+  }
 }
 
 function formatTimestamp(timestamp: string) {
@@ -110,8 +174,12 @@ export function CommentsPanel({
     React.useState<Comment | null>(null)
   const [pendingRemoveDependency, setPendingRemoveDependency] =
     React.useState<PendingDependencyRemoval | null>(null)
-  const [loadingComments, setLoadingComments] = React.useState(false)
-  const [loadingActivity, setLoadingActivity] = React.useState(false)
+  const [loadingComments, setLoadingComments] = React.useState(() =>
+    Boolean(item)
+  )
+  const [loadingActivity, setLoadingActivity] = React.useState(() =>
+    Boolean(item)
+  )
   const [savingDetailField, setSavingDetailField] =
     React.useState<DetailField | null>(null)
   const [savingDependency, setSavingDependency] = React.useState(false)
@@ -123,6 +191,8 @@ export function CommentsPanel({
   const previousDetailItemId = React.useRef<string | null | undefined>(
     undefined
   )
+  const firstCommentsLoad = React.useRef(true)
+  const firstActivityLoad = React.useRef(true)
   currentItemId.current = itemId
 
   const detailOverride = itemId ? detailOverrides.get(itemId) : undefined
@@ -262,10 +332,18 @@ export function CommentsPanel({
   }, [itemId])
 
   React.useEffect(() => {
+    if (firstCommentsLoad.current) {
+      firstCommentsLoad.current = false
+      return scheduleInitialDetailLoad(() => void loadComments())
+    }
     void loadComments()
   }, [loadComments])
 
   React.useEffect(() => {
+    if (firstActivityLoad.current) {
+      firstActivityLoad.current = false
+      return scheduleInitialDetailLoad(() => void loadActivity())
+    }
     void loadActivity()
   }, [activityRefreshKey, loadActivity])
 
@@ -1065,52 +1143,54 @@ export function CommentsPanel({
           {error}
         </div>
       ) : null}
-      <DestructiveConfirmationDialog
-        open={Boolean(pendingDeleteComment)}
-        title="Delete comment"
-        description={
-          <>
-            This removes the comment from{' '}
-            <span className="text-foreground font-medium">
-              {pendingDeleteComment?.author ?? 'this author'}
-            </span>
-            . This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete comment"
-        confirmingLabel="Deleting comment"
-        onCancel={() => setPendingDeleteComment(null)}
-        onConfirm={async () => {
-          if (pendingDeleteComment) {
-            await removeComment(pendingDeleteComment.id)
+      {pendingDeleteComment ? (
+        <DestructiveConfirmationDialog
+          open
+          title="Delete comment"
+          description={
+            <>
+              This removes the comment from{' '}
+              <span className="text-foreground font-medium">
+                {pendingDeleteComment.author}
+              </span>
+              . This cannot be undone.
+            </>
           }
-        }}
-      />
-      <DestructiveConfirmationDialog
-        open={Boolean(pendingRemoveDependency)}
-        title="Remove dependency"
-        description={
-          <>
-            This removes{' '}
-            <span className="text-foreground font-medium">
-              {pendingRemoveDependency?.label ?? 'this dependency'}
-            </span>{' '}
-            (
-            <span className="text-foreground font-medium">
-              &gt;{pendingRemoveDependency?.slug ?? 'dependency'}
-            </span>
-            ) from{' '}
-            <span className="text-foreground font-medium">
-              {pendingRemoveDependency?.itemTitle ?? 'this item'}
-            </span>
-            . This cannot be undone.
-          </>
-        }
-        confirmLabel="Remove dependency"
-        confirmingLabel="Removing dependency"
-        onCancel={() => setPendingRemoveDependency(null)}
-        onConfirm={confirmDependencyRemoval}
-      />
+          confirmLabel="Delete comment"
+          confirmingLabel="Deleting comment"
+          onCancel={() => setPendingDeleteComment(null)}
+          onConfirm={async () => {
+            await removeComment(pendingDeleteComment.id)
+          }}
+        />
+      ) : null}
+      {pendingRemoveDependency ? (
+        <DestructiveConfirmationDialog
+          open
+          title="Remove dependency"
+          description={
+            <>
+              This removes{' '}
+              <span className="text-foreground font-medium">
+                {pendingRemoveDependency.label}
+              </span>{' '}
+              (
+              <span className="text-foreground font-medium">
+                &gt;{pendingRemoveDependency.slug}
+              </span>
+              ) from{' '}
+              <span className="text-foreground font-medium">
+                {pendingRemoveDependency.itemTitle}
+              </span>
+              . This cannot be undone.
+            </>
+          }
+          confirmLabel="Remove dependency"
+          confirmingLabel="Removing dependency"
+          onCancel={() => setPendingRemoveDependency(null)}
+          onConfirm={confirmDependencyRemoval}
+        />
+      ) : null}
     </aside>
   )
 }

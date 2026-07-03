@@ -122,7 +122,11 @@ test.describe('filtered hierarchy reproduction', () => {
         page.locator(`[data-outliner-item-id="${readyChild.id}"]`)
       ).toBeVisible()
       await mkdir(screenshotDir, { recursive: true })
-      await page.screenshot({ path: upNextScreenshotPath, fullPage: true })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: upNextScreenshotPath,
+      })
       await testInfo.attach('Up Next missing hierarchy', {
         path: upNextScreenshotPath,
         contentType: 'image/png',
@@ -133,7 +137,11 @@ test.describe('filtered hierarchy reproduction', () => {
       await expect(
         page.locator(`[data-outliner-item-id="${waitingChild.id}"]`)
       ).toBeVisible()
-      await page.screenshot({ path: followUpScreenshotPath, fullPage: true })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: followUpScreenshotPath,
+      })
       await testInfo.attach('Follow Up missing hierarchy', {
         path: followUpScreenshotPath,
         contentType: 'image/png',

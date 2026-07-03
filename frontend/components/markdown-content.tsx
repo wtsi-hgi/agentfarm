@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-type MarkdownContentProps = {
+export type MarkdownContentProps = {
   value: string
   className?: string
 }
