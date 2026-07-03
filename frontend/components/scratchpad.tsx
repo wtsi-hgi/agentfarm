@@ -164,7 +164,7 @@ export function Scratchpad({
       resizeObserver?.disconnect()
       root.style.removeProperty(reservedSpaceProperty)
     }
-  }, [docked, height, minimized])
+  }, [docked])
 
   React.useLayoutEffect(() => {
     if (!docked) {

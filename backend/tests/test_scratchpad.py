@@ -157,6 +157,30 @@ async def test_viewers_can_read_but_cannot_persist_scratchpad_changes(
 
 
 @pytest.mark.anyio
+async def test_scratchpad_patch_ignores_null_fields(fresh_db) -> None:
+    """Null partial fields mean "leave the existing scratchpad value alone"."""
+    del fresh_db
+
+    owner_headers = _session_headers("alice", "owner")
+
+    async with _client() as client:
+        saved = await client.patch(
+            "/api/v1/scratchpad",
+            json={"body": "Owner draft", "height": 320, "minimized": False},
+            headers=owner_headers,
+        )
+        ignored_nulls = await client.patch(
+            "/api/v1/scratchpad",
+            json={"body": None, "height": None, "minimized": None},
+            headers=owner_headers,
+        )
+
+    assert saved.status_code == 200
+    assert ignored_nulls.status_code == 200
+    assert ignored_nulls.json() == saved.json()
+
+
+@pytest.mark.anyio
 async def test_scratchpad_updates_claim_write_lock_before_reading_current_state(
     fresh_db, monkeypatch
 ) -> None:

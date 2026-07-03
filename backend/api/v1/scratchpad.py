@@ -72,7 +72,7 @@ async def update_scratchpad(
     conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> ScratchpadOut:
     """Persist owner scratchpad edits, size, and minimized state."""
-    updates = payload.model_dump(exclude_unset=True)
+    updates = payload.model_dump(exclude_unset=True, exclude_none=True)
     if not updates:
         current = _row_to_scratchpad(_scratchpad_row(conn))
         return current
