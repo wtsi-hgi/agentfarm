@@ -276,13 +276,15 @@ export function Scratchpad({
       setHeight(clampHeight(startHeight + startY - pointerEvent.clientY))
     }
 
-    function handlePointerUp() {
+    function finishResize() {
       window.removeEventListener('pointermove', handlePointerMove, true)
-      window.removeEventListener('pointerup', handlePointerUp, true)
+      window.removeEventListener('pointerup', finishResize, true)
+      window.removeEventListener('pointercancel', finishResize, true)
     }
 
     window.addEventListener('pointermove', handlePointerMove, true)
-    window.addEventListener('pointerup', handlePointerUp, true)
+    window.addEventListener('pointerup', finishResize, true)
+    window.addEventListener('pointercancel', finishResize, true)
   }
 
   const panelStyle = React.useMemo<React.CSSProperties | undefined>(() => {

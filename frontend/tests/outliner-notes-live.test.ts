@@ -108,7 +108,11 @@ async function flushReact() {
 async function flushDeferredWork() {
   await flushReact()
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(0)
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
   })
   await flushReact()
 }
@@ -224,6 +228,42 @@ async function pointerDragVertically(
       new MouseEvent('pointerup', {
         bubbles: true,
         clientY: endY,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function pointerCancelAfterVerticalResize(
+  element: HTMLElement,
+  startY: number,
+  moveY: number,
+  afterCancelY: number
+) {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientY: startY,
+      })
+    )
+    window.dispatchEvent(
+      new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: moveY,
+      })
+    )
+    window.dispatchEvent(
+      new MouseEvent('pointercancel', {
+        bubbles: true,
+        clientY: moveY,
+      })
+    )
+    window.dispatchEvent(
+      new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: afterCancelY,
       })
     )
   })
@@ -726,5 +766,57 @@ describe('Outliner notes overlay', () => {
       minimized: true,
     })
     expect(scratchpad?.textContent).toContain('Saved')
+  })
+
+  it('stops resizing the scratchpad after a pointer cancellation', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Owner scratch',
+        height: input.height ?? 240,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Owner scratch',
+          height: 240,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+    const resize = getButton(container, 'Resize scratch pad')
+    const scratchpad = container.querySelector('[data-scratchpad-panel="true"]')
+
+    if (!(scratchpad instanceof HTMLElement)) {
+      throw new Error('Missing scratchpad panel')
+    }
+
+    await pointerCancelAfterVerticalResize(resize, 300, 230, 100)
+
+    expect(scratchpad.style.height).toBe('310px')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Owner scratch',
+      height: 310,
+      minimized: false,
+    })
   })
 })
