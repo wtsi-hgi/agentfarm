@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.v1.authz import require_identity, require_owner
-from db.connection import get_db
+from db.connection import get_db, get_write_db
 from services.clock import now
 
 from ..schemas import ItemOut, MarkerCreate, MarkerOut
@@ -58,7 +58,7 @@ def _marker_at(conn: sqlite3.Connection, marker_id: str) -> str:
 async def create_marker(
     payload: MarkerCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> MarkerOut:
     """Create a named marker, defaulting ``at`` to the current clock instant."""
     timestamp = now()

@@ -22,6 +22,8 @@ const CHANGE_FIELDS = [
   { value: 'completed', label: 'Completed' },
 ] satisfies readonly { value: MarkerChangeField; label: string }[]
 
+const EMPTY_MARKERS: readonly Marker[] = []
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -30,7 +32,7 @@ function formatLocalDate(date: Date) {
 }
 
 export function MarkerControls({
-  initialMarkers = [],
+  initialMarkers = EMPTY_MARKERS,
   onFilterChange,
   refreshOnMount = true,
   className,

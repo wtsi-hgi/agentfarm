@@ -16,6 +16,7 @@ import {
   ItemDialogHeading,
   type ItemDialogBreadcrumb,
 } from '@/components/item-dialog-heading'
+import { ITEM_DIALOG_HISTORY_CLASS } from '@/components/item-dialog-layout'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
@@ -212,7 +213,7 @@ export function ItemNotesDialog({
 
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div
-            className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5 lg:h-[calc(100%-var(--scratchpad-reserved-bottom))] lg:self-start"
+            className={ITEM_DIALOG_HISTORY_CLASS}
             data-item-dialog-history="true"
             aria-label="Note history"
           >

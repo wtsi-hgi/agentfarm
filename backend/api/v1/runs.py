@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_identity, require_owner
-from db.connection import get_db
+from db.connection import get_db, get_write_db
 from services.clock import now
 
 from ..schemas import RunOut
@@ -34,7 +34,7 @@ def _item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
 async def create_run(
     item_id: str,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> RunOut:
     """Create a pending stub run row for an existing item."""
     if not _item_exists(conn, item_id):

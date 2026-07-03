@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 import config
+from api.v1 import notes as notes_api
 from api.v1.authz import require_identity
 from db.migrate import apply_migrations
 from services import clock
@@ -54,6 +57,30 @@ async def _list_notes(client: AsyncClient, item_id: str):
 
 async def _patch_note(client: AsyncClient, note_id: str, body: str):
     return await client.patch(f"/api/v1/notes/{note_id}", json={"body": body})
+
+
+@pytest.mark.anyio
+async def test_note_creation_checks_item_inside_write_transaction(
+    fresh_db, monkeypatch
+) -> None:
+    """Note creation claims the SQLite writer slot before read-then-insert work."""
+    del fresh_db
+    original_item_exists = notes_api._item_exists
+    observed_transactions: list[bool] = []
+
+    def recording_item_exists(conn: sqlite3.Connection, item_id: str) -> bool:
+        observed_transactions.append(conn.in_transaction)
+        return original_item_exists(conn, item_id)
+
+    async with _client() as client:
+        item = await _create_item(client, "Serialized note writes")
+        item_id = item.json()["id"]
+
+        monkeypatch.setattr(notes_api, "_item_exists", recording_item_exists)
+        note = await _create_note(client, item_id, "Waits behind other writes")
+
+    assert note.status_code == 200
+    assert observed_transactions == [True]
 
 
 @pytest.mark.anyio

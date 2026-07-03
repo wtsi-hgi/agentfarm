@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_identity, require_owner
-from db.connection import get_db
+from db.connection import get_db, get_write_db
 from services.clock import now
 from services.identity import current_actor
 
@@ -36,7 +36,7 @@ async def create_prompt_response_entry(
     item_id: str,
     payload: PromptResponseEntryCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> PromptResponseEntryOut:
     """Record one prompt or response entry for an existing item."""
     if not _item_exists(conn, item_id):

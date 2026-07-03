@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from api.v1.authz import require_identity, require_owner
-from db.connection import get_db
+from db.connection import begin_immediate, get_db, get_write_db
 from services.clock import now
 from services.identity import current_actor
 
@@ -69,7 +69,7 @@ async def get_scratchpad(
 async def update_scratchpad(
     payload: ScratchpadUpdate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
+    conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> ScratchpadOut:
     """Persist owner scratchpad edits, size, and minimized state."""
     updates = payload.model_dump(exclude_unset=True)
@@ -77,10 +77,9 @@ async def update_scratchpad(
         current = _row_to_scratchpad(_scratchpad_row(conn))
         return current
 
-    # Claim the write lock before reading the current singleton row. This keeps
-    # concurrent partial updates from starting as read transactions that later
-    # fail to upgrade under parallel browser autosaves.
-    conn.execute("BEGIN IMMEDIATE")
+    # Direct unit calls may pass a plain connection; the route dependency has
+    # already claimed the write transaction before endpoint code runs.
+    begin_immediate(conn)
     current = _row_to_scratchpad(_scratchpad_row(conn))
     saved = ScratchpadOut(
         body=updates.get("body", current.body),

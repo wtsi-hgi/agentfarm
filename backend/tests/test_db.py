@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from threading import Event, Thread
 
-from db.connection import SQLITE_BUSY_TIMEOUT_MS, get_connection
+from db.connection import SQLITE_BUSY_TIMEOUT_MS, get_connection, get_write_connection
 from db.migrate import apply_migrations
 
 EXPECTED_TABLES = {
@@ -399,6 +400,56 @@ def test_connection_waits_for_short_lived_sqlite_locks(tmp_path) -> None:
 
     assert busy_timeout == SQLITE_BUSY_TIMEOUT_MS
     assert journal_mode == "wal"
+
+
+def test_write_connection_serializes_until_commit(tmp_path) -> None:
+    """Overlapping write requests enter SQLite one at a time through commit."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+    holder_ready = Event()
+    release_holder = Event()
+    contender_entered = Event()
+    errors: list[BaseException] = []
+
+    def hold_write_transaction() -> None:
+        try:
+            with get_write_connection(db_path) as conn:
+                _insert_item(conn, "held-writer")
+                holder_ready.set()
+                release_holder.wait(timeout=2)
+        except BaseException as exc:
+            errors.append(exc)
+            holder_ready.set()
+
+    def contend_for_write_transaction() -> None:
+        try:
+            with get_write_connection(db_path) as conn:
+                contender_entered.set()
+                _insert_item(conn, "waiting-writer")
+        except BaseException as exc:
+            errors.append(exc)
+
+    holder = Thread(target=hold_write_transaction)
+    contender = Thread(target=contend_for_write_transaction)
+    holder.start()
+    assert holder_ready.wait(timeout=1)
+
+    contender.start()
+    assert not contender_entered.wait(timeout=0.05)
+
+    release_holder.set()
+    holder.join(timeout=1)
+    contender.join(timeout=1)
+
+    assert not holder.is_alive()
+    assert not contender.is_alive()
+    assert not errors
+    assert contender_entered.is_set()
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT id FROM items ORDER BY id").fetchall()
+
+    assert [row["id"] for row in rows] == ["held-writer", "waiting-writer"]
 
 
 def test_connection_row_factory_is_sqlite_row(tmp_path) -> None:

@@ -139,6 +139,7 @@ function expectScratchpadKeepsDialogContentWidth(
   const evidence = JSON.stringify(geometry, null, 2)
   const scratchpadRight = geometry.scratchpad.x + geometry.scratchpad.width
   const formBottom = geometry.form.y + geometry.form.height
+  const historyBottom = geometry.history.y + geometry.history.height
   const scratchpadTop = geometry.scratchpad.y
   const viewportBottom = geometry.viewport.height
 
@@ -172,6 +173,12 @@ function expectScratchpadKeepsDialogContentWidth(
       `${label} New Note/New entry column should extend below the scratchpad top when the scratchpad is beside it. Evidence: ${evidence}`
     )
     .toBeGreaterThan(scratchpadTop + 80)
+  expect
+    .soft(
+      historyBottom,
+      `${label} history column should reserve the docked scratchpad height. Evidence: ${evidence}`
+    )
+    .toBeLessThanOrEqual(scratchpadTop + 1)
 }
 
 async function closePageBeforeApiCleanup(page: Page) {
