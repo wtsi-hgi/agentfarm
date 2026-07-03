@@ -116,10 +116,15 @@ export function OutlinerRow({
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const pendingRef = React.useRef(false)
+  const previousItemTitle = React.useRef(item.title)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
 
   React.useEffect(() => {
+    if (previousItemTitle.current === item.title) {
+      return
+    }
+    previousItemTitle.current = item.title
     setDraft(item.title)
   }, [item.title])
 
@@ -129,6 +134,10 @@ export function OutlinerRow({
     }
     setDraft(draftResetText)
   }, [draftResetRequestId, draftResetText])
+
+  function currentDraftText() {
+    return draft
+  }
 
   async function run(operation: () => Promise<void>) {
     if (pendingRef.current) {
@@ -149,14 +158,17 @@ export function OutlinerRow({
   }
 
   function submitCurrentText() {
+    const draft = currentDraftText()
     void run(() => onSubmitText(item, draft))
   }
 
   function createSibling() {
+    const draft = currentDraftText()
     void run(() => onCreateSibling(item, draft))
   }
 
   function runKeyboardCommand(command: RowKeyboardCommand) {
+    const draft = currentDraftText()
     void run(() => onKeyboardCommand(item, draft, command))
   }
 

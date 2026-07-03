@@ -166,30 +166,24 @@ async function waitForNestedFixtureReady(
           row.querySelector<HTMLInputElement>('input[aria-label="Item text"]')
             ?.value ?? ''
       )
+      const rowTitleSet = new Set(rowTitles)
       const fixtureTitlesReady =
         rowTitles.length >= fixtureTitles.length &&
-        fixtureTitles.every((title) => rowTitles.includes(title))
+        fixtureTitles.every((title) => rowTitleSet.has(title))
 
-      const firstRowControlIcons: SVGElement[] = []
+      const firstRow = rows[0]
+      const controlIconFor = (row: HTMLElement, label: string) =>
+        row.querySelector<SVGElement>(`button[aria-label="${label}"] svg`)
+      const firstRowControlIcons = firstRow
+        ? requiredControlLabels
+            .map((label) => controlIconFor(firstRow, label))
+            .filter((icon): icon is SVGElement => icon !== null)
+        : []
       const rowControlsReady =
         rows.length > 0 &&
-        rows.every((row, rowIndex) => {
-          const buttons = Array.from(row.querySelectorAll('button'))
-          return requiredControlLabels.every((label) => {
-            const button = buttons.find(
-              (candidate) => candidate.getAttribute('aria-label') === label
-            )
-            const icon = button?.querySelector('svg')
-            if (!icon) {
-              return false
-            }
-
-            if (rowIndex === 0) {
-              firstRowControlIcons.push(icon)
-            }
-            return true
-          })
-        })
+        requiredControlLabels.every((label) =>
+          rows.every((row) => controlIconFor(row, label) !== null)
+        )
       const firstRowControlIconsVisible =
         firstRowControlIcons.length === requiredControlLabels.length &&
         firstRowControlIcons.every((icon) => {
@@ -205,12 +199,10 @@ async function waitForNestedFixtureReady(
       const stateSelectorsReady =
         stateSelectors.length > 0 &&
         stateSelectors.every((selector) => {
-          const optionValues = Array.from(selector.options).map(
-            (option) => option.value
+          const optionValues = new Set(
+            Array.from(selector.options, (option) => option.value)
           )
-          return expectedStateValues.every((value) =>
-            optionValues.includes(value)
-          )
+          return expectedStateValues.every((value) => optionValues.has(value))
         })
       const scratchpad = document.querySelector<HTMLElement>(
         '[data-scratchpad-panel="true"]'

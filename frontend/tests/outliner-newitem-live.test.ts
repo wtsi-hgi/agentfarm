@@ -101,7 +101,7 @@ function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
 function LiveOutlinerHarness({
   initialItems = [],
   leverageSort = false,
-  markers = [],
+  markers,
   priorityItems = [],
   hideCreatedWithCallerFilter = false,
 }: LiveOutlinerHarnessProps) {

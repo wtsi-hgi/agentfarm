@@ -20,7 +20,7 @@ import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
 
-type ItemNotesDialogProps = {
+export type ItemNotesDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void

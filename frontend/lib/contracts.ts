@@ -105,6 +105,15 @@ export const priorityResponseSchema = z.array(priorityItemSchema)
 
 export type PriorityItem = z.infer<typeof priorityItemSchema>
 
+export const homePriorityItemSchema = z
+  .object({
+    id: z.string(),
+    rank: z.number().int().positive(),
+  })
+  .strict()
+
+export type HomePriorityItem = z.infer<typeof homePriorityItemSchema>
+
 export const treeDependencyEdgeSchema = z
   .object({
     id: z.string(),
@@ -266,7 +275,7 @@ export const homePayloadSchema = z
     owner_username: z.string().min(1),
     session: whoamiSchema,
     items: treeSchema,
-    priority_items: priorityResponseSchema,
+    priority_items: z.array(homePriorityItemSchema),
     markers: markerListSchema,
     scratchpad: scratchpadSchema,
   })

@@ -15,7 +15,13 @@ import {
   fetchTree,
   logout,
 } from '@/app/actions'
-import type { Item, Marker, PriorityItem, TreeItem } from '@/lib/contracts'
+import type {
+  HomePriorityItem,
+  Item,
+  Marker,
+  PriorityItem,
+  TreeItem,
+} from '@/lib/contracts'
 
 const sessionMocks = vi.hoisted(() => ({
   clearSessionCookie: vi.fn(),
@@ -72,6 +78,12 @@ const priorityItems = [
     rank: 1,
   },
 ] satisfies PriorityItem[]
+const homePriorityItems = [
+  {
+    id: baseItem.id,
+    rank: 1,
+  },
+] satisfies HomePriorityItem[]
 const markers = [
   {
     id: 'marker-1',
@@ -97,7 +109,7 @@ function homePayloadForToken(token: string | null) {
         ? { username: 'alice', role: 'owner' }
         : { username: 'vue', role: 'viewer' },
     items: treeItems,
-    priority_items: priorityItems,
+    priority_items: homePriorityItems,
     markers,
     scratchpad,
   }

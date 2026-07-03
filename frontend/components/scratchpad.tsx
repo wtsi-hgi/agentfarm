@@ -230,6 +230,10 @@ export function Scratchpad({
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(scheduleDockedFrameUpdate)
+    const mutationObserver =
+      typeof MutationObserver === 'undefined'
+        ? null
+        : new MutationObserver(scheduleDockedFrameUpdate)
     const dialog = document.querySelector<HTMLElement>(
       '[data-item-dialog-panel="true"]'
     )
@@ -242,10 +246,15 @@ export function Scratchpad({
     if (entryForm) {
       resizeObserver?.observe(entryForm)
     }
+    mutationObserver?.observe(document.body, {
+      childList: true,
+      subtree: true,
+    })
 
     return () => {
       window.removeEventListener('resize', scheduleDockedFrameUpdate)
       resizeObserver?.disconnect()
+      mutationObserver?.disconnect()
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame)
       }

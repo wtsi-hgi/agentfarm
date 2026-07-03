@@ -7,15 +7,40 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from api.schemas import HomePayloadOut, TreeItemOut, WhoAmI
+from api.schemas import HomePayloadOut, HomePriorityItemOut, TreeItemOut, WhoAmI
 from api.v1.authz import require_identity
 from config import settings
 from db.connection import get_db
-from services import leverage
+from services import leverage, tree
 
-from . import items, markers, priority, scratchpad
+from . import items, markers, scratchpad
 
 router = APIRouter()
+
+
+def _row_to_home_tree_item(
+    row: sqlite3.Row,
+    *,
+    needs_edges: list[tree.ExplicitNeedsEdge],
+    actionable: bool,
+    complete: bool,
+    has_notes: bool,
+    has_prompt_response_entries: bool,
+) -> TreeItemOut:
+    data = dict(row)
+    data["blocked_external"] = bool(data["blocked_external"])
+    if data["parent_id"] is not None:
+        data["repo_url"] = None
+        data["usage"] = ""
+    return TreeItemOut(
+        **data,
+        needs=[edge["slug"] for edge in needs_edges],
+        needs_edges=needs_edges,
+        actionable=actionable,
+        complete=complete,
+        has_notes=has_notes,
+        has_prompt_response_entries=has_prompt_response_entries,
+    )
 
 
 @router.get("/home", response_model=HomePayloadOut)
@@ -36,12 +61,10 @@ async def get_home(
         row = projection.item_rows.get(item_id)
         if row is None:
             continue
-        item = items._row_to_item(row)
         needs_edges = needs_edges_by_item.get(item_id, [])
         tree_items.append(
-            TreeItemOut(
-                **item.model_dump(),
-                needs=[edge["slug"] for edge in needs_edges],
+            _row_to_home_tree_item(
+                row,
                 needs_edges=needs_edges,
                 actionable=projection.is_actionable(item_id),
                 complete=projection.is_complete(item_id),
@@ -53,9 +76,8 @@ async def get_home(
         )
 
     priority_items = [
-        priority._row_to_priority_item(row, rank)
+        HomePriorityItemOut(id=item_id, rank=rank)
         for rank, item_id in enumerate(projection.priority_item_ids(), start=1)
-        if (row := projection.item_rows.get(item_id)) is not None
     ]
     marker_rows = conn.execute(
         "SELECT * FROM markers ORDER BY at, created_at, id"

@@ -83,31 +83,38 @@ class LeverageProjection:
         }
         children_by_parent = cls._children_by_parent(item_rows)
         stored_targets = cls._stored_dependency_targets(conn)
-        descendants_by_id = cls._descendants_by_id(item_rows, children_by_parent)
         complete_by_id = cls._complete_by_id(item_rows, children_by_parent)
-        dependency_targets_by_id = cls._dependency_targets_by_id(
-            item_rows,
-            children_by_parent,
-            stored_targets,
-        )
+        if stored_targets:
+            descendants_by_id = cls._descendants_by_id(item_rows, children_by_parent)
+            dependency_targets_by_id = cls._dependency_targets_by_id(
+                item_rows,
+                children_by_parent,
+                stored_targets,
+            )
+            depends_on_by_id = cls._depends_on_by_id(
+                item_rows,
+                dependency_targets_by_id,
+                descendants_by_id,
+            )
+            downstream_by_id = cls._downstream_by_id(
+                item_rows,
+                children_by_parent,
+                depends_on_by_id,
+                complete_by_id,
+            )
+            score_by_id = cls._score_by_id(item_rows, downstream_by_id)
+        else:
+            descendants_by_id = {item_id: set() for item_id in item_rows}
+            dependency_targets_by_id = {item_id: [] for item_id in item_rows}
+            depends_on_by_id = {item_id: set() for item_id in item_rows}
+            downstream_by_id = {item_id: set() for item_id in item_rows}
+            score_by_id = {item_id: 0.0 for item_id in item_rows}
         actionable_by_id = cls._actionable_by_id(
             item_rows,
             children_by_parent,
             dependency_targets_by_id,
             complete_by_id,
         )
-        depends_on_by_id = cls._depends_on_by_id(
-            item_rows,
-            dependency_targets_by_id,
-            descendants_by_id,
-        )
-        downstream_by_id = cls._downstream_by_id(
-            item_rows,
-            children_by_parent,
-            depends_on_by_id,
-            complete_by_id,
-        )
-        score_by_id = cls._score_by_id(item_rows, downstream_by_id)
         return cls(
             item_rows=item_rows,
             children_by_parent=children_by_parent,

@@ -105,6 +105,14 @@ async function flushReact() {
   })
 }
 
+async function flushDeferredWork() {
+  await flushReact()
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await flushReact()
+}
+
 async function render(element: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -151,14 +159,21 @@ function getTextarea(container: ParentNode, ariaLabel: string) {
   return textarea
 }
 
-function getNotesDialog() {
-  const dialog = document.body.querySelector(
-    '[role="dialog"][aria-modal="true"]'
-  )
-  if (!(dialog instanceof HTMLElement)) {
-    throw new Error('Missing notes dialog')
+async function getNotesDialog() {
+  await act(async () => {
+    await import('@/components/item-notes-dialog')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const dialog = document.body.querySelector(
+      '[role="dialog"][aria-modal="true"]'
+    )
+    if (dialog instanceof HTMLElement) {
+      return dialog
+    }
+    await flushDeferredWork()
   }
-  return dialog
+  throw new Error('Missing notes dialog')
 }
 
 async function click(element: HTMLElement) {
@@ -318,10 +333,11 @@ describe('Outliner notes overlay', () => {
       'No notes available'
     )
     expect(notesButton.title).toBe('Notes')
+    await flushDeferredWork()
 
     await click(notesButton)
 
-    const dialog = getNotesDialog()
+    const dialog = await getNotesDialog()
     const headings = Array.from(dialog.querySelectorAll('h3, h4')).map(
       (heading) => heading.textContent
     )
@@ -425,7 +441,7 @@ describe('Outliner notes overlay', () => {
     )
 
     await click(getItemButton(container, 'root', 'Open notes'))
-    let dialog = getNotesDialog()
+    let dialog = await getNotesDialog()
     expect(dialog.textContent).toContain('Root original')
 
     await click(getButton(dialog, 'Edit note'))
@@ -437,7 +453,7 @@ describe('Outliner notes overlay', () => {
     })
 
     await click(getItemButton(container, 'other', 'Open notes'))
-    dialog = getNotesDialog()
+    dialog = await getNotesDialog()
     expect(dialog.textContent).toContain('Other project')
     expect(dialog.textContent).toContain('Other original')
 
@@ -455,7 +471,7 @@ describe('Outliner notes overlay', () => {
     })
     await flushReact()
 
-    dialog = getNotesDialog()
+    dialog = await getNotesDialog()
     expect(dialog.textContent).toContain('Other original')
     expect(dialog.textContent).not.toContain('Root edited')
 
@@ -492,7 +508,7 @@ describe('Outliner notes overlay', () => {
 
     await click(getItemButton(container, 'leaf', 'Open notes'))
 
-    const dialog = getNotesDialog()
+    const dialog = await getNotesDialog()
     const header = dialog.querySelector('header')
     const breadcrumb = dialog.querySelector('nav[aria-label="Item location"]')
     if (!(header instanceof HTMLElement)) {
@@ -546,7 +562,7 @@ describe('Outliner notes overlay', () => {
     )
 
     await click(getItemButton(container, 'root', 'Open notes'))
-    const dialog = getNotesDialog()
+    const dialog = await getNotesDialog()
     const scratchpad = document.body.querySelector(
       '[data-scratchpad-panel="true"]'
     )

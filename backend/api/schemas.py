@@ -306,6 +306,13 @@ class PriorityItemOut(ItemOut):
     rank: int
 
 
+class HomePriorityItemOut(BaseModel):
+    """Compact priority rank carried by the initial home payload."""
+
+    id: str
+    rank: int
+
+
 class DeletedResponse(BaseModel):
     """Response model for delete endpoints.
 
@@ -359,6 +366,6 @@ class HomePayloadOut(BaseModel):
     owner_username: str
     session: WhoAmI
     items: list[TreeItemOut]
-    priority_items: list[PriorityItemOut]
+    priority_items: list[HomePriorityItemOut]
     markers: list[MarkerOut]
     scratchpad: ScratchpadOut

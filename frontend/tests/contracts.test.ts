@@ -550,7 +550,7 @@ describe('home payload contract', () => {
         has_prompt_response_entries: false,
       },
     ],
-    priority_items: [{ ...item, rank: 1 }],
+    priority_items: [{ id: item.id, rank: 1 }],
     markers: [
       {
         id: 'marker-1',

@@ -2,8 +2,8 @@ import { AppShell } from '@/components/app-shell'
 import { LoginForm } from '@/components/login-form'
 import { Outliner } from '@/components/outliner'
 import type {
+  HomePriorityItem,
   Marker,
-  PriorityItem,
   Scratchpad,
   TreeItem,
 } from '@/lib/contracts'
@@ -16,7 +16,7 @@ type HomeProtectedData = {
   items: TreeItem[]
   markers: Marker[]
   ownerUsername: string | null
-  priorityItems: PriorityItem[]
+  priorityItems: HomePriorityItem[]
   scratchpad: Scratchpad
   session: SessionIdentity | null
   authorized: boolean

@@ -96,6 +96,14 @@ async function flushReact() {
   })
 }
 
+async function flushDeferredWork() {
+  await flushReact()
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await flushReact()
+}
+
 async function render(element: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -150,14 +158,21 @@ function getDetailsPanel(container: ParentNode) {
   return panel
 }
 
-function getTimelineDialog() {
-  const dialog = document.body.querySelector(
-    '[role="dialog"][aria-modal="true"]'
-  )
-  if (!(dialog instanceof HTMLElement)) {
-    throw new Error('Missing prompt/response timeline dialog')
+async function getTimelineDialog() {
+  await act(async () => {
+    await import('@/components/prompt-response-timeline-dialog')
+  })
+  await flushReact()
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const dialog = document.body.querySelector(
+      '[role="dialog"][aria-modal="true"]'
+    )
+    if (dialog instanceof HTMLElement) {
+      return dialog
+    }
+    await flushDeferredWork()
   }
-  return dialog
+  throw new Error('Missing prompt/response timeline dialog')
 }
 
 async function click(element: HTMLElement) {
@@ -279,7 +294,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'root', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const headings = Array.from(dialog.querySelectorAll('h3, h4')).map(
       (heading) => heading.textContent
     )
@@ -323,7 +338,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'root', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const lists = dialog.querySelectorAll('ol')
     const items = lists[0]?.querySelectorAll('li') ?? []
 
@@ -360,7 +375,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       getItemButton(container, 'leaf', 'Open prompt/response timeline')
     )
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const header = dialog.querySelector('header')
     const breadcrumb = dialog.querySelector('nav[aria-label="Item location"]')
     if (!(header instanceof HTMLElement)) {
@@ -416,7 +431,7 @@ describe('Outliner prompt/response timeline overlay', () => {
     await click(
       getItemButton(container, 'root', 'Open prompt/response timeline')
     )
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const scratchpad = document.body.querySelector(
       '[data-scratchpad-panel="true"]'
     )
@@ -482,7 +497,7 @@ describe('Outliner prompt/response timeline overlay', () => {
 
     await click(timelineButton)
 
-    const dialog = getTimelineDialog()
+    const dialog = await getTimelineDialog()
     const body = getTextarea(dialog, 'Prompt or response body')
 
     await changeTextarea(body, 'Please inspect the failure.')

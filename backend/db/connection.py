@@ -21,10 +21,13 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
 
 from config import settings
 
 SQLITE_BUSY_TIMEOUT_MS = 30_000
+_wal_initialized_paths: set[Path] = set()
+_wal_initialized_paths_lock = Lock()
 
 
 def _resolve_db_path(db_path: Path | str | None) -> Path:
@@ -62,7 +65,10 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     )
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-    conn.execute("PRAGMA journal_mode = WAL").fetchone()
+    with _wal_initialized_paths_lock:
+        if resolved not in _wal_initialized_paths:
+            conn.execute("PRAGMA journal_mode = WAL").fetchone()
+            _wal_initialized_paths.add(resolved)
     # Connection-scoped: must run for every connection, every time.
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

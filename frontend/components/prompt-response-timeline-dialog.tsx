@@ -20,7 +20,7 @@ import type {
 } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
-type PromptResponseTimelineDialogProps = {
+export type PromptResponseTimelineDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
   item: TreeItem | null
   onClose: () => void

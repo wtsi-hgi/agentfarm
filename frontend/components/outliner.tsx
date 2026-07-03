@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import dynamic from 'next/dynamic'
 import { Plus } from 'lucide-react'
 
 import {
@@ -15,9 +16,9 @@ import {
   patchItem,
 } from '@/app/actions'
 import { CommentsPanel } from '@/components/comments-panel'
-import { DestructiveConfirmationDialog } from '@/components/destructive-confirmation-dialog'
+import type { DestructiveConfirmationDialogProps } from '@/components/destructive-confirmation-dialog'
 import type { ItemDialogBreadcrumb } from '@/components/item-dialog-heading'
-import { ItemNotesDialog } from '@/components/item-notes-dialog'
+import type { ItemNotesDialogProps } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
 import { OutlinerRow } from '@/components/outliner-row'
 import {
@@ -25,7 +26,7 @@ import {
   focusAndScrollOutlinerItem,
   resolveJumpState,
 } from '@/components/product-switcher'
-import { PromptResponseTimelineDialog } from '@/components/prompt-response-timeline-dialog'
+import type { PromptResponseTimelineDialogProps } from '@/components/prompt-response-timeline-dialog'
 import { Scratchpad } from '@/components/scratchpad'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -94,6 +95,31 @@ type OutlinerProps = {
   scratchpad?: ScratchpadState
   scratchpadEditable?: boolean
 }
+
+const ItemNotesDialog = dynamic<ItemNotesDialogProps>(
+  () =>
+    import('@/components/item-notes-dialog').then(
+      (module) => module.ItemNotesDialog
+    ),
+  { ssr: false }
+)
+
+const PromptResponseTimelineDialog = dynamic<PromptResponseTimelineDialogProps>(
+  () =>
+    import('@/components/prompt-response-timeline-dialog').then(
+      (module) => module.PromptResponseTimelineDialog
+    ),
+  { ssr: false }
+)
+
+const DestructiveConfirmationDialog =
+  dynamic<DestructiveConfirmationDialogProps>(
+    () =>
+      import('@/components/destructive-confirmation-dialog').then(
+        (module) => module.DestructiveConfirmationDialog
+      ),
+    { ssr: false }
+  )
 
 type ChildMap = Map<string | null, TreeItem[]>
 
@@ -187,6 +213,7 @@ type PendingDependencyRemoval =
     }
 
 const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
+const EMPTY_MARKERS: readonly Marker[] = []
 
 type PreservedAutomaticEdge = {
   fromId: string
@@ -1588,6 +1615,16 @@ function firstAvailableItemId(
   )
 }
 
+function previousDoneStates(items: readonly TreeItem[]): Map<string, State> {
+  const states = new Map<string, State>()
+  for (const item of items) {
+    if (isRestorableDoneState(item.state)) {
+      states.set(item.id, item.state)
+    }
+  }
+  return states
+}
+
 type DragOriginSlotMarkerProps = {
   onDragOver: React.DragEventHandler<HTMLDivElement>
   onDrop: React.DragEventHandler<HTMLDivElement>
@@ -1787,20 +1824,20 @@ export function Outliner({
   items,
   className,
   leverageSort = false,
-  markers = [],
+  markers: providedMarkers,
   priorityItems = [],
   hiddenItemIds,
   newlyAddedIds,
   scratchpad = DEFAULT_SCRATCHPAD,
-  scratchpadEditable = true,
+  scratchpadEditable = false,
 }: OutlinerProps) {
+  const markers = providedMarkers ?? EMPTY_MARKERS
+  const refreshMarkersOnMount = providedMarkers === undefined
   const defaultExpandedIds = React.useMemo(
     () => defaultExpandedItemIds(items),
     [items]
   )
-  const [localItems, setLocalItems] = React.useState(() =>
-    recomputeLocalWorkFlags(items)
-  )
+  const [localItems, setLocalItems] = React.useState(() => items)
   const [expandedIds, setExpandedIds] = React.useState(defaultExpandedIds)
   const [focusedItemId, setFocusedItemId] = React.useState<string | null>(null)
   const [focusRequest, setFocusRequest] = React.useState<FocusRequest | null>(
@@ -1841,8 +1878,8 @@ export function Outliner({
   const dragPreviewRef = React.useRef<DragPreview | null>(null)
   const coordinateDragActiveRef = React.useRef(false)
   const suppressNextNativeDropRef = React.useRef(false)
-  const [previousDoneStateById, setPreviousDoneStateById] = React.useState(
-    () => new Map<string, State>()
+  const [previousDoneStateById, setPreviousDoneStateById] = React.useState(() =>
+    previousDoneStates(items)
   )
   const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
     () => new Set<string>()
@@ -1857,7 +1894,7 @@ export function Outliner({
       return
     }
 
-    setLocalItems(recomputeLocalWorkFlags(items))
+    setLocalItems(items)
   }, [items])
 
   const mergeReturnedItem = React.useCallback((value: unknown) => {
@@ -3022,6 +3059,7 @@ export function Outliner({
           <MarkerControls
             initialMarkers={markers}
             onFilterChange={changeMarkerFilter}
+            refreshOnMount={refreshMarkersOnMount}
           />
           <ProductSwitcher
             items={activeItems}
@@ -3233,60 +3271,67 @@ export function Outliner({
           onRemoveDependency={removeExplicitDependency}
         />
       </div>
-      <DestructiveConfirmationDialog
-        open={Boolean(pendingDependencyRemoval)}
-        title={pendingDependencyTitle}
-        description={
-          <>
-            This removes{' '}
-            <span className="text-foreground font-medium">
-              {pendingDependencyLabel}
-            </span>{' '}
-            from{' '}
-            <span className="text-foreground font-medium">
-              {pendingDependencyRemoval?.item.title ?? 'this item'}
-            </span>
-            . This cannot be undone.
-          </>
-        }
-        confirmLabel={pendingDependencyTitle}
-        confirmingLabel="Removing dependency"
-        onCancel={closePendingDependencyRemoval}
-        onConfirm={confirmPendingDependencyRemoval}
-      />
-      <DestructiveConfirmationDialog
-        open={Boolean(pendingDeleteItem)}
-        title="Delete item"
-        description={
-          <>
-            This removes{' '}
-            <span className="text-foreground font-medium">
-              {pendingDeleteItem?.title ?? 'this item'}
-            </span>{' '}
-            and any nested items, comments, and activity. This cannot be undone.
-          </>
-        }
-        confirmLabel="Delete item"
-        confirmingLabel="Deleting item"
-        onCancel={() => setPendingDeleteItem(null)}
-        onConfirm={async () => {
-          if (pendingDeleteItem) {
-            await removeItem(pendingDeleteItem)
+      {pendingDependencyRemoval ? (
+        <DestructiveConfirmationDialog
+          open
+          title={pendingDependencyTitle}
+          description={
+            <>
+              This removes{' '}
+              <span className="text-foreground font-medium">
+                {pendingDependencyLabel}
+              </span>{' '}
+              from{' '}
+              <span className="text-foreground font-medium">
+                {pendingDependencyRemoval.item.title}
+              </span>
+              . This cannot be undone.
+            </>
           }
-        }}
-      />
-      <PromptResponseTimelineDialog
-        ancestors={timelineItemAncestors}
-        item={timelineItem}
-        onClose={() => setTimelineItemId(null)}
-        onAvailabilityChange={updatePromptResponseAvailability}
-      />
-      <ItemNotesDialog
-        ancestors={notesItemAncestors}
-        item={notesItem}
-        onClose={() => setNotesItemId(null)}
-        onAvailabilityChange={updateNotesAvailability}
-      />
+          confirmLabel={pendingDependencyTitle}
+          confirmingLabel="Removing dependency"
+          onCancel={closePendingDependencyRemoval}
+          onConfirm={confirmPendingDependencyRemoval}
+        />
+      ) : null}
+      {pendingDeleteItem ? (
+        <DestructiveConfirmationDialog
+          open
+          title="Delete item"
+          description={
+            <>
+              This removes{' '}
+              <span className="text-foreground font-medium">
+                {pendingDeleteItem.title}
+              </span>{' '}
+              and any nested items, comments, and activity. This cannot be
+              undone.
+            </>
+          }
+          confirmLabel="Delete item"
+          confirmingLabel="Deleting item"
+          onCancel={() => setPendingDeleteItem(null)}
+          onConfirm={async () => {
+            await removeItem(pendingDeleteItem)
+          }}
+        />
+      ) : null}
+      {timelineItem ? (
+        <PromptResponseTimelineDialog
+          ancestors={timelineItemAncestors}
+          item={timelineItem}
+          onClose={() => setTimelineItemId(null)}
+          onAvailabilityChange={updatePromptResponseAvailability}
+        />
+      ) : null}
+      {notesItem ? (
+        <ItemNotesDialog
+          ancestors={notesItemAncestors}
+          item={notesItem}
+          onClose={() => setNotesItemId(null)}
+          onAvailabilityChange={updateNotesAvailability}
+        />
+      ) : null}
     </div>
   )
 }
