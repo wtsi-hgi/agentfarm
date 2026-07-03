@@ -147,6 +147,29 @@ def test_migration_creates_parent_directory(tmp_path) -> None:
     assert _table_names(db_path) == EXPECTED_TABLES
 
 
+def test_scratchpad_schema_defaults_to_minimized(tmp_path) -> None:
+    """Scratchpad rows created with DB defaults match the app's empty state."""
+    db_path = tmp_path / "agentfarm.db"
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        conn.execute("INSERT INTO scratchpad (id) VALUES ('primary')")
+        row = conn.execute(
+            """
+            SELECT body, height, minimized, updated_by, updated_at
+            FROM scratchpad
+            WHERE id = 'primary'
+            """
+        ).fetchone()
+
+    assert row["body"] == ""
+    assert row["height"] == 220
+    assert row["minimized"] == 1
+    assert row["updated_by"] is None
+    assert row["updated_at"] is None
+
+
 def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None:
     """Applying migrations to an old DB adds item detail fields safely."""
     db_path = tmp_path / "agentfarm.db"

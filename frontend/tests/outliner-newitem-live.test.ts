@@ -423,6 +423,18 @@ async function render(element: React.ReactElement) {
   return container
 }
 
+async function rerenderLatestRoot(element: React.ReactElement) {
+  const root = roots[roots.length - 1]
+  if (!root) {
+    throw new Error('No mounted root to rerender')
+  }
+
+  await act(async () => {
+    root.render(element)
+  })
+  await flushReact()
+}
+
 function getButton(container: ParentNode, ariaLabel: string) {
   const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(button instanceof HTMLButtonElement)) {
@@ -727,6 +739,20 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(queryButton(container, 'Release mode')).toBeNull()
     expect(queryButton(container, 'Spec mode')).toBeNull()
     expect(hasOutlinerItem(container, 'review-state-section')).toBe(true)
+  })
+
+  it('syncs real items received after mounting with placeholder items', async () => {
+    const container = await render(React.createElement(Outliner, { items: [] }))
+
+    await rerenderLatestRoot(
+      React.createElement(Outliner, {
+        items: [item({ id: 'loaded-row', title: 'Loaded row' })],
+      })
+    )
+
+    const input = getItemInput(container, 'loaded-row')
+    expect(input.value).toBe('Loaded row')
+    expect(input.disabled).toBe(false)
   })
 
   it('shows up-next work and follow-up work in separate priority views', async () => {

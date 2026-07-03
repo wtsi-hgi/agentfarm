@@ -1887,13 +1887,13 @@ export function Outliner({
   const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
     () => new Map<string, string>()
   )
-  const initialItemsSyncedRef = React.useRef(false)
+  const previousItemsRef = React.useRef(items)
   React.useEffect(() => {
-    if (!initialItemsSyncedRef.current) {
-      initialItemsSyncedRef.current = true
+    if (previousItemsRef.current === items) {
       return
     }
 
+    previousItemsRef.current = items
     setLocalItems(items)
   }, [items])
 

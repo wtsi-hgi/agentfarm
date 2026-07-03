@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS scratchpad (
   id          TEXT PRIMARY KEY CHECK (id = 'primary'),
   body        TEXT NOT NULL DEFAULT '',
   height      INTEGER NOT NULL DEFAULT 220,
-  minimized   INTEGER NOT NULL DEFAULT 0,
+  minimized   INTEGER NOT NULL DEFAULT 1,
   updated_by  TEXT,
   updated_at  TEXT
 );
