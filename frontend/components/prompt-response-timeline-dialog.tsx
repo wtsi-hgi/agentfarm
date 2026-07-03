@@ -155,11 +155,12 @@ export function PromptResponseTimelineDialog({
   }
 
   return (
-    <div className="bg-background/85 fixed inset-x-0 top-0 bottom-[var(--scratchpad-reserved-bottom,0px)] z-40 flex p-2 backdrop-blur-sm sm:p-4">
+    <div className="bg-background/85 fixed inset-x-0 top-0 bottom-[var(--scratchpad-reserved-bottom,0px)] z-40 flex p-2 backdrop-blur-sm sm:p-4 lg:bottom-0">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        data-item-dialog-panel="true"
         className="bg-background border-border mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col rounded-md border shadow-xl"
       >
         <header className="border-border flex items-start justify-between gap-3 border-b px-4 py-3 sm:px-5">
@@ -188,7 +189,8 @@ export function PromptResponseTimelineDialog({
 
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div
-            className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5"
+            className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5 lg:h-[calc(100%-var(--scratchpad-reserved-bottom))] lg:self-start"
+            data-item-dialog-history="true"
             aria-label="Prompt/response history"
           >
             {loading ? (
@@ -249,6 +251,7 @@ export function PromptResponseTimelineDialog({
           </div>
 
           <form
+            data-item-dialog-entry-form="true"
             className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
             onSubmit={addEntry}
           >

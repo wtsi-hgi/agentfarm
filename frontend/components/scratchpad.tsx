@@ -27,6 +27,11 @@ type ScratchpadProps = {
   initialScratchpad?: ScratchpadState
 }
 
+type DockedFrame = {
+  left: number
+  right: number
+}
+
 function clampHeight(height: number): number {
   return Math.min(
     SCRATCHPAD_MAX_HEIGHT,
@@ -62,6 +67,7 @@ export function Scratchpad({
   )
   const [minimized, setMinimized] = React.useState(initialScratchpad.minimized)
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle')
+  const [dockedFrame, setDockedFrame] = React.useState<DockedFrame | null>(null)
   const firstSaveEffect = React.useRef(true)
   const latestSaveId = React.useRef(0)
 
@@ -136,6 +142,92 @@ export function Scratchpad({
     }
   }, [docked, height, minimized])
 
+  React.useLayoutEffect(() => {
+    if (!docked) {
+      setDockedFrame(null)
+      return
+    }
+
+    let animationFrame: number | null = null
+
+    function updateDockedFrame() {
+      const dialog = document.querySelector<HTMLElement>(
+        '[data-item-dialog-panel="true"]'
+      )
+      const entryForm = document.querySelector<HTMLElement>(
+        '[data-item-dialog-entry-form="true"]'
+      )
+      const dialogBox = dialog?.getBoundingClientRect()
+
+      if (!dialogBox) {
+        setDockedFrame(null)
+        return
+      }
+
+      const entryFormBox = entryForm?.getBoundingClientRect()
+      const entryFormBesideHistory =
+        entryFormBox !== undefined &&
+        entryFormBox.x > dialogBox.x + dialogBox.width / 2 &&
+        entryFormBox.y < dialogBox.bottom &&
+        entryFormBox.bottom > dialogBox.y
+      const scratchpadRightEdge = entryFormBesideHistory
+        ? entryFormBox.x
+        : dialogBox.right
+      const nextFrame = {
+        left: Math.round(dialogBox.x),
+        right: Math.round(window.innerWidth - scratchpadRightEdge),
+      }
+
+      setDockedFrame((current) => {
+        if (
+          current?.left === nextFrame.left &&
+          current.right === nextFrame.right
+        ) {
+          return current
+        }
+        return nextFrame
+      })
+    }
+
+    function scheduleDockedFrameUpdate() {
+      if (animationFrame !== null) {
+        return
+      }
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null
+        updateDockedFrame()
+      })
+    }
+
+    updateDockedFrame()
+    window.addEventListener('resize', scheduleDockedFrameUpdate)
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(scheduleDockedFrameUpdate)
+    const dialog = document.querySelector<HTMLElement>(
+      '[data-item-dialog-panel="true"]'
+    )
+    const entryForm = document.querySelector<HTMLElement>(
+      '[data-item-dialog-entry-form="true"]'
+    )
+    if (dialog) {
+      resizeObserver?.observe(dialog)
+    }
+    if (entryForm) {
+      resizeObserver?.observe(entryForm)
+    }
+
+    return () => {
+      window.removeEventListener('resize', scheduleDockedFrameUpdate)
+      resizeObserver?.disconnect()
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame)
+      }
+    }
+  }, [docked])
+
   function beginResize(event: React.PointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) {
       return
@@ -160,6 +252,21 @@ export function Scratchpad({
     window.addEventListener('pointerup', handlePointerUp, true)
   }
 
+  const panelStyle = React.useMemo<React.CSSProperties | undefined>(() => {
+    const style: React.CSSProperties = {}
+    if (!minimized) {
+      style.height = `${height}px`
+      if (docked) {
+        style.maxHeight = '45vh'
+      }
+    }
+    if (dockedFrame) {
+      style.left = dockedFrame.left
+      style.right = dockedFrame.right
+    }
+    return Object.keys(style).length > 0 ? style : undefined
+  }, [docked, dockedFrame, height, minimized])
+
   return (
     <section
       ref={panelRef}
@@ -172,11 +279,7 @@ export function Scratchpad({
         docked ? 'fixed inset-x-0 bottom-0 z-50' : 'sticky bottom-0 z-30',
         minimized ? 'h-11' : 'min-h-30'
       )}
-      style={
-        minimized
-          ? undefined
-          : { height: `${height}px`, maxHeight: docked ? '45vh' : undefined }
-      }
+      style={panelStyle}
     >
       <header className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-2">
         <button
