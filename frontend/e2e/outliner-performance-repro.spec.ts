@@ -4,6 +4,9 @@ import {
   type APIRequestContext,
   type Page,
 } from '@playwright/test'
+import { performance } from 'node:perf_hooks'
+
+import { STATE_OPTIONS } from '../lib/state-metadata'
 
 import { deleteBackendItem, gotoPath, signInAs } from './helpers'
 
@@ -22,6 +25,23 @@ type CreateItemInput = {
 const backendBaseUrl =
   process.env.PLAYWRIGHT_BACKEND_URL ?? 'https://127.0.0.1:8100'
 const childItemCount = 30
+const nestedSectionCount = 3
+const nestedSubsectionCount = 2
+const nestedLeafCount = 12
+const nestedFixtureItemCount =
+  1 +
+  nestedSectionCount +
+  nestedSectionCount * nestedSubsectionCount +
+  nestedSectionCount * nestedSubsectionCount * nestedLeafCount
+const requiredRowControlLabels = [
+  'Drag item',
+  'Add sibling',
+  'Open notes',
+  'Open prompt/response timeline',
+  'Delete item',
+] as const
+const loadBudgetMs = 1000
+const measuredLoadCount = 10
 
 async function createBackendItem(
   request: APIRequestContext,
@@ -62,12 +82,194 @@ async function seedLargeSection(
   return root
 }
 
+async function seedNestedSections(
+  request: APIRequestContext,
+  sessionToken: string,
+  titlePrefix: string
+) {
+  const titles: string[] = []
+  const rootTitle = `${titlePrefix} root`
+  const root = await createBackendItem(request, sessionToken, {
+    title: rootTitle,
+    parent_id: null,
+  })
+  titles.push(rootTitle)
+
+  try {
+    for (
+      let sectionIndex = 0;
+      sectionIndex < nestedSectionCount;
+      sectionIndex += 1
+    ) {
+      const sectionTitle = `${titlePrefix} section ${sectionIndex + 1}`
+      const section = await createBackendItem(request, sessionToken, {
+        title: sectionTitle,
+        parent_id: root.id,
+      })
+      titles.push(sectionTitle)
+
+      for (
+        let subsectionIndex = 0;
+        subsectionIndex < nestedSubsectionCount;
+        subsectionIndex += 1
+      ) {
+        const subsectionTitle = `${titlePrefix} section ${
+          sectionIndex + 1
+        }.${subsectionIndex + 1}`
+        const subsection = await createBackendItem(request, sessionToken, {
+          title: subsectionTitle,
+          parent_id: section.id,
+        })
+        titles.push(subsectionTitle)
+
+        for (let leafIndex = 0; leafIndex < nestedLeafCount; leafIndex += 1) {
+          const leafTitle = `${titlePrefix} item ${sectionIndex + 1}.${
+            subsectionIndex + 1
+          }.${leafIndex + 1}`
+          await createBackendItem(request, sessionToken, {
+            title: leafTitle,
+            parent_id: subsection.id,
+          })
+          titles.push(leafTitle)
+        }
+      }
+    }
+  } catch (error) {
+    await deleteBackendItem(request, sessionToken, root.id)
+    throw error
+  }
+
+  return { root, titles }
+}
+
 async function waitForRenderedItemCount(page: Page, minimumItems: number) {
   const itemInputs = page.getByRole('textbox', { name: 'Item text' })
   await expect
     .poll(async () => itemInputs.count())
     .toBeGreaterThanOrEqual(minimumItems)
   return itemInputs
+}
+
+async function waitForNestedFixtureReady(
+  page: Page,
+  fixtureTitles: readonly string[]
+) {
+  const expectedStateValues = STATE_OPTIONS.map((option) => option.value)
+
+  await page.waitForFunction(
+    ({ expectedStateValues, fixtureTitles, requiredControlLabels }) => {
+      const rows = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-mode]')
+      )
+      const rowTitles = rows.map(
+        (row) =>
+          row.querySelector<HTMLInputElement>('input[aria-label="Item text"]')
+            ?.value ?? ''
+      )
+      const fixtureTitlesReady =
+        rowTitles.length >= fixtureTitles.length &&
+        fixtureTitles.every((title) => rowTitles.includes(title))
+
+      const firstRowControlIcons: SVGElement[] = []
+      const rowControlsReady =
+        rows.length > 0 &&
+        rows.every((row, rowIndex) => {
+          const buttons = Array.from(row.querySelectorAll('button'))
+          return requiredControlLabels.every((label) => {
+            const button = buttons.find(
+              (candidate) => candidate.getAttribute('aria-label') === label
+            )
+            const icon = button?.querySelector('svg')
+            if (!icon) {
+              return false
+            }
+
+            if (rowIndex === 0) {
+              firstRowControlIcons.push(icon)
+            }
+            return true
+          })
+        })
+      const firstRowControlIconsVisible =
+        firstRowControlIcons.length === requiredControlLabels.length &&
+        firstRowControlIcons.every((icon) => {
+          const rect = icon.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0
+        })
+
+      const stateSelectors = Array.from(
+        document.querySelectorAll<HTMLSelectElement>(
+          'select[aria-label="Item state"]'
+        )
+      )
+      const stateSelectorsReady =
+        stateSelectors.length > 0 &&
+        stateSelectors.every((selector) => {
+          const optionValues = Array.from(selector.options).map(
+            (option) => option.value
+          )
+          return expectedStateValues.every((value) =>
+            optionValues.includes(value)
+          )
+        })
+      const scratchpad = document.querySelector<HTMLElement>(
+        '[data-scratchpad-panel="true"]'
+      )
+      const scratchpadRect = scratchpad?.getBoundingClientRect()
+      const scratchpadReady =
+        scratchpad !== null &&
+        scratchpadRect !== undefined &&
+        scratchpadRect.width > 0 &&
+        scratchpadRect.height > 0
+
+      return (
+        fixtureTitlesReady &&
+        rowControlsReady &&
+        firstRowControlIconsVisible &&
+        stateSelectorsReady &&
+        scratchpadReady
+      )
+    },
+    {
+      expectedStateValues,
+      fixtureTitles: [...fixtureTitles],
+      requiredControlLabels: [...requiredRowControlLabels],
+    },
+    {
+      polling: 10,
+      timeout: 10_000,
+    }
+  )
+}
+
+async function gotoMeasuredHome(page: Page) {
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await page.goto('/', { waitUntil: 'domcontentloaded' })
+      return
+    } catch (error) {
+      lastError = error
+      if (!String(error).includes('ERR_CONNECTION_REFUSED')) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to open /')
+}
+
+async function measureVisibleHomeLoad(
+  page: Page,
+  fixtureTitles: readonly string[]
+) {
+  await page.goto('about:blank')
+  const startedAt = performance.now()
+  await gotoMeasuredHome(page)
+  await waitForNestedFixtureReady(page, fixtureTitles)
+  return performance.now() - startedAt
 }
 
 test.describe('many-item outliner editing', () => {
@@ -110,6 +312,75 @@ test.describe('many-item outliner editing', () => {
         .toBeGreaterThanOrEqual(childItemCount + 1)
     } finally {
       if (root) {
+        await deleteBackendItem(request, sessionToken, root.id)
+      }
+    }
+  })
+
+  test('loads a 30+ item nested outline in under one second', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Nested load performance ${Date.now()}`
+    let root: TreeItemSummary | undefined
+
+    try {
+      const fixture = await seedNestedSections(
+        request,
+        sessionToken,
+        titlePrefix
+      )
+      root = fixture.root
+
+      await gotoPath(page, '/')
+      await waitForNestedFixtureReady(page, fixture.titles)
+      await page.waitForLoadState('networkidle')
+
+      const timings: number[] = []
+      for (let loadIndex = 0; loadIndex < measuredLoadCount; loadIndex += 1) {
+        timings.push(await measureVisibleHomeLoad(page, fixture.titles))
+      }
+
+      const screenshotPath = testInfo.outputPath(
+        'nested-load-performance-repro.png'
+      )
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: screenshotPath,
+      })
+      await testInfo.attach('nested-load-performance-repro', {
+        path: screenshotPath,
+        contentType: 'image/png',
+      })
+
+      const timingEvidence = {
+        budgetMs: loadBudgetMs,
+        fixtureItemCount: nestedFixtureItemCount,
+        timingsMs: timings.map((timing) => Math.round(timing)),
+      }
+      await testInfo.attach('nested-load-performance-timings', {
+        body: JSON.stringify(timingEvidence, null, 2),
+        contentType: 'application/json',
+      })
+      console.log(
+        `nested outline visible load timings: ${timingEvidence.timingsMs.join(
+          ', '
+        )} ms`
+      )
+
+      expect(
+        Math.max(...timings),
+        `expected every nested outline load to stay under ${loadBudgetMs} ms; timings were ${timingEvidence.timingsMs.join(
+          ', '
+        )} ms`
+      ).toBeLessThan(loadBudgetMs)
+    } finally {
+      if (root) {
+        await page.goto('about:blank')
         await deleteBackendItem(request, sessionToken, root.id)
       }
     }

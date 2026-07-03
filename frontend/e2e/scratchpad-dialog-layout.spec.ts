@@ -68,6 +68,12 @@ async function expectDialogReservedAboveScratchpad(
   }
 }
 
+async function closePageBeforeApiCleanup(page: Page) {
+  if (!page.isClosed()) {
+    await page.close()
+  }
+}
+
 test.describe('scratchpad with item dialogs', () => {
   test('keeps notes content usable above the docked scratchpad', async ({
     page,
@@ -117,6 +123,7 @@ test.describe('scratchpad with item dialogs', () => {
       await addButton.click()
       await expect(dialog).toContainText('Copied from scratchpad into notes')
     } finally {
+      await closePageBeforeApiCleanup(page)
       await updateScratchpad(request, sessionToken, {
         body: '',
         height: 220,
@@ -189,6 +196,7 @@ test.describe('scratchpad with item dialogs', () => {
         'Copied from scratchpad into a response'
       )
     } finally {
+      await closePageBeforeApiCleanup(page)
       await updateScratchpad(request, sessionToken, {
         body: '',
         height: 220,

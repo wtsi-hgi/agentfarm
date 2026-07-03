@@ -11,6 +11,7 @@ import {
   dependencySchema,
   farmContextSchema,
   healthResponseSchema,
+  homePayloadSchema,
   itemActivityListSchema,
   itemSchema,
   loginResponseSchema,
@@ -254,6 +255,10 @@ export async function fetchTree() {
 
 export async function fetchPriority() {
   return authenticatedRead('/api/v1/priority', priorityResponseSchema)
+}
+
+export async function fetchHomePayload() {
+  return authenticatedRead('/api/v1/home', homePayloadSchema)
 }
 
 export async function createItem(input: CreateItemInput) {

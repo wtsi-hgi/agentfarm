@@ -261,6 +261,19 @@ export const markerListSchema = z.array(markerSchema)
 
 export type Marker = z.infer<typeof markerSchema>
 
+export const homePayloadSchema = z
+  .object({
+    owner_username: z.string().min(1),
+    session: whoamiSchema,
+    items: treeSchema,
+    priority_items: priorityResponseSchema,
+    markers: markerListSchema,
+    scratchpad: scratchpadSchema,
+  })
+  .strict()
+
+export type HomePayload = z.infer<typeof homePayloadSchema>
+
 export const markerChangeFieldSchema = z.enum([
   'created',
   'changed',

@@ -8,21 +8,17 @@ import type {
   TreeItem,
 } from '@/lib/contracts'
 import { DEFAULT_SCRATCHPAD } from '@/lib/scratchpad'
+import { readSessionIdentity, type SessionIdentity } from '@/lib/session'
 
-import {
-  fetchFarmContext,
-  fetchMarkers,
-  fetchPriority,
-  fetchScratchpad,
-  fetchSessionIdentity,
-  fetchTree,
-} from './actions'
+import { fetchFarmContext, fetchHomePayload } from './actions'
 
 type HomeProtectedData = {
   items: TreeItem[]
   markers: Marker[]
+  ownerUsername: string | null
   priorityItems: PriorityItem[]
   scratchpad: Scratchpad
+  session: SessionIdentity | null
   authorized: boolean
 }
 
@@ -43,44 +39,53 @@ function countLeafItems(items: readonly TreeItem[]): number {
   return items.filter((item) => !sectionItemIds.has(item.id)).length
 }
 
-async function fetchProtectedHomeData(): Promise<HomeProtectedData> {
+function signedOutHomeData(): HomeProtectedData {
+  return {
+    authorized: false,
+    items: [],
+    markers: [],
+    ownerUsername: null,
+    priorityItems: [],
+    scratchpad: DEFAULT_SCRATCHPAD,
+    session: null,
+  }
+}
+
+async function fetchProtectedHomeData(
+  sessionToken: string
+): Promise<HomeProtectedData> {
   try {
-    const [items, priorityItems, markers, scratchpad] = await Promise.all([
-      fetchTree(),
-      fetchPriority(),
-      fetchMarkers(),
-      fetchScratchpad(),
-    ])
-    return { authorized: true, items, markers, priorityItems, scratchpad }
+    const payload = await fetchHomePayload()
+    return {
+      authorized: true,
+      items: payload.items,
+      markers: payload.markers,
+      ownerUsername: payload.owner_username,
+      priorityItems: payload.priority_items,
+      scratchpad: payload.scratchpad,
+      session: {
+        ...payload.session,
+        session_token: sessionToken,
+      },
+    }
   } catch (error) {
     if (!isUnauthorizedError(error)) {
       throw error
     }
 
-    return {
-      authorized: false,
-      items: [],
-      markers: [],
-      priorityItems: [],
-      scratchpad: DEFAULT_SCRATCHPAD,
-    }
+    return signedOutHomeData()
   }
 }
 
 export default async function Home() {
-  const [farmContext, session] = await Promise.all([
-    fetchFarmContext(),
-    fetchSessionIdentity(),
-  ])
-  const { authorized, items, markers, priorityItems, scratchpad } = session
-    ? await fetchProtectedHomeData()
-    : {
-        authorized: false,
-        items: [],
-        markers: [],
-        priorityItems: [],
-        scratchpad: DEFAULT_SCRATCHPAD,
-      }
+  const storedSession = await readSessionIdentity()
+  const protectedData = storedSession
+    ? await fetchProtectedHomeData(storedSession.session_token)
+    : signedOutHomeData()
+  const ownerUsername =
+    protectedData.ownerUsername ?? (await fetchFarmContext()).owner_username
+  const { authorized, items, markers, priorityItems, scratchpad, session } =
+    protectedData
   const leafItemCount = countLeafItems(items)
 
   const metrics = authorized ? (
@@ -98,7 +103,7 @@ export default async function Home() {
 
   return (
     <AppShell
-      ownerUsername={farmContext.owner_username}
+      ownerUsername={ownerUsername}
       session={authorized ? session : null}
       metrics={metrics}
     >

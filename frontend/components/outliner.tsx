@@ -1850,7 +1850,13 @@ export function Outliner({
   const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
     () => new Map<string, string>()
   )
+  const initialItemsSyncedRef = React.useRef(false)
   React.useEffect(() => {
+    if (!initialItemsSyncedRef.current) {
+      initialItemsSyncedRef.current = true
+      return
+    }
+
     setLocalItems(recomputeLocalWorkFlags(items))
   }, [items])
 

@@ -273,6 +273,7 @@ function colorDistance(left: Rgba, right: Rgba): number {
 }
 
 async function renderedIconState(button: Locator): Promise<RenderedIconState> {
+  await expect(button.locator('svg')).toBeVisible()
   return button.evaluate((element) => {
     const icon = element.querySelector('svg')
     if (!(icon instanceof SVGElement)) {
@@ -513,9 +514,11 @@ test('uses the same available treatment for notes and prompts on a row that has 
     await expect(activeTimelineButton).toHaveAccessibleDescription(
       'Prompt/response entries available'
     )
+    await expect(activeNotesButton.locator('svg')).toBeVisible()
+    await expect(activeTimelineButton.locator('svg')).toBeVisible()
 
     const screenshotPath = testInfo.outputPath('notes-and-prompts-row.png')
-    await activeRow.screenshot({ path: screenshotPath })
+    await activeRow.screenshot({ caret: 'initial', path: screenshotPath })
     await testInfo.attach('notes-and-prompts-row', {
       path: screenshotPath,
       contentType: 'image/png',

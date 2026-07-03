@@ -9,7 +9,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import config
+from api.schemas import ScratchpadUpdate
+from api.v1 import scratchpad as scratchpad_api
 from api.v1.authz import require_identity
+from db.connection import get_connection
 from db.migrate import apply_migrations
 from services import clock
 from services.session_tokens import issue_session_token
@@ -151,6 +154,31 @@ async def test_viewers_can_read_but_cannot_persist_scratchpad_changes(
     assert viewer_update.json() == {"detail": "owner only"}
     assert owner_read_after.json()["body"] == "Owner draft"
     assert owner_read_after.json()["height"] == 280
+
+
+@pytest.mark.anyio
+async def test_scratchpad_updates_claim_write_lock_before_reading_current_state(
+    fresh_db, monkeypatch
+) -> None:
+    """Partial scratchpad writes do not use a read-to-write transaction upgrade."""
+    original_scratchpad_row = scratchpad_api._scratchpad_row
+    observed_transactions: list[bool] = []
+
+    def recording_scratchpad_row(conn: sqlite3.Connection) -> sqlite3.Row | None:
+        observed_transactions.append(conn.in_transaction)
+        return original_scratchpad_row(conn)
+
+    monkeypatch.setattr(scratchpad_api, "_scratchpad_row", recording_scratchpad_row)
+
+    with get_connection(fresh_db) as conn:
+        saved = await scratchpad_api.update_scratchpad(
+            ScratchpadUpdate(body="Serialized autosave"),
+            object(),
+            conn,
+        )
+
+    assert saved.body == "Serialized autosave"
+    assert observed_transactions == [True]
 
 
 @pytest.mark.anyio

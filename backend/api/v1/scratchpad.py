@@ -72,11 +72,16 @@ async def update_scratchpad(
     conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ScratchpadOut:
     """Persist owner scratchpad edits, size, and minimized state."""
-    current = _row_to_scratchpad(_scratchpad_row(conn))
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
+        current = _row_to_scratchpad(_scratchpad_row(conn))
         return current
 
+    # Claim the write lock before reading the current singleton row. This keeps
+    # concurrent partial updates from starting as read transactions that later
+    # fail to upgrade under parallel browser autosaves.
+    conn.execute("BEGIN IMMEDIATE")
+    current = _row_to_scratchpad(_scratchpad_row(conn))
     saved = ScratchpadOut(
         body=updates.get("body", current.body),
         height=updates.get("height", current.height),

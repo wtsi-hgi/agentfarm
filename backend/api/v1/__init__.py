@@ -12,6 +12,7 @@ from . import (
     dependencies,
     greetings,
     health,
+    home,
     items,
     markers,
     notes,
@@ -27,6 +28,7 @@ api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(greetings.router, tags=["greetings"])
 api_router.include_router(auth.router, tags=["auth"])
+api_router.include_router(home.router, tags=["home"])
 api_router.include_router(items.router, tags=["items"])
 api_router.include_router(dependencies.router, tags=["dependencies"])
 api_router.include_router(priority.router, tags=["priority"])

@@ -174,7 +174,11 @@ test.describe('dependency details UI reproduction', () => {
       await expect(detailsPanel).toContainText(dependentSection.title)
 
       await mkdir(path.dirname(screenshotPath), { recursive: true })
-      await page.screenshot({ path: screenshotPath, fullPage: true })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: screenshotPath,
+      })
       await testInfo.attach('dependency details UI', {
         path: screenshotPath,
         contentType: 'image/png',

@@ -221,6 +221,7 @@ test.describe('root sibling creation order', () => {
         afterCreateItems.findIndex((item) => item.id === root.id)
       ) {
         await page.screenshot({
+          caret: 'initial',
           path: testInfo.outputPath('root-sibling-order-wrong.png'),
           fullPage: true,
         })

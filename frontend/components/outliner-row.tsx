@@ -33,6 +33,32 @@ export const MODE_COLOUR_MAP = {
 const AVAILABLE_ENTRY_BUTTON_CLASS =
   'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
 
+const STATE_OPTION_ELEMENTS = STATE_OPTIONS.map((option) => (
+  <option key={option.value} value={option.value}>
+    {option.label}
+  </option>
+))
+
+const DRAG_ICON = <GripVertical className="size-3.5" aria-hidden="true" />
+const COLLAPSED_ICON = <ChevronRight className="size-4" aria-hidden="true" />
+const EXPANDED_ICON = <ChevronDown className="size-4" aria-hidden="true" />
+const ADD_SIBLING_ICON = (
+  <CornerDownLeft className="size-3.5" aria-hidden="true" />
+)
+const NOTES_ICON = (
+  <NotebookText className="size-3.5" strokeWidth={2} aria-hidden="true" />
+)
+const NOTES_AVAILABLE_ICON = (
+  <NotebookText className="size-3.5" strokeWidth={2.75} aria-hidden="true" />
+)
+const PROMPT_RESPONSE_ICON = (
+  <MessagesSquare className="size-3.5" strokeWidth={2} aria-hidden="true" />
+)
+const PROMPT_RESPONSE_AVAILABLE_ICON = (
+  <MessagesSquare className="size-3.5" strokeWidth={2.75} aria-hidden="true" />
+)
+const DELETE_ICON = <Trash2 className="size-3.5" aria-hidden="true" />
+
 function selectedState(value: string): State | null {
   return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
 }
@@ -223,7 +249,7 @@ export function OutlinerRow({
         onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
       >
-        <GripVertical className="size-3.5" aria-hidden="true" />
+        {DRAG_ICON}
       </Button>
       <div className="flex size-8 items-center justify-center">
         <input
@@ -247,11 +273,7 @@ export function OutlinerRow({
             title={collapsed ? 'Expand' : 'Collapse'}
             onClick={() => onToggle(item.id)}
           >
-            {collapsed ? (
-              <ChevronRight className="size-4" aria-hidden="true" />
-            ) : (
-              <ChevronDown className="size-4" aria-hidden="true" />
-            )}
+            {collapsed ? COLLAPSED_ICON : EXPANDED_ICON}
           </Button>
         ) : (
           <span className="size-7" aria-hidden="true" />
@@ -278,7 +300,7 @@ export function OutlinerRow({
             disabled={pending}
             onClick={createSibling}
           >
-            <CornerDownLeft className="size-3.5" aria-hidden="true" />
+            {ADD_SIBLING_ICON}
           </Button>
         </div>
         {error ? (
@@ -300,11 +322,7 @@ export function OutlinerRow({
             disabled={pending}
             onChange={handleStateChange}
           >
-            {STATE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+            {STATE_OPTION_ELEMENTS}
           </select>
         ) : null}
         <Button
@@ -325,11 +343,7 @@ export function OutlinerRow({
             onOpenNotes(item)
           }}
         >
-          <NotebookText
-            className="size-3.5"
-            strokeWidth={hasNotes ? 2.75 : 2}
-            aria-hidden="true"
-          />
+          {hasNotes ? NOTES_AVAILABLE_ICON : NOTES_ICON}
         </Button>
         <Button
           type="button"
@@ -357,11 +371,9 @@ export function OutlinerRow({
             onOpenPromptTimeline(item)
           }}
         >
-          <MessagesSquare
-            className="size-3.5"
-            strokeWidth={hasPromptResponseEntries ? 2.75 : 2}
-            aria-hidden="true"
-          />
+          {hasPromptResponseEntries
+            ? PROMPT_RESPONSE_AVAILABLE_ICON
+            : PROMPT_RESPONSE_ICON}
         </Button>
         <Button
           type="button"
@@ -373,7 +385,7 @@ export function OutlinerRow({
           disabled={pending}
           onClick={() => void run(() => onDelete(item))}
         >
-          <Trash2 className="size-3.5" aria-hidden="true" />
+          {DELETE_ICON}
         </Button>
         <span
           aria-label="Item readiness"

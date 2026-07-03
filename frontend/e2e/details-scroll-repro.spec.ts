@@ -107,7 +107,7 @@ test.describe('details panel scroll reproduction', () => {
       })
 
       await mkdir(path.dirname(screenshotPath), { recursive: true })
-      await page.screenshot({ path: screenshotPath })
+      await page.screenshot({ caret: 'initial', path: screenshotPath })
       await testInfo.attach('details panel after scrolling lower items', {
         path: screenshotPath,
         contentType: 'image/png',

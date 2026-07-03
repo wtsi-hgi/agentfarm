@@ -7,6 +7,7 @@ import {
   dependencySchema,
   farmContextSchema,
   healthResponseSchema,
+  homePayloadSchema,
   itemActivityListSchema,
   itemActivitySchema,
   itemSchema,
@@ -509,5 +510,71 @@ describe('marker contracts', () => {
     }
 
     expect(markerChangeItemsSchema.parse([item])).toEqual([item])
+  })
+})
+
+describe('home payload contract', () => {
+  const item = {
+    id: 'home-item-1',
+    title: 'Home item',
+    slug: 'home-item',
+    parent_id: null,
+    sort_order: 1,
+    state: 'not-started',
+    mode: 'prompt-agent',
+    effort: 'medium',
+    blocked_external: false,
+    blocked_note: null,
+    blocked_followup_date: null,
+    description: '',
+    repo_url: null,
+    usage: '',
+    created_by: 'alice',
+    updated_by: 'alice',
+    created_at: '2026-06-29T00:00:00.000000Z',
+    updated_at: '2026-06-29T00:00:00.000000Z',
+    state_changed_at: '2026-06-29T00:00:00.000000Z',
+    completed_at: null,
+  }
+  const payload = {
+    owner_username: 'alice',
+    session: { username: 'alice', role: 'owner' },
+    items: [
+      {
+        ...item,
+        needs: [],
+        needs_edges: [],
+        actionable: true,
+        complete: false,
+        has_notes: false,
+        has_prompt_response_entries: false,
+      },
+    ],
+    priority_items: [{ ...item, rank: 1 }],
+    markers: [
+      {
+        id: 'marker-1',
+        name: 'Before launch',
+        at: '2026-06-29T00:00:00.000000Z',
+        created_at: '2026-06-29T00:00:00.000000Z',
+      },
+    ],
+    scratchpad: {
+      body: 'Collected notes',
+      height: 260,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:00:00.000000Z',
+    },
+  }
+
+  it('parses the authenticated home page aggregate payload', () => {
+    expect(homePayloadSchema.parse(payload)).toEqual(payload)
+  })
+
+  it('rejects missing aggregate fields', () => {
+    const { scratchpad: _scratchpad, ...withoutScratchpad } = payload
+
+    expect(homePayloadSchema.safeParse(withoutScratchpad).success).toBe(false)
   })
 })

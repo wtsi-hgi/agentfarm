@@ -322,7 +322,11 @@ async function dragRowWithPointer(
 
 async function captureMoveAnywhereRepro(page: Page, testInfo: TestInfo) {
   await mkdir(screenshotDir, { recursive: true })
-  await page.screenshot({ path: moveAnywhereScreenshotPath, fullPage: true })
+  await page.screenshot({
+    caret: 'initial',
+    fullPage: true,
+    path: moveAnywhereScreenshotPath,
+  })
   await testInfo.attach('move anywhere drag repro', {
     path: moveAnywhereScreenshotPath,
     contentType: 'image/png',
@@ -789,7 +793,11 @@ test.describe('item row reorder affordance', () => {
       ).toHaveValue(third.title)
 
       await mkdir(screenshotDir, { recursive: true })
-      await page.screenshot({ path: arrowsScreenshotPath, fullPage: true })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: arrowsScreenshotPath,
+      })
       await testInfo.attach('row movement controls area', {
         path: arrowsScreenshotPath,
         contentType: 'image/png',
@@ -844,7 +852,11 @@ test.describe('item row reorder affordance', () => {
       })
       await page.waitForTimeout(100)
 
-      await page.screenshot({ path: dragPreviewScreenshotPath, fullPage: true })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: dragPreviewScreenshotPath,
+      })
       await testInfo.attach('concrete drag landing preview', {
         path: dragPreviewScreenshotPath,
         contentType: 'image/png',

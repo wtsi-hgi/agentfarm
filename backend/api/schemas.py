@@ -351,3 +351,14 @@ class TreeItemOut(ItemOut):
     complete: bool
     has_notes: bool
     has_prompt_response_entries: bool
+
+
+class HomePayloadOut(BaseModel):
+    """Authenticated payload for the initial home page render."""
+
+    owner_username: str
+    session: WhoAmI
+    items: list[TreeItemOut]
+    priority_items: list[PriorityItemOut]
+    markers: list[MarkerOut]
+    scratchpad: ScratchpadOut
