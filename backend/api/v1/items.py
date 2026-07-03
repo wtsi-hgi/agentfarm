@@ -165,7 +165,7 @@ def _preceding_sibling_id(conn: sqlite3.Connection, item_id: str) -> str | None:
 async def create_item(
     payload: ItemCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ItemOut:
     """Create an item with server-assigned id/slug/order/timestamps (A1).
 
@@ -247,7 +247,7 @@ async def create_item(
 async def delete_item(
     item_id: str,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> DeletedResponse:
     """Delete an item and its whole subtree, then clean the group it left (A4).
 
@@ -291,7 +291,7 @@ async def delete_item(
 async def indent_item(
     item_id: str,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ItemOut:
     """Indent an item: make it the first child of its preceding sibling (F2 Tab).
 
@@ -336,7 +336,7 @@ async def indent_item(
 async def outdent_item(
     item_id: str,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ItemOut:
     """Outdent an item: move it up one level, after its former parent (F2 Shift-Tab).
 
@@ -387,7 +387,7 @@ async def move_item(
     item_id: str,
     payload: MoveRequest,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ItemOut:
     """Reparent and/or reorder an item (and its whole subtree) (G1).
 
@@ -466,7 +466,7 @@ async def move_item(
 @router.get("/tree", response_model=list[TreeItemOut])
 async def get_tree(
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[TreeItemOut]:
     """Return every item in tree order with live labels and work flags (A3/H1).
 
@@ -518,7 +518,7 @@ async def get_tree(
 async def list_item_activity(
     item_id: str,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[ItemActivityOut]:
     """List timestamped state-change activity for the item detail panel."""
     if not _item_exists(conn, item_id):
@@ -541,7 +541,7 @@ async def update_item(
     item_id: str,
     payload: ItemUpdate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> ItemOut:
     """Edit any subset of an item's fields (A2).
 

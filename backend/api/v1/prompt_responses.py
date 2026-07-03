@@ -36,7 +36,7 @@ async def create_prompt_response_entry(
     item_id: str,
     payload: PromptResponseEntryCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> PromptResponseEntryOut:
     """Record one prompt or response entry for an existing item."""
     if not _item_exists(conn, item_id):
@@ -66,7 +66,7 @@ async def create_prompt_response_entry(
 async def list_prompt_response_entries(
     item_id: str,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[PromptResponseEntryOut]:
     """List an item's prompt/response timeline entries oldest first."""
     if not _item_exists(conn, item_id):

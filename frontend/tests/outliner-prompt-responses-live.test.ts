@@ -26,10 +26,12 @@ const actionMocks = vi.hoisted(() => ({
   fetchMarkers: vi.fn(),
   fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
   patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
 }))
 
 vi.mock('@/app/actions', () => actionMocks)
@@ -379,6 +381,69 @@ describe('Outliner prompt/response timeline overlay', () => {
     expect(header.textContent?.indexOf('Implementation section')).toBeLessThan(
       header.textContent?.indexOf('Prompt target') ?? -1
     )
+  })
+
+  it('keeps the scratchpad visible and editable while the prompt/response timeline is open', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Collected prompt text',
+        height: input.height ?? 260,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Collected prompt text',
+          height: 260,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+
+    await click(
+      getItemButton(container, 'root', 'Open prompt/response timeline')
+    )
+    const dialog = getTimelineDialog()
+    const scratchpad = document.body.querySelector(
+      '[data-scratchpad-panel="true"]'
+    )
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Scratch pad notes"]'
+    )
+
+    expect(dialog.textContent).toContain('Root project')
+    expect(scratchpad).toBeInstanceOf(HTMLElement)
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement)
+    expect((textarea as HTMLTextAreaElement).readOnly).toBe(false)
+
+    await changeTextarea(
+      textarea as HTMLTextAreaElement,
+      'Collected prompt text\nPaste into response'
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Collected prompt text\nPaste into response',
+      height: 260,
+      minimized: false,
+    })
+    vi.useRealTimers()
   })
 
   it('adds prompt and response entries with server timestamps visible', async () => {

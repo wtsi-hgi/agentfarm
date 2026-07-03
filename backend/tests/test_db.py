@@ -3,9 +3,9 @@
 These assert observable behaviour of the public DB surface:
 
 * ``apply_migrations`` creates the schema tables and is idempotent.
-* ``get_connection`` enforces ``PRAGMA foreign_keys = ON`` and sets a
-  ``sqlite3.Row`` row factory, so the schema's ``ON DELETE CASCADE`` actually
-  cascades (relied on by later delete-cascade stories).
+* ``get_connection`` enforces SQLite pragmas for foreign keys and request
+  overlap, and sets a ``sqlite3.Row`` row factory, so the schema's ``ON DELETE
+  CASCADE`` actually cascades (relied on by later delete-cascade stories).
 
 All DB paths use pytest's ``tmp_path`` so nothing is written outside the test
 sandbox.
@@ -16,7 +16,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from db.connection import get_connection
+from db.connection import SQLITE_BUSY_TIMEOUT_MS, get_connection
 from db.migrate import apply_migrations
 
 EXPECTED_TABLES = {
@@ -25,6 +25,7 @@ EXPECTED_TABLES = {
     "comments",
     "item_notes",
     "prompt_response_entries",
+    "scratchpad",
     "item_state_changes",
     "markers",
     "runs",
@@ -362,6 +363,19 @@ def test_connection_has_foreign_keys_enabled(tmp_path) -> None:
         (foreign_keys,) = conn.execute("PRAGMA foreign_keys").fetchone()
 
     assert foreign_keys == 1
+
+
+def test_connection_waits_for_short_lived_sqlite_locks(tmp_path) -> None:
+    """Connections tolerate normal overlapping request reads and writes."""
+    db_path = tmp_path / "agentfarm.db"
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        (busy_timeout,) = conn.execute("PRAGMA busy_timeout").fetchone()
+        (journal_mode,) = conn.execute("PRAGMA journal_mode").fetchone()
+
+    assert busy_timeout == SQLITE_BUSY_TIMEOUT_MS
+    assert journal_mode == "wal"
 
 
 def test_connection_row_factory_is_sqlite_row(tmp_path) -> None:

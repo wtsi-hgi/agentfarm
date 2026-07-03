@@ -24,6 +24,7 @@ import {
   markerChangeItemsSchema,
   runListSchema,
   runSchema,
+  scratchpadSchema,
   stateSchema,
   treeSchema,
   whoamiSchema,
@@ -391,6 +392,44 @@ describe('note contracts', () => {
     const { updated_at: _updatedAt, ...withoutUpdatedAt } = note
 
     expect(noteSchema.safeParse(withoutUpdatedAt).success).toBe(false)
+  })
+})
+
+describe('scratchpad contract', () => {
+  const scratchpad = {
+    body: 'Collect from notes\nPaste into prompt',
+    height: 312,
+    minimized: false,
+    updated_by: 'alice',
+    updated_at: '2026-07-03T09:30:00.000000Z',
+  }
+
+  it('parses the persisted singleton scratchpad payload', () => {
+    expect(scratchpadSchema.parse(scratchpad)).toEqual(scratchpad)
+    expect(
+      scratchpadSchema.parse({
+        body: '',
+        height: 220,
+        minimized: true,
+        updated_by: null,
+        updated_at: null,
+      })
+    ).toEqual({
+      body: '',
+      height: 220,
+      minimized: true,
+      updated_by: null,
+      updated_at: null,
+    })
+  })
+
+  it('rejects scratchpad payloads without persisted size or state', () => {
+    const { height: _height, ...withoutHeight } = scratchpad
+
+    expect(scratchpadSchema.safeParse(withoutHeight).success).toBe(false)
+    expect(
+      scratchpadSchema.safeParse({ ...scratchpad, minimized: 'no' }).success
+    ).toBe(false)
   })
 })
 

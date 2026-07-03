@@ -39,7 +39,7 @@ def _row_to_priority_item(row: Mapping[str, Any], rank: int) -> PriorityItemOut:
 @router.get("/priority", response_model=list[PriorityItemOut])
 async def get_priority(
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[PriorityItemOut]:
     """Return actionable leaves in descending unblock-leverage order."""
     projection = leverage.build_projection(conn)

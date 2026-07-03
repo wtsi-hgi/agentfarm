@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from models.enums import Effort, Mode, State
 
@@ -167,6 +167,14 @@ class PromptResponseEntryCreate(BaseModel):
     body: str
 
 
+class ScratchpadUpdate(BaseModel):
+    """Request body for autosaving the singleton farm scratchpad."""
+
+    body: str | None = None
+    height: int | None = Field(default=None, ge=120, le=640)
+    minimized: bool | None = None
+
+
 class DependencyCreate(BaseModel):
     """Request body for ``POST /dependencies`` (spec: D1).
 
@@ -229,6 +237,16 @@ class PromptResponseEntryOut(BaseModel):
     created_by: str
     body: str
     created_at: str
+
+
+class ScratchpadOut(BaseModel):
+    """Response model for the singleton scratchpad."""
+
+    body: str
+    height: int
+    minimized: bool
+    updated_by: str | None
+    updated_at: str | None
 
 
 class ItemActivityOut(BaseModel):

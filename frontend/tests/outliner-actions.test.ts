@@ -20,6 +20,7 @@ import {
   fetchNotes,
   fetchPromptResponseEntries,
   fetchPriority,
+  fetchScratchpad,
   fetchTree,
   listRuns,
   indentItem,
@@ -27,6 +28,7 @@ import {
   outdentItem,
   patchItem,
   spawnItem,
+  updateScratchpad,
 } from '@/app/actions'
 import type { Item } from '@/lib/contracts'
 
@@ -594,6 +596,68 @@ describe('outliner mutation Server Actions', () => {
     ).toEqual(expectedAuthHeaders(3))
     expect(cacheMocks.revalidatePath).toHaveBeenCalledTimes(2)
     expect(cacheMocks.revalidatePath).toHaveBeenCalledWith('/')
+  })
+
+  it('exposes scratchpad reads and autosaves without route revalidation', async () => {
+    const scratchpad = {
+      body: 'Collect from notes',
+      height: 260,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:30:00.000000Z',
+    }
+    const updatedScratchpad = {
+      ...scratchpad,
+      body: 'Collect from notes\nPaste into prompt',
+      height: 318,
+      minimized: true,
+    }
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'GET' && pathname === '/api/v1/scratchpad') {
+        return jsonResponse(scratchpad)
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/scratchpad') {
+        return jsonResponse(updatedScratchpad)
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(fetchScratchpad()).resolves.toEqual(scratchpad)
+    await expect(
+      updateScratchpad({
+        body: 'Collect from notes\nPaste into prompt',
+        height: 318,
+        minimized: true,
+      })
+    ).resolves.toEqual(updatedScratchpad)
+
+    expect(
+      fetch.mock.calls.map(([url, init]) => ({
+        method: init?.method ?? 'GET',
+        path: new URL(url.toString()).pathname,
+        body: requestBody(init),
+      }))
+    ).toEqual([
+      { method: 'GET', path: '/api/v1/scratchpad', body: null },
+      {
+        method: 'PATCH',
+        path: '/api/v1/scratchpad',
+        body: {
+          body: 'Collect from notes\nPaste into prompt',
+          height: 318,
+          minimized: true,
+        },
+      },
+    ])
+    expect(
+      fetch.mock.calls.map(([, init]) => requestAuthHeaders(init))
+    ).toEqual(expectedAuthHeaders(2))
+    expect(cacheMocks.revalidatePath).not.toHaveBeenCalled()
   })
 
   it('forwards the signed session token for protected read Server Actions', async () => {

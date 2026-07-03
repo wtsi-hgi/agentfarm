@@ -137,6 +137,30 @@ export async function createPromptResponseEntry(
   }
 }
 
+export async function updateScratchpad(
+  request: APIRequestContext,
+  sessionToken: string,
+  input: {
+    body?: string
+    height?: number
+    minimized?: boolean
+  }
+) {
+  const response = await request.patch(`${backendBaseUrl}/api/v1/scratchpad`, {
+    data: input,
+    headers: {
+      'x-agentfarm-session': sessionToken,
+    },
+  })
+  const responseBody = await response.text()
+  expect(response.ok(), responseBody).toBeTruthy()
+  return JSON.parse(responseBody) as {
+    body: string
+    height: number
+    minimized: boolean
+  }
+}
+
 export async function deleteBackendItem(
   request: APIRequestContext,
   sessionToken: string,

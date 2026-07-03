@@ -26,10 +26,12 @@ const actionMocks = vi.hoisted(() => ({
   fetchMarkers: vi.fn(),
   fetchNotes: vi.fn(),
   fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
   indentItem: vi.fn(),
   moveItem: vi.fn(),
   outdentItem: vi.fn(),
   patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
 }))
 
 vi.mock('@/app/actions', () => actionMocks)
@@ -180,6 +182,35 @@ async function changeTextarea(textarea: HTMLTextAreaElement, value: string) {
   await flushReact()
 }
 
+async function pointerDragVertically(
+  element: HTMLElement,
+  startY: number,
+  endY: number
+) {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientY: startY,
+      })
+    )
+    window.dispatchEvent(
+      new MouseEvent('pointermove', {
+        bubbles: true,
+        clientY: endY,
+      })
+    )
+    window.dispatchEvent(
+      new MouseEvent('pointerup', {
+        bubbles: true,
+        clientY: endY,
+      })
+    )
+  })
+  await flushReact()
+}
+
 describe('Outliner notes overlay', () => {
   beforeEach(() => {
     ;(
@@ -204,10 +235,24 @@ describe('Outliner notes overlay', () => {
     actionMocks.fetchMarkers.mockResolvedValue([])
     actionMocks.fetchNotes.mockResolvedValue([])
     actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
+    actionMocks.fetchScratchpad.mockResolvedValue({
+      body: '',
+      height: 220,
+      minimized: true,
+      updated_by: null,
+      updated_at: null,
+    })
     actionMocks.indentItem.mockResolvedValue({})
     actionMocks.moveItem.mockResolvedValue({})
     actionMocks.outdentItem.mockResolvedValue({})
     actionMocks.patchItem.mockResolvedValue({})
+    actionMocks.updateScratchpad.mockResolvedValue({
+      body: '',
+      height: 220,
+      minimized: true,
+      updated_by: null,
+      updated_at: null,
+    })
     window.requestAnimationFrame = (callback) => {
       callback(0)
       return 1
@@ -217,6 +262,7 @@ describe('Outliner notes overlay', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     for (const root of roots) {
       act(() => root.unmount())
     }
@@ -463,5 +509,158 @@ describe('Outliner notes overlay', () => {
     expect(header.textContent?.indexOf('Implementation section')).toBeLessThan(
       header.textContent?.indexOf('Notes target') ?? -1
     )
+  })
+
+  it('keeps the scratchpad visible and editable while notes are open', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Collected note text',
+        height: input.height ?? 260,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Collected note text',
+          height: 260,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+
+    await click(getItemButton(container, 'root', 'Open notes'))
+    const dialog = getNotesDialog()
+    const scratchpad = document.body.querySelector(
+      '[data-scratchpad-panel="true"]'
+    )
+    const textarea = document.body.querySelector(
+      'textarea[aria-label="Scratch pad notes"]'
+    )
+
+    expect(dialog.textContent).toContain('Root project')
+    expect(scratchpad).toBeInstanceOf(HTMLElement)
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement)
+    expect((textarea as HTMLTextAreaElement).readOnly).toBe(false)
+
+    await changeTextarea(
+      textarea as HTMLTextAreaElement,
+      'Collected note text\nPaste into prompt'
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Collected note text\nPaste into prompt',
+      height: 260,
+      minimized: false,
+    })
+    vi.useRealTimers()
+  })
+
+  it('renders a read-only scratchpad for managers and keeps their changes local', async () => {
+    vi.useFakeTimers()
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Owner scratch',
+          height: 240,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: false,
+      })
+    )
+
+    const textarea = container.querySelector(
+      'textarea[aria-label="Scratch pad notes"]'
+    )
+    const minimize = getButton(container, 'Minimize scratch pad')
+
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement)
+    expect((textarea as HTMLTextAreaElement).readOnly).toBe(true)
+    await click(minimize)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).not.toHaveBeenCalled()
+    expect(
+      container.querySelector('[data-scratchpad-minimized="true"]')
+    ).toBeInstanceOf(HTMLElement)
+  })
+
+  it('autosaves owner scratchpad resize and minimize changes', async () => {
+    vi.useFakeTimers()
+    actionMocks.updateScratchpad.mockImplementation(
+      async (input: {
+        body?: string
+        height?: number
+        minimized?: boolean
+      }) => ({
+        body: input.body ?? 'Owner scratch',
+        height: input.height ?? 240,
+        minimized: input.minimized ?? false,
+        updated_by: 'alice',
+        updated_at: '2026-07-03T09:30:00.000000Z',
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [item({ id: 'root', title: 'Root project' })],
+        scratchpad: {
+          body: 'Owner scratch',
+          height: 240,
+          minimized: false,
+          updated_by: 'alice',
+          updated_at: '2026-07-03T09:00:00.000000Z',
+        },
+        scratchpadEditable: true,
+      })
+    )
+    const resize = getButton(container, 'Resize scratch pad')
+    const minimize = getButton(container, 'Minimize scratch pad')
+
+    await pointerDragVertically(resize, 300, 230)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Owner scratch',
+      height: 310,
+      minimized: false,
+    })
+
+    await click(minimize)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350)
+    })
+    await flushReact()
+
+    expect(actionMocks.updateScratchpad).toHaveBeenLastCalledWith({
+      body: 'Owner scratch',
+      height: 310,
+      minimized: true,
+    })
   })
 })

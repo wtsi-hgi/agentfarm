@@ -47,7 +47,7 @@ async def create_note(
     item_id: str,
     payload: NoteCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> NoteOut:
     """Record one dated note for an existing item."""
     if not _item_exists(conn, item_id):
@@ -71,7 +71,7 @@ async def create_note(
 async def list_notes(
     item_id: str,
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[NoteOut]:
     """List an item's notes oldest first."""
     if not _item_exists(conn, item_id):
@@ -94,7 +94,7 @@ async def update_note(
     note_id: str,
     payload: NoteUpdate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> NoteOut:
     """Edit a note body while preserving its original creation timestamp."""
     _note_row_or_404(conn, note_id)

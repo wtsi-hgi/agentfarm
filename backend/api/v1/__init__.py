@@ -18,6 +18,7 @@ from . import (
     priority,
     prompt_responses,
     runs,
+    scratchpad,
     spawn,
 )
 
@@ -32,6 +33,7 @@ api_router.include_router(priority.router, tags=["priority"])
 api_router.include_router(comments.router, tags=["comments"])
 api_router.include_router(notes.router, tags=["notes"])
 api_router.include_router(prompt_responses.router, tags=["prompt-responses"])
+api_router.include_router(scratchpad.router, tags=["scratchpad"])
 api_router.include_router(markers.router, tags=["markers"])
 api_router.include_router(runs.router, tags=["runs"])
 api_router.include_router(spawn.router, tags=["spawn"])

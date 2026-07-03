@@ -9,6 +9,7 @@ import {
   fetchFarmContext,
   fetchMarkers,
   fetchPriority,
+  fetchScratchpad,
   fetchSessionIdentity,
   fetchTree,
   logout,
@@ -79,6 +80,14 @@ const markers = [
   },
 ] satisfies Marker[]
 
+const scratchpad = {
+  body: 'Collected notes',
+  height: 260,
+  minimized: false,
+  updated_by: 'alice',
+  updated_at: '2026-07-03T09:00:00.000000Z',
+}
+
 function jsonResponse(payload: unknown) {
   return new Response(JSON.stringify(payload), {
     headers: { 'content-type': 'application/json' },
@@ -124,6 +133,12 @@ function stubBackend() {
       }
       return jsonResponse(markers)
     }
+    if (pathname === '/api/v1/scratchpad') {
+      if (!authToken(init)) {
+        return errorResponse(401, 'Authentication required')
+      }
+      return jsonResponse(scratchpad)
+    }
     if (pathname === '/api/v1/auth/context') {
       return jsonResponse({ owner_username: 'alice' })
     }
@@ -165,6 +180,7 @@ describe('app page BFF wiring', () => {
     await expect(fetchTree()).resolves.toEqual(treeItems)
     await expect(fetchPriority()).resolves.toEqual(priorityItems)
     await expect(fetchMarkers()).resolves.toEqual(markers)
+    await expect(fetchScratchpad()).resolves.toEqual(scratchpad)
     await expect(fetchFarmContext()).resolves.toEqual({
       owner_username: 'alice',
     })
@@ -180,6 +196,7 @@ describe('app page BFF wiring', () => {
       '/api/v1/tree',
       '/api/v1/priority',
       '/api/v1/markers',
+      '/api/v1/scratchpad',
       '/api/v1/auth/context',
       '/api/v1/auth/whoami',
     ])
@@ -188,6 +205,7 @@ describe('app page BFF wiring', () => {
         new Headers(init?.headers).get('x-agentfarm-session')
       )
     ).toEqual([
+      'signed-viewer-token',
       'signed-viewer-token',
       'signed-viewer-token',
       'signed-viewer-token',
@@ -207,12 +225,13 @@ describe('app page BFF wiring', () => {
     const fetchedPaths = fetch.mock.calls.map(
       ([url]) => new URL(url.toString()).pathname
     )
-    expect(fetchedPaths).toHaveLength(5)
+    expect(fetchedPaths).toHaveLength(6)
     expect(fetchedPaths).toEqual(
       expect.arrayContaining([
         '/api/v1/tree',
         '/api/v1/priority',
         '/api/v1/markers',
+        '/api/v1/scratchpad',
         '/api/v1/auth/context',
         '/api/v1/auth/whoami',
       ])
@@ -229,6 +248,8 @@ describe('app page BFF wiring', () => {
     expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('1')
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.textContent).toContain('Product')
+    expect(document.body.textContent).toContain('Scratch pad')
+    expect(document.body.textContent).toContain('Read only')
     expect(
       document.querySelector('select[aria-label="Jump to product"]')
     ).not.toBeNull()
@@ -280,6 +301,12 @@ describe('app page BFF wiring', () => {
           return errorResponse(401, 'Authentication required')
         }
         return jsonResponse(markers)
+      }
+      if (pathname === '/api/v1/scratchpad') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse(scratchpad)
       }
       if (pathname === '/api/v1/auth/context') {
         return jsonResponse({ owner_username: 'alice' })
@@ -341,6 +368,12 @@ describe('app page BFF wiring', () => {
           return errorResponse(401, 'Authentication required')
         }
         return jsonResponse(markers)
+      }
+      if (pathname === '/api/v1/scratchpad') {
+        if (!authToken(init)) {
+          return errorResponse(401, 'Authentication required')
+        }
+        return jsonResponse(scratchpad)
       }
       if (pathname === '/api/v1/auth/context') {
         return jsonResponse({ owner_username: 'alice' })
@@ -447,7 +480,8 @@ describe('app page BFF wiring', () => {
       if (
         pathname === '/api/v1/tree' ||
         pathname === '/api/v1/priority' ||
-        pathname === '/api/v1/markers'
+        pathname === '/api/v1/markers' ||
+        pathname === '/api/v1/scratchpad'
       ) {
         expect(authToken(init)).toBe('signed-viewer-token')
         return errorResponse(401, 'Authentication required')
@@ -470,6 +504,7 @@ describe('app page BFF wiring', () => {
         '/api/v1/tree',
         '/api/v1/priority',
         '/api/v1/markers',
+        '/api/v1/scratchpad',
       ])
     )
     expect(account?.textContent).toContain('Not signed in')

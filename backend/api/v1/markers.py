@@ -58,7 +58,7 @@ def _marker_at(conn: sqlite3.Connection, marker_id: str) -> str:
 async def create_marker(
     payload: MarkerCreate,
     _owner: Annotated[object, Depends(require_owner)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> MarkerOut:
     """Create a named marker, defaulting ``at`` to the current clock instant."""
     timestamp = now()
@@ -81,7 +81,7 @@ async def create_marker(
 @router.get("/markers", response_model=list[MarkerOut])
 async def list_markers(
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[MarkerOut]:
     """List markers in deterministic chronological order."""
     rows = conn.execute("SELECT * FROM markers ORDER BY at, created_at, id").fetchall()
@@ -91,7 +91,7 @@ async def list_markers(
 @router.get("/changes", response_model=list[ItemOut])
 async def list_changes(
     _identity: Annotated[object, Depends(require_identity)],
-    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
     since: Annotated[str | None, Query()] = None,
     between: Annotated[str | None, Query()] = None,
     field: Literal["created", "changed", "completed"] = "changed",

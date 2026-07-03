@@ -220,6 +220,18 @@ export const promptResponseEntryListSchema = z.array(promptResponseEntrySchema)
 
 export type PromptResponseEntry = z.infer<typeof promptResponseEntrySchema>
 
+export const scratchpadSchema = z
+  .object({
+    body: z.string(),
+    height: z.number().int().min(120).max(640),
+    minimized: z.boolean(),
+    updated_by: z.string().nullable(),
+    updated_at: z.string().nullable(),
+  })
+  .strict()
+
+export type Scratchpad = z.infer<typeof scratchpadSchema>
+
 export const itemActivitySchema = z
   .object({
     id: z.string(),

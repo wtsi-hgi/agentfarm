@@ -1,12 +1,19 @@
 import { AppShell } from '@/components/app-shell'
 import { LoginForm } from '@/components/login-form'
 import { Outliner } from '@/components/outliner'
-import type { Marker, PriorityItem, TreeItem } from '@/lib/contracts'
+import type {
+  Marker,
+  PriorityItem,
+  Scratchpad,
+  TreeItem,
+} from '@/lib/contracts'
+import { DEFAULT_SCRATCHPAD } from '@/lib/scratchpad'
 
 import {
   fetchFarmContext,
   fetchMarkers,
   fetchPriority,
+  fetchScratchpad,
   fetchSessionIdentity,
   fetchTree,
 } from './actions'
@@ -15,6 +22,7 @@ type HomeProtectedData = {
   items: TreeItem[]
   markers: Marker[]
   priorityItems: PriorityItem[]
+  scratchpad: Scratchpad
   authorized: boolean
 }
 
@@ -37,18 +45,25 @@ function countLeafItems(items: readonly TreeItem[]): number {
 
 async function fetchProtectedHomeData(): Promise<HomeProtectedData> {
   try {
-    const [items, priorityItems, markers] = await Promise.all([
+    const [items, priorityItems, markers, scratchpad] = await Promise.all([
       fetchTree(),
       fetchPriority(),
       fetchMarkers(),
+      fetchScratchpad(),
     ])
-    return { authorized: true, items, markers, priorityItems }
+    return { authorized: true, items, markers, priorityItems, scratchpad }
   } catch (error) {
     if (!isUnauthorizedError(error)) {
       throw error
     }
 
-    return { authorized: false, items: [], markers: [], priorityItems: [] }
+    return {
+      authorized: false,
+      items: [],
+      markers: [],
+      priorityItems: [],
+      scratchpad: DEFAULT_SCRATCHPAD,
+    }
   }
 }
 
@@ -57,9 +72,15 @@ export default async function Home() {
     fetchFarmContext(),
     fetchSessionIdentity(),
   ])
-  const { authorized, items, markers, priorityItems } = session
+  const { authorized, items, markers, priorityItems, scratchpad } = session
     ? await fetchProtectedHomeData()
-    : { authorized: false, items: [], markers: [], priorityItems: [] }
+    : {
+        authorized: false,
+        items: [],
+        markers: [],
+        priorityItems: [],
+        scratchpad: DEFAULT_SCRATCHPAD,
+      }
   const leafItemCount = countLeafItems(items)
 
   const metrics = authorized ? (
@@ -87,6 +108,8 @@ export default async function Home() {
           leverageSort={priorityItems.length > 0}
           markers={markers}
           priorityItems={priorityItems}
+          scratchpad={scratchpad}
+          scratchpadEditable={session?.role === 'owner'}
         />
       ) : (
         <div className="flex min-h-[calc(100vh-12rem)] items-center justify-center py-8">

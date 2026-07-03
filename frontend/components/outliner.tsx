@@ -26,6 +26,7 @@ import {
   resolveJumpState,
 } from '@/components/product-switcher'
 import { PromptResponseTimelineDialog } from '@/components/prompt-response-timeline-dialog'
+import { Scratchpad } from '@/components/scratchpad'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
@@ -35,6 +36,7 @@ import type {
   ItemActivity,
   Marker,
   PriorityItem,
+  Scratchpad as ScratchpadState,
   State,
   TreeItem,
 } from '@/lib/contracts'
@@ -57,6 +59,7 @@ import {
   isExternalWaitingItem,
   itemReadiness,
 } from '@/lib/state-metadata'
+import { DEFAULT_SCRATCHPAD } from '@/lib/scratchpad'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -88,6 +91,8 @@ type OutlinerProps = {
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   hiddenItemIds?: IdCollection
   newlyAddedIds?: IdCollection
+  scratchpad?: ScratchpadState
+  scratchpadEditable?: boolean
 }
 
 type ChildMap = Map<string | null, TreeItem[]>
@@ -1786,6 +1791,8 @@ export function Outliner({
   priorityItems = [],
   hiddenItemIds,
   newlyAddedIds,
+  scratchpad = DEFAULT_SCRATCHPAD,
+  scratchpadEditable = true,
 }: OutlinerProps) {
   const defaultExpandedIds = React.useMemo(
     () => defaultExpandedItemIds(items),
@@ -2092,6 +2099,7 @@ export function Outliner({
     ? (itemsById.get(timelineItemId) ?? null)
     : null
   const notesItem = notesItemId ? (itemsById.get(notesItemId) ?? null) : null
+  const itemDialogOpen = timelineItem !== null || notesItem !== null
   const timelineItemAncestors = React.useMemo(
     () => itemAncestorBreadcrumbs(timelineItem, itemsById),
     [itemsById, timelineItem]
@@ -3202,6 +3210,11 @@ export function Outliner({
               }
             />
           ) : null}
+          <Scratchpad
+            initialScratchpad={scratchpad}
+            docked={itemDialogOpen}
+            editable={scratchpadEditable}
+          />
         </div>
         <CommentsPanel
           item={selectedItem}
