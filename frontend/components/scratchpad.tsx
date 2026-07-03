@@ -167,7 +167,13 @@ export function Scratchpad({
     return () => window.clearTimeout(timeout)
   }, [body, clearSavedStatusTimeout, editable, height, minimized])
 
-  React.useEffect(() => clearSavedStatusTimeout, [clearSavedStatusTimeout])
+  React.useEffect(
+    () => () => {
+      latestSaveId.current += 1
+      clearSavedStatusTimeout()
+    },
+    [clearSavedStatusTimeout]
+  )
 
   React.useEffect(
     () => () => {

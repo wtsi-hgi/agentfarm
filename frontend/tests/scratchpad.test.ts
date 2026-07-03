@@ -90,7 +90,7 @@ async function flushReact() {
   })
 }
 
-async function render(element: React.ReactElement) {
+async function renderWithRoot(element: React.ReactElement) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -101,7 +101,20 @@ async function render(element: React.ReactElement) {
   })
   await flushReact()
 
+  return { container, root }
+}
+
+async function render(element: React.ReactElement) {
+  const { container } = await renderWithRoot(element)
   return container
+}
+
+async function unmountRoot(root: Root) {
+  await act(async () => {
+    root.unmount()
+  })
+  roots = roots.filter((current) => current !== root)
+  await flushReact()
 }
 
 function getButton(container: ParentNode, ariaLabel: string) {
@@ -254,6 +267,7 @@ describe('Scratchpad', () => {
         return rect({ x: 0, y: 0, width: 100, height: 100 })
       }
     )
+    actionMocks.updateScratchpad.mockReset()
     actionMocks.updateScratchpad.mockResolvedValue({
       body: 'Owner scratch',
       height: 310,
@@ -275,6 +289,7 @@ describe('Scratchpad', () => {
     } else {
       globalThis.ResizeObserver = originalResizeObserver
     }
+    vi.useRealTimers()
     vi.restoreAllMocks()
   })
 
@@ -432,5 +447,56 @@ describe('Scratchpad', () => {
       height: 310,
       minimized: false,
     })
+  })
+
+  it('ignores an in-flight autosave after unmounting', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let resolveSave: (scratchpad: ScratchpadState) => void = () => {}
+    actionMocks.updateScratchpad.mockImplementation(
+      () =>
+        new Promise<ScratchpadState>((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    const initialScratchpad = {
+      body: 'Owner scratch',
+      height: 240,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:00:00.000000Z',
+    } satisfies ScratchpadState
+    const { container, root } = await renderWithRoot(
+      React.createElement(Scratchpad, {
+        docked: true,
+        editable: true,
+        initialScratchpad,
+      })
+    )
+
+    await pointerDragVertically(
+      getButton(container, 'Resize scratch pad'),
+      300,
+      230
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCRATCHPAD_SAVE_DELAY_MS)
+    })
+
+    expect(actionMocks.updateScratchpad).toHaveBeenCalledTimes(1)
+
+    await unmountRoot(root)
+    resolveSave({
+      body: 'Owner scratch',
+      height: 310,
+      minimized: false,
+      updated_by: 'alice',
+      updated_at: '2026-07-03T09:30:00.000000Z',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(vi.getTimerCount()).toBe(0)
+    expect(consoleError).not.toHaveBeenCalled()
   })
 })
