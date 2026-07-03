@@ -4,7 +4,6 @@ import {
   type APIRequestContext,
   type Page,
 } from '@playwright/test'
-import { performance } from 'node:perf_hooks'
 
 import { STATE_OPTIONS } from '../lib/state-metadata'
 
@@ -156,34 +155,55 @@ async function waitForNestedFixtureReady(
 ) {
   const expectedStateValues = STATE_OPTIONS.map((option) => option.value)
 
-  await page.waitForFunction(
+  const readyAt = await page.waitForFunction(
     ({ expectedStateValues, fixtureTitles, requiredControlLabels }) => {
+      const titleInputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          '[data-mode] input[aria-label="Item text"]'
+        )
+      )
+      if (titleInputs.length < fixtureTitles.length) {
+        return false
+      }
+      const rowTitleSet = new Set(titleInputs.map((input) => input.value))
+      if (!fixtureTitles.every((title) => rowTitleSet.has(title))) {
+        return false
+      }
+
       const rows = Array.from(
         document.querySelectorAll<HTMLElement>('[data-mode]')
       )
-      const rowTitles = rows.map(
-        (row) =>
-          row.querySelector<HTMLInputElement>('input[aria-label="Item text"]')
-            ?.value ?? ''
-      )
-      const rowTitleSet = new Set(rowTitles)
-      const fixtureTitlesReady =
-        rowTitles.length >= fixtureTitles.length &&
-        fixtureTitles.every((title) => rowTitleSet.has(title))
+      if (rows.length < fixtureTitles.length) {
+        return false
+      }
 
       const firstRow = rows[0]
-      const controlIconFor = (row: HTMLElement, label: string) =>
-        row.querySelector<SVGElement>(`button[aria-label="${label}"] svg`)
+      const rowControlIcons = (row: HTMLElement) =>
+        Array.from(
+          row.querySelectorAll<HTMLButtonElement>('button[aria-label]')
+        ).flatMap((button): [string, SVGElement][] => {
+          const label = button.getAttribute('aria-label')
+          const icon = button.querySelector<SVGElement>('svg')
+          return label && icon ? [[label, icon]] : []
+        })
+      const firstRowIconsByLabel = new Map(
+        firstRow ? rowControlIcons(firstRow) : []
+      )
       const firstRowControlIcons = firstRow
         ? requiredControlLabels
-            .map((label) => controlIconFor(firstRow, label))
+            .map((label) => firstRowIconsByLabel.get(label) ?? null)
             .filter((icon): icon is SVGElement => icon !== null)
         : []
       const rowControlsReady =
         rows.length > 0 &&
-        requiredControlLabels.every((label) =>
-          rows.every((row) => controlIconFor(row, label) !== null)
-        )
+        rows.every((row) => {
+          const labelsWithIcons = new Set(
+            rowControlIcons(row).map(([label]) => label)
+          )
+          return requiredControlLabels.every((label) =>
+            labelsWithIcons.has(label)
+          )
+        })
       const firstRowControlIconsVisible =
         firstRowControlIcons.length === requiredControlLabels.length &&
         firstRowControlIcons.every((icon) => {
@@ -214,13 +234,12 @@ async function waitForNestedFixtureReady(
         scratchpadRect.width > 0 &&
         scratchpadRect.height > 0
 
-      return (
-        fixtureTitlesReady &&
+      const ready =
         rowControlsReady &&
         firstRowControlIconsVisible &&
         stateSelectorsReady &&
         scratchpadReady
-      )
+      return ready ? performance.now() : false
     },
     {
       expectedStateValues,
@@ -232,6 +251,12 @@ async function waitForNestedFixtureReady(
       timeout: 10_000,
     }
   )
+  const readyAtMs = await readyAt.jsonValue()
+  await readyAt.dispose()
+  if (typeof readyAtMs !== 'number') {
+    throw new Error('Expected browser readiness timestamp')
+  }
+  return readyAtMs
 }
 
 async function gotoMeasuredHome(page: Page) {
@@ -258,10 +283,8 @@ async function measureVisibleHomeLoad(
   fixtureTitles: readonly string[]
 ) {
   await page.goto('about:blank')
-  const startedAt = performance.now()
   await gotoMeasuredHome(page)
-  await waitForNestedFixtureReady(page, fixtureTitles)
-  return performance.now() - startedAt
+  return waitForNestedFixtureReady(page, fixtureTitles)
 }
 
 test.describe('many-item outliner editing', () => {
