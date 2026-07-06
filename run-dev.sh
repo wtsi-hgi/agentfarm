@@ -114,7 +114,7 @@ FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 repo_relative_path() {
   local value="$1"
 
-  if [[ -z "$value" ]]; then
+  if [[ -z "${value//[[:space:]]/}" ]]; then
     return 0
   fi
   if [[ "$value" = /* ]]; then

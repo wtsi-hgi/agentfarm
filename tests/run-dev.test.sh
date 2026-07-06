@@ -216,5 +216,27 @@ if ! grep -F "https://localhost:3999/api/health" "${curl_log}" | grep -F -- "-k"
   exit 1
 fi
 
+: > "${setsid_log}"
+: > "${run_log}"
+set +e
+(
+  cd "${repo_root}"
+  FRONTEND_HOST=0.0.0.0 AGENTFARM_BACKUP_DIR="   " AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9553 --frontend-port 4001 > "${run_log}" 2>&1
+)
+status=$?
+set -e
+
+if [[ "${status}" -ne 0 && "${status}" -ne 124 && "${status}" -ne 143 ]]; then
+  cat "${run_log}"
+  echo "run-dev.sh exited unexpectedly with status ${status} for blank backup dir" >&2
+  exit 1
+fi
+
+if grep -F "AGENTFARM_BACKUP_DIR=" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was started with AGENTFARM_BACKUP_DIR for a whitespace-only backup dir" >&2
+  exit 1
+fi
+
 git -C "${repo_root}" check-ignore --quiet data/.runtime-probe
 git -C "${repo_root}" check-ignore --quiet backend/data/.runtime-probe
