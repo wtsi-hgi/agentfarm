@@ -85,8 +85,8 @@ type OutlinerRowProps = {
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
-  onDragStart?: React.DragEventHandler<HTMLButtonElement>
-  onDragEnd?: React.DragEventHandler<HTMLButtonElement>
+  onDragStart?: React.DragEventHandler<HTMLElement>
+  onDragEnd?: React.DragEventHandler<HTMLElement>
   draftResetRequest?: { requestId: number; text: string } | null
 }
 

@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import dynamic from 'next/dynamic'
+import { flushSync } from 'react-dom'
 import { Plus } from 'lucide-react'
 
 import {
@@ -2794,6 +2795,27 @@ export function Outliner({
     )
   }
 
+  function handleNativeDragStart(
+    item: TreeItem,
+    event: React.DragEvent<HTMLElement>
+  ) {
+    event.stopPropagation()
+    if (coordinateDragActiveRef.current) {
+      event.preventDefault()
+      suppressNextNativeDropRef.current = true
+      return
+    }
+    suppressNextNativeDropRef.current = false
+    event.dataTransfer.effectAllowed = 'linkMove'
+    event.dataTransfer.setData('text/plain', item.id)
+    dragPreviewRef.current = null
+    flushSync(() => {
+      setDraggingItemId(item.id)
+      setDragPreview(null)
+      setCoordinateDependencyDropActive(false)
+    })
+  }
+
   function coordinateDependencyDropTargetAtPoint(
     draggedItemId: string,
     clientX: number,
@@ -3108,6 +3130,11 @@ export function Outliner({
                     <div
                       data-outliner-item-id={item.id}
                       tabIndex={-1}
+                      draggable
+                      onDragStart={(event) => {
+                        handleNativeDragStart(item, event)
+                      }}
+                      onDragEnd={clearDragState}
                       onMouseDownCapture={(event) => {
                         const target = event.target
                         if (
@@ -3213,17 +3240,7 @@ export function Outliner({
                         onOpenPromptTimeline={openPromptTimeline}
                         draftResetRequest={rowDraftResetRequest}
                         onDragStart={(event) => {
-                          if (coordinateDragActiveRef.current) {
-                            event.preventDefault()
-                            suppressNextNativeDropRef.current = true
-                            return
-                          }
-                          suppressNextNativeDropRef.current = false
-                          event.dataTransfer.effectAllowed = 'move'
-                          event.dataTransfer.setData('text/plain', item.id)
-                          setDraggingItemId(item.id)
-                          dragPreviewRef.current = null
-                          setDragPreview(null)
+                          handleNativeDragStart(item, event)
                         }}
                         onDragEnd={clearDragState}
                       />
