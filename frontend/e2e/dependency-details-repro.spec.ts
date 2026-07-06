@@ -21,6 +21,14 @@ const screenshotPath = path.resolve(
   'agent',
   'dependency-details-ui.png'
 )
+const dragRegressionScreenshotPath = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  '.tmp',
+  'agent',
+  'dependency-details-drag-regression.png'
+)
 
 type ItemSummary = {
   id: string
@@ -282,6 +290,99 @@ test.describe('dependency details UI reproduction', () => {
       ).toBeVisible()
       await expect(
         dependenciesSection.getByText(`>${blockingSection.slug}`)
+      ).toBeVisible()
+    } finally {
+      await deleteBackendItems(request, sessionToken, cleanupRootIds)
+    }
+  })
+
+  test('adds another explicit dependency by dragging a leaf row into the populated Details drop target', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 760 })
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Details drag dependency ${Date.now()}`
+    const cleanupRootIds: string[] = []
+
+    try {
+      const dependentSection = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} dependent item`,
+      })
+      cleanupRootIds.push(dependentSection.id)
+      const existingBlockingSection = await createBackendItem(
+        request,
+        sessionToken,
+        {
+          title: `${titlePrefix} existing blocker item`,
+        }
+      )
+      cleanupRootIds.push(existingBlockingSection.id)
+      const draggedBlockingSection = await createBackendItem(
+        request,
+        sessionToken,
+        {
+          title: `${titlePrefix} dragged blocker item`,
+        }
+      )
+      cleanupRootIds.push(draggedBlockingSection.id)
+      await createDependency(
+        request,
+        sessionToken,
+        dependentSection.id,
+        existingBlockingSection.id
+      )
+
+      await gotoPath(page, '/')
+
+      const dependentRow = page.locator(
+        `[data-outliner-item-id="${dependentSection.id}"]`
+      )
+      const draggedBlockingRow = page.locator(
+        `[data-outliner-item-id="${draggedBlockingSection.id}"]`
+      )
+      await expect(
+        draggedBlockingRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(draggedBlockingSection.title)
+
+      await dependentRow.getByRole('textbox', { name: 'Item text' }).click()
+      const detailsPanel = page.getByRole('complementary', {
+        name: 'Item details',
+      })
+      const dependenciesSection = detailsPanel.getByRole('region', {
+        name: 'Dependencies',
+      })
+      await expect(
+        dependenciesSection.getByText(existingBlockingSection.title)
+      ).toBeVisible()
+      await expect(
+        dependenciesSection.getByText(draggedBlockingSection.title)
+      ).toHaveCount(0)
+
+      await draggedBlockingRow.dragTo(
+        detailsPanel.getByLabel(/add dependency/i)
+      )
+      await page.waitForTimeout(250)
+
+      await mkdir(path.dirname(dragRegressionScreenshotPath), {
+        recursive: true,
+      })
+      await page.screenshot({
+        caret: 'initial',
+        fullPage: true,
+        path: dragRegressionScreenshotPath,
+      })
+      await testInfo.attach('dependency details drag regression', {
+        path: dragRegressionScreenshotPath,
+        contentType: 'image/png',
+      })
+
+      await expect(
+        dependenciesSection.getByText(draggedBlockingSection.title),
+        'Dragging a row into the populated Details Add dependency box should create an explicit dependency.'
+      ).toBeVisible()
+      await expect(
+        dependenciesSection.getByText(`>${draggedBlockingSection.slug}`)
       ).toBeVisible()
     } finally {
       await deleteBackendItems(request, sessionToken, cleanupRootIds)
