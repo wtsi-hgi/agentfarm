@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -238,6 +240,61 @@ def test_backup_throttles_writes_until_interval_passes(monkeypatch, tmp_path) ->
     backups = _backup_files(backup_dir)
     assert len(backups) == 3
     assert _item_ids(backups[-1]) == {"first", "second", "third"}
+
+
+def test_concurrent_zero_interval_flushes_share_one_backup(
+    monkeypatch, tmp_path
+) -> None:
+    """Overlapping immediate flushes do not duplicate a pending dirty backup."""
+    db_path = tmp_path / "agentfarm.db"
+    backup_dir = tmp_path / "backups"
+    monotonic_now = 0.0
+    apply_migrations(db_path)
+    monkeypatch.setattr(config.settings, "backup_dir", backup_dir)
+    monkeypatch.setattr(config.settings, "backup_interval_seconds", 600)
+    sqlite_backups.set_backup_clock(lambda: monotonic_now)
+
+    with get_write_connection(db_path) as conn:
+        _insert_item(conn, "first")
+
+    monotonic_now = 300.0
+    with get_write_connection(db_path) as conn:
+        _insert_item(conn, "second")
+
+    assert len(_backup_files(backup_dir)) == 1
+
+    original_online_backup = sqlite_backups._online_backup
+    first_backup_started = Event()
+    release_first_backup = Event()
+
+    def slow_first_online_backup(source_path: Path, target_path: Path) -> None:
+        if not first_backup_started.is_set():
+            first_backup_started.set()
+            assert release_first_backup.wait(timeout=5)
+        original_online_backup(source_path, target_path)
+
+    monkeypatch.setattr(sqlite_backups, "_online_backup", slow_first_online_backup)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first_flush = executor.submit(
+            sqlite_backups.flush_due_backup,
+            db_path,
+            backup_dir,
+            0,
+        )
+        assert first_backup_started.wait(timeout=5)
+        try:
+            second_flush_path = sqlite_backups.flush_due_backup(db_path, backup_dir, 0)
+        finally:
+            release_first_backup.set()
+
+        first_flush_path = first_flush.result(timeout=5)
+
+    assert first_flush_path is not None
+    assert second_flush_path is None
+    backups = _backup_files(backup_dir)
+    assert len(backups) == 2
+    assert _item_ids(backups[-1]) == {"first", "second"}
 
 
 def test_successful_backup_prunes_only_old_app_backup_files(

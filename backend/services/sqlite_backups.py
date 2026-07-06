@@ -37,6 +37,7 @@ class _BackupState:
     last_attempt_at: float | None = None
     last_success_at: float | None = None
     sequence: int = 0
+    backup_in_progress: bool = False
 
 
 _states: dict[tuple[Path, Path], _BackupState] = {}
@@ -113,12 +114,16 @@ def flush_due_backup(
 
     source_path = Path(db_path)
     temp_path: Path | None = None
+    key: tuple[Path, Path] | None = None
+    attempt_started = False
     try:
         key = _state_key(source_path, destination_dir)
         now = _backup_clock()
         with _state_lock:
             state = _states.setdefault(key, _BackupState())
             if state.dirty_generation <= state.backed_up_generation:
+                return None
+            if state.backup_in_progress:
                 return None
             if _within_interval(
                 now=now,
@@ -127,6 +132,8 @@ def flush_due_backup(
             ):
                 return None
             state.last_attempt_at = now
+            state.backup_in_progress = True
+            attempt_started = True
             generation_to_backup = state.dirty_generation
 
         destination_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +161,12 @@ def flush_due_backup(
                 temp_path.unlink(missing_ok=True)
         logger.exception("SQLite backup failed for %s", source_path)
         return None
+    finally:
+        if attempt_started and key is not None:
+            with _state_lock:
+                state = _states.get(key)
+                if state is not None:
+                    state.backup_in_progress = False
 
 
 async def run_backup_scheduler(
