@@ -232,6 +232,7 @@ export function OutlinerRow({
   const displayReady = displayReadiness === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
+  const showDoneCheckbox = item.parent_id !== null
 
   return (
     <div
@@ -264,14 +265,18 @@ export function OutlinerRow({
         {DRAG_ICON}
       </Button>
       <div className="flex size-8 items-center justify-center">
-        <input
-          type="checkbox"
-          aria-label="Mark item done"
-          checked={checkedDone}
-          disabled={pending}
-          onChange={handleDoneChange}
-          className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-        />
+        {showDoneCheckbox ? (
+          <input
+            type="checkbox"
+            aria-label="Mark item done"
+            checked={checkedDone}
+            disabled={pending}
+            onChange={handleDoneChange}
+            className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        ) : (
+          <span className="size-4" aria-hidden="true" />
+        )}
       </div>
       <div className="flex size-8 items-center justify-center">
         {hasChildren ? (
