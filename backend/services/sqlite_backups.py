@@ -67,7 +67,7 @@ def record_committed_write(
     Args:
         db_path: Live SQLite database file.
         backup_dir: Directory where timestamped backup DB files are written.
-            ``None`` or an empty string disables backups.
+            ``None`` or a blank/whitespace-only string disables backups.
         interval_seconds: Minimum time between backup attempts for this source DB
             and destination. ``0`` means each committed write may try to back up.
         retention_days: Number of days to retain timestamped Agent Farm backup
@@ -209,7 +209,7 @@ def _state_key(source_path: Path, destination_dir: Path) -> tuple[Path, Path]:
 
 
 def _normalise_backup_dir(backup_dir: Path | str | None) -> Path | None:
-    """Return a backup directory path, or ``None`` when backups are disabled."""
+    """Return a backup path, or ``None`` for disabled/blank settings."""
     if backup_dir is None:
         return None
     if isinstance(backup_dir, str) and not backup_dir.strip():
