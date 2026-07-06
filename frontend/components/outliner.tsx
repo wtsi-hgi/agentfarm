@@ -151,6 +151,23 @@ type DragSlot = {
   title: string
 }
 
+type RootSectionTone = {
+  dark: string
+  light: string
+}
+
+type RootSectionBlock = {
+  key: string
+  root: TreeItem
+  rows: VisibleOutlinerRow[]
+  tone: RootSectionTone
+}
+
+type RootSectionStyle = React.CSSProperties & {
+  '--root-section-background': string
+  '--root-section-background-dark': string
+}
+
 type DragStructuralSlot = {
   parentId: string | null
   previousSiblingId: string | null
@@ -230,6 +247,57 @@ type FirstRootCreatorProps = {
   onCreate: (title: string) => Promise<void>
 }
 
+const ROOT_SECTION_TONES = [
+  {
+    light: 'rgb(255 235 238)',
+    dark: 'rgb(69 26 37)',
+  },
+  {
+    light: 'rgb(220 252 231)',
+    dark: 'rgb(20 83 45)',
+  },
+  {
+    light: 'rgb(224 242 254)',
+    dark: 'rgb(12 74 110)',
+  },
+  {
+    light: 'rgb(243 232 255)',
+    dark: 'rgb(59 7 100)',
+  },
+  {
+    light: 'rgb(254 243 199)',
+    dark: 'rgb(69 26 3)',
+  },
+  {
+    light: 'rgb(207 250 254)',
+    dark: 'rgb(22 78 99)',
+  },
+  {
+    light: 'rgb(255 237 213)',
+    dark: 'rgb(67 20 7)',
+  },
+  {
+    light: 'rgb(224 231 255)',
+    dark: 'rgb(49 46 129)',
+  },
+  {
+    light: 'rgb(236 252 203)',
+    dark: 'rgb(54 83 20)',
+  },
+  {
+    light: 'rgb(252 231 243)',
+    dark: 'rgb(80 7 36)',
+  },
+  {
+    light: 'rgb(204 251 241)',
+    dark: 'rgb(19 78 74)',
+  },
+  {
+    light: 'rgb(241 245 249)',
+    dark: 'rgb(30 41 59)',
+  },
+] satisfies readonly RootSectionTone[]
+
 function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [draft, setDraft] = React.useState(NEW_ITEM_TITLE)
@@ -294,6 +362,54 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
       ) : null}
     </form>
   )
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function rootSectionToneIndex(rootTitle: string): number {
+  return hashString(rootTitle.trim()) % ROOT_SECTION_TONES.length
+}
+
+function rootSectionStyle(tone: RootSectionTone): RootSectionStyle {
+  return {
+    '--root-section-background': tone.light,
+    '--root-section-background-dark': tone.dark,
+  }
+}
+
+function rootSectionBlocks(
+  rows: readonly VisibleOutlinerRow[]
+): RootSectionBlock[] {
+  const groups: {
+    root: TreeItem
+    rows: VisibleOutlinerRow[]
+  }[] = []
+
+  for (const row of rows) {
+    if (row.depth === 0 || groups.length === 0) {
+      groups.push({ root: row.item, rows: [row] })
+      continue
+    }
+
+    groups[groups.length - 1]?.rows.push(row)
+  }
+
+  return groups.map((group) => {
+    const toneIndex = rootSectionToneIndex(group.root.title)
+    return {
+      key: group.root.id,
+      root: group.root,
+      rows: group.rows,
+      tone: ROOT_SECTION_TONES[toneIndex] ?? ROOT_SECTION_TONES[0],
+    }
+  })
 }
 
 function makePriorityRanks(
@@ -2136,6 +2252,7 @@ export function Outliner({
     dragSlotsMatch(dragOriginStructuralSlot, dragCurrentStructuralSlot)
   const dragOriginMarker =
     dragOriginSlot && !isDragReturnTarget ? dragOriginSlot : null
+  const rootSections = React.useMemo(() => rootSectionBlocks(rows), [rows])
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -3064,6 +3181,158 @@ export function Outliner({
     setSelectedItemId(created.id)
   }
 
+  function renderVisibleRow({
+    item,
+    depth,
+    hasChildren,
+    collapsed,
+    displayReadiness,
+    filteredOutNewlyAdded,
+  }: VisibleOutlinerRow) {
+    const rowDraftResetRequest =
+      draftResetRequest?.itemId === item.id
+        ? {
+            requestId: draftResetRequest.requestId,
+            text: draftResetRequest.text,
+          }
+        : null
+    const returningDraggedItem =
+      isDragReturnTarget && dragPreview?.draggedItemId === item.id
+
+    return (
+      <React.Fragment key={item.id}>
+        {dragOriginMarker?.nextItemId === item.id ? (
+          <DragOriginSlotMarker
+            slot={dragOriginMarker}
+            onDragOver={(event) =>
+              handleDragOriginSlotDragOver(event, dragOriginMarker)
+            }
+            onDrop={(event) =>
+              handleDragOriginSlotDrop(event, dragOriginMarker)
+            }
+          />
+        ) : null}
+        <div
+          data-outliner-item-id={item.id}
+          tabIndex={-1}
+          draggable
+          onDragStart={(event) => {
+            handleNativeDragStart(item, event)
+          }}
+          onDragEnd={clearDragState}
+          onMouseDownCapture={(event) => {
+            const target = event.target
+            if (
+              target instanceof Element &&
+              target.closest('button[aria-label="Drag item"]')
+            ) {
+              beginCoordinateDrag(item, event)
+            }
+          }}
+          onDragOver={(event) => {
+            const draggedId =
+              draggingItemId || event.dataTransfer.getData('text/plain') || null
+            if (!draggedId || draggedId === item.id) {
+              if (draggedId && !returningDraggedItem) {
+                const acceptsPreviewDrop = updatePreviewFromDraggedRow(
+                  event,
+                  draggedId
+                )
+                if (acceptsPreviewDrop) {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                }
+              }
+              return
+            }
+
+            const position = dropPosition(event)
+            if (updateDragPreview(draggedId, item.id, position)) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            if (suppressNextNativeDropRef.current) {
+              suppressNextNativeDropRef.current = false
+              return
+            }
+            const draggedId =
+              draggingItemId || event.dataTransfer.getData('text/plain') || null
+            const currentDragPreview = dragPreviewRef.current
+            const returnsToOrigin =
+              currentDragPreview !== null &&
+              dragPreviewReturnsToOrigin(currentDragPreview)
+            const returningDrop = returnsToOrigin && item.id === draggedId
+            const previewDrop =
+              currentDragPreview?.draggedItemId === draggedId && !returningDrop
+                ? currentDragPreview
+                : null
+            const targetItemId = previewDrop?.targetItemId ?? item.id
+            const position = previewDrop?.position ?? dropPosition(event)
+            clearDragState()
+            if (draggedId && !returningDrop) {
+              void moveDragged(draggedId, targetItemId, position)
+            }
+          }}
+          className={cn(
+            'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
+            focusedItemId === item.id && 'bg-accent/60',
+            dragPreview?.draggedItemId === item.id
+              ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+              : draggingItemId === item.id && 'opacity-60',
+            returningDraggedItem && 'bg-emerald-500/10 ring-emerald-500/60'
+          )}
+          data-drag-preview={
+            dragPreview?.draggedItemId === item.id ? 'true' : undefined
+          }
+          data-drag-return-target={returningDraggedItem ? item.id : undefined}
+          aria-label={
+            returningDraggedItem
+              ? `Drop to return ${item.title} to its original position`
+              : undefined
+          }
+        >
+          <OutlinerRow
+            item={item}
+            depth={depth}
+            hasChildren={hasChildren}
+            collapsed={collapsed}
+            displayReadiness={displayReadiness}
+            selected={selectedItemId === item.id}
+            onToggle={toggle}
+            onSelect={(itemId) => setSelectedItemId(itemId)}
+            onSubmitText={submitText}
+            onCreateSibling={createSibling}
+            onKeyboardCommand={runKeyboardCommand}
+            onDelete={requestItemDelete}
+            onKeyboardReorder={reorderFromDragHandleKeyboard}
+            onChangeState={changeItemState}
+            onChangeDone={changeItemDone}
+            onOpenNotes={openNotes}
+            onOpenPromptTimeline={openPromptTimeline}
+            draftResetRequest={rowDraftResetRequest}
+            onDragStart={(event) => {
+              handleNativeDragStart(item, event)
+            }}
+            onDragEnd={clearDragState}
+          />
+          {filteredOutNewlyAdded ? (
+            <div
+              className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
+              style={{
+                paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+              }}
+            >
+              added this session, currently filtered out
+            </div>
+          ) : null}
+        </div>
+      </React.Fragment>
+    )
+  }
+
   const pendingDependencyCount =
     pendingDependencyRemoval?.dependencies.length ?? 0
   const pendingDependencyLabel =
@@ -3091,174 +3360,22 @@ export function Outliner({
         </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="divide-border border-border min-w-0 divide-y border-y text-sm">
+        <div className="flex min-w-0 flex-col gap-3 text-sm">
           {activeItems.length === 0 ? (
-            <FirstRootCreator onCreate={createRoot} />
+            <div className="border-border border-y">
+              <FirstRootCreator onCreate={createRoot} />
+            </div>
           ) : (
-            rows.map(
-              ({
-                item,
-                depth,
-                hasChildren,
-                collapsed,
-                displayReadiness,
-                filteredOutNewlyAdded,
-              }) => {
-                const rowDraftResetRequest =
-                  draftResetRequest?.itemId === item.id
-                    ? {
-                        requestId: draftResetRequest.requestId,
-                        text: draftResetRequest.text,
-                      }
-                    : null
-                const returningDraggedItem =
-                  isDragReturnTarget && dragPreview?.draggedItemId === item.id
-
-                return (
-                  <React.Fragment key={item.id}>
-                    {dragOriginMarker?.nextItemId === item.id ? (
-                      <DragOriginSlotMarker
-                        slot={dragOriginMarker}
-                        onDragOver={(event) =>
-                          handleDragOriginSlotDragOver(event, dragOriginMarker)
-                        }
-                        onDrop={(event) =>
-                          handleDragOriginSlotDrop(event, dragOriginMarker)
-                        }
-                      />
-                    ) : null}
-                    <div
-                      data-outliner-item-id={item.id}
-                      tabIndex={-1}
-                      draggable
-                      onDragStart={(event) => {
-                        handleNativeDragStart(item, event)
-                      }}
-                      onDragEnd={clearDragState}
-                      onMouseDownCapture={(event) => {
-                        const target = event.target
-                        if (
-                          target instanceof Element &&
-                          target.closest('button[aria-label="Drag item"]')
-                        ) {
-                          beginCoordinateDrag(item, event)
-                        }
-                      }}
-                      onDragOver={(event) => {
-                        const draggedId =
-                          draggingItemId ||
-                          event.dataTransfer.getData('text/plain') ||
-                          null
-                        if (!draggedId || draggedId === item.id) {
-                          if (draggedId && !returningDraggedItem) {
-                            const acceptsPreviewDrop =
-                              updatePreviewFromDraggedRow(event, draggedId)
-                            if (acceptsPreviewDrop) {
-                              event.preventDefault()
-                              event.dataTransfer.dropEffect = 'move'
-                            }
-                          }
-                          return
-                        }
-
-                        const position = dropPosition(event)
-                        if (updateDragPreview(draggedId, item.id, position)) {
-                          event.preventDefault()
-                          event.dataTransfer.dropEffect = 'move'
-                        }
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        if (suppressNextNativeDropRef.current) {
-                          suppressNextNativeDropRef.current = false
-                          return
-                        }
-                        const draggedId =
-                          draggingItemId ||
-                          event.dataTransfer.getData('text/plain') ||
-                          null
-                        const currentDragPreview = dragPreviewRef.current
-                        const returnsToOrigin =
-                          currentDragPreview !== null &&
-                          dragPreviewReturnsToOrigin(currentDragPreview)
-                        const returningDrop =
-                          returnsToOrigin && item.id === draggedId
-                        const previewDrop =
-                          currentDragPreview?.draggedItemId === draggedId &&
-                          !returningDrop
-                            ? currentDragPreview
-                            : null
-                        const targetItemId =
-                          previewDrop?.targetItemId ?? item.id
-                        const position =
-                          previewDrop?.position ?? dropPosition(event)
-                        clearDragState()
-                        if (draggedId && !returningDrop) {
-                          void moveDragged(draggedId, targetItemId, position)
-                        }
-                      }}
-                      className={cn(
-                        'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-                        focusedItemId === item.id && 'bg-accent/60',
-                        dragPreview?.draggedItemId === item.id
-                          ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
-                          : draggingItemId === item.id && 'opacity-60',
-                        returningDraggedItem &&
-                          'bg-emerald-500/10 ring-emerald-500/60'
-                      )}
-                      data-drag-preview={
-                        dragPreview?.draggedItemId === item.id
-                          ? 'true'
-                          : undefined
-                      }
-                      data-drag-return-target={
-                        returningDraggedItem ? item.id : undefined
-                      }
-                      aria-label={
-                        returningDraggedItem
-                          ? `Drop to return ${item.title} to its original position`
-                          : undefined
-                      }
-                    >
-                      <OutlinerRow
-                        item={item}
-                        depth={depth}
-                        hasChildren={hasChildren}
-                        collapsed={collapsed}
-                        displayReadiness={displayReadiness}
-                        selected={selectedItemId === item.id}
-                        onToggle={toggle}
-                        onSelect={(itemId) => setSelectedItemId(itemId)}
-                        onSubmitText={submitText}
-                        onCreateSibling={createSibling}
-                        onKeyboardCommand={runKeyboardCommand}
-                        onDelete={requestItemDelete}
-                        onKeyboardReorder={reorderFromDragHandleKeyboard}
-                        onChangeState={changeItemState}
-                        onChangeDone={changeItemDone}
-                        onOpenNotes={openNotes}
-                        onOpenPromptTimeline={openPromptTimeline}
-                        draftResetRequest={rowDraftResetRequest}
-                        onDragStart={(event) => {
-                          handleNativeDragStart(item, event)
-                        }}
-                        onDragEnd={clearDragState}
-                      />
-                      {filteredOutNewlyAdded ? (
-                        <div
-                          className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
-                          style={{
-                            paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
-                          }}
-                        >
-                          added this session, currently filtered out
-                        </div>
-                      ) : null}
-                    </div>
-                  </React.Fragment>
-                )
-              }
-            )
+            rootSections.map((section) => (
+              <div
+                key={section.key}
+                className="border-border/70 divide-border/60 divide-y overflow-hidden rounded-md border bg-[var(--root-section-background)] shadow-sm dark:bg-[var(--root-section-background-dark)] dark:shadow-none"
+                style={rootSectionStyle(section.tone)}
+                data-outliner-root-section-id={section.root.id}
+              >
+                {section.rows.map((row) => renderVisibleRow(row))}
+              </div>
+            ))
           )}
           {dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker

@@ -76,6 +76,23 @@ function itemActionButton(
   return button
 }
 
+function rootSectionBackground(document: Document, rootId: string) {
+  const section = document.querySelector(
+    `[data-outliner-root-section-id="${rootId}"]`
+  )
+  if (!(section instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing root section block for ${rootId}`)
+  }
+
+  return section.style.getPropertyValue('--root-section-background')
+}
+
+function renderedRootSectionIds(document: Document) {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-outliner-root-section-id]')
+  ).map((section) => section.dataset.outlinerRootSectionId)
+}
+
 describe('Outliner', () => {
   it('defines one distinct colour token for every mode', () => {
     expect(Object.keys(MODE_COLOUR_MAP).sort()).toEqual([...MODES].sort())
@@ -85,6 +102,79 @@ describe('Outliner', () => {
     for (const mode of MODES) {
       expect(MODE_COLOUR_MAP[mode]).toBeDefined()
     }
+  })
+
+  it('keeps a root product section background stable when neighbours and order change', () => {
+    const targetTitle = 'Northstar Console'
+    const firstRender = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'atlas',
+            title: 'Atlas Platform',
+            sort_order: 1,
+          }),
+          item({
+            id: 'northstar',
+            title: targetTitle,
+            sort_order: 2,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+          item({
+            id: 'zephyr',
+            title: 'Zephyr Reports',
+            sort_order: 3,
+          }),
+        ],
+      })
+    )
+    const secondRender = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'beacon',
+            title: 'Beacon Console',
+            sort_order: 1,
+          }),
+          item({
+            id: 'cinder',
+            title: 'Cinder Pipeline',
+            sort_order: 2,
+          }),
+          item({
+            id: 'northstar',
+            title: targetTitle,
+            sort_order: 3,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    expect(renderedRootSectionIds(firstRender)).toEqual([
+      'atlas',
+      'northstar',
+      'zephyr',
+    ])
+    expect(renderedRootSectionIds(secondRender)).toEqual([
+      'beacon',
+      'cinder',
+      'northstar',
+    ])
+    expect(rootSectionBackground(firstRender, 'northstar')).toBeTruthy()
+    expect(rootSectionBackground(secondRender, 'northstar')).toBe(
+      rootSectionBackground(firstRender, 'northstar')
+    )
   })
 
   it('keeps review-state rows visible in the default tree view', () => {
