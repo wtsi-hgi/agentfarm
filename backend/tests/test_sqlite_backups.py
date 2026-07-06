@@ -51,7 +51,7 @@ def _insert_item(conn: sqlite3.Connection, item_id: str) -> None:
 
 
 def _backup_files(backup_dir: Path) -> list[Path]:
-    """Return backup files newest-agnostically."""
+    """Return Agent Farm backup files sorted by filename timestamp order."""
     return sorted(backup_dir.glob("agentfarm-backup-*.db"))
 
 
@@ -61,7 +61,7 @@ def _write_timestamped_backup_file(
     *,
     sequence: int = 1,
 ) -> Path:
-    """Write a file using the app's successful-backup filename shape."""
+    """Create a placeholder backup file using the app's timestamped filename format."""
     path = (
         backup_dir / f"agentfarm-backup-{timestamp.strftime('%Y%m%dT%H%M%S%fZ')}"
         f"-{sequence:06d}.db"
@@ -204,7 +204,7 @@ async def test_scheduler_flushes_dirty_write_after_interval_without_later_write(
 
 
 def test_backup_throttles_writes_until_interval_passes(monkeypatch, tmp_path) -> None:
-    """Writes inside the interval share one backup; later writes can back up."""
+    """Writes within the interval share one backup; later writes can create another."""
     db_path = tmp_path / "agentfarm.db"
     backup_dir = tmp_path / "backups"
     monotonic_now = 0.0
@@ -300,7 +300,7 @@ def test_concurrent_zero_interval_flushes_share_one_backup(
 def test_successful_backup_prunes_only_old_app_backup_files(
     monkeypatch, tmp_path
 ) -> None:
-    """Retention prunes old app backups and preserves recent/unrelated files."""
+    """Retention prunes old app backups while preserving recent and unrelated files."""
     db_path = tmp_path / "agentfarm.db"
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
