@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<-EOF
-Usage: $0 [--frontend-host HOST] [--frontend-port PORT] [--backend-port PORT]
+Usage: $0 [--frontend-host HOST] [--frontend-port PORT] [--backend-port PORT] [--backup-dir DIR] [--backup-interval-seconds SECONDS]
 
 Starts frontend and backend in development mode.
 
@@ -12,6 +12,9 @@ Options:
       --frontend-host HOST   Host for frontend dev server (default: 0.0.0.0)
   -f, --frontend-port PORT   Port for frontend dev server (default: 3000)
   -b, --backend-port PORT    Port for backend uvicorn server (default: 8000)
+      --backup-dir DIR       Directory for SQLite online backups (default: off)
+      --backup-interval-seconds SECONDS
+                              Minimum seconds between backup attempts (default: 600)
   -h, --help                 Show this help
 
 Examples:
@@ -24,6 +27,9 @@ Examples:
   # bind frontend to localhost only
   $0 --frontend-host 127.0.0.1
 
+  # back up the SQLite database at most every 10 minutes after writes
+  $0 --backup-dir data/backups
+
 When the frontend binds to 0.0.0.0, open https://localhost:PORT on this machine
 or use this machine's hostname/LAN IP from another device. The frontend dev
 server uses HTTPS for credential entry.
@@ -35,6 +41,8 @@ EOF
 FRONTEND_PORT=3000
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 BACKEND_PORT=8000
+BACKUP_DIR="${AGENTFARM_BACKUP_DIR:-}"
+BACKUP_INTERVAL_SECONDS="${AGENTFARM_BACKUP_INTERVAL_SECONDS:-600}"
 FRONT_PID=""
 BACK_PID=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,6 +79,14 @@ while [[ ${#} -gt 0 ]]; do
       BACKEND_PORT=${2:-}
       shift 2
       ;;
+    --backup-dir)
+      BACKUP_DIR=${2:-}
+      shift 2
+      ;;
+    --backup-interval-seconds)
+      BACKUP_INTERVAL_SECONDS=${2:-}
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -84,6 +100,19 @@ while [[ ${#} -gt 0 ]]; do
 done
 
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+
+repo_relative_path() {
+  local value="$1"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+  if [[ "$value" = /* ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s/%s' "${SCRIPT_DIR}" "$value"
+  fi
+}
 
 frontend_access_url() {
   local host="$1"
@@ -174,6 +203,9 @@ if [[ -n "${AGENTFARM_DATA_DIR:-}" ]]; then
   fi
 else
   BACKEND_DATA_DIR="${SCRIPT_DIR}/data"
+fi
+if [[ -n "${BACKUP_DIR}" ]]; then
+  BACKUP_DIR="$(repo_relative_path "${BACKUP_DIR}")"
 fi
 FRONTEND_URL="$(frontend_access_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
 FRONTEND_HOSTNAME_URL="$(frontend_hostname_url "${FRONTEND_HOST}" "${FRONTEND_PORT}")"
@@ -286,8 +318,17 @@ mkdir -p logs
 
 echo "Starting backend on port ${BACKEND_PORT} (logs: logs/backend.log)"
 echo "Backend data dir: ${BACKEND_DATA_DIR}"
+BACKEND_ENV=(
+  "AGENTFARM_DATA_DIR=${BACKEND_DATA_DIR}"
+  "AGENTFARM_BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS}"
+  "BACKEND_PORT=${BACKEND_PORT}"
+)
+if [[ -n "${BACKUP_DIR}" ]]; then
+  echo "Backend backup dir: ${BACKUP_DIR}"
+  BACKEND_ENV+=("AGENTFARM_BACKUP_DIR=${BACKUP_DIR}")
+fi
 # Use setsid so the command runs in its own session/process-group; we'll kill the group on exit.
-setsid env AGENTFARM_DATA_DIR="${BACKEND_DATA_DIR}" BACKEND_PORT="${BACKEND_PORT}" bash -lc "cd backend && ./run_uvicorn.sh" > logs/backend.log 2>&1 &
+setsid env "${BACKEND_ENV[@]}" bash -lc "cd backend && ./run_uvicorn.sh" > logs/backend.log 2>&1 &
 BACK_PID=$!
 
 echo "Starting frontend on ${FRONTEND_HOST}:${FRONTEND_PORT} (logs: logs/frontend.log)"

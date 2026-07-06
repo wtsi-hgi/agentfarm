@@ -1,8 +1,9 @@
 """FastAPI application entry point with structured lifespan management."""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -11,6 +12,7 @@ from api import api_v1_router
 from config import settings
 from db.migrate import apply_migrations
 from services.auth_ldap import validate_dn_template
+from services.sqlite_backups import start_backup_scheduler
 from services.tls import prepare_tls_paths
 
 logger = logging.getLogger("agentfarm.api")
@@ -58,10 +60,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Database ready at %s", settings.db_path)
 
     app.state.http_client = AsyncClient(timeout=settings.http_client_timeout)
+    app.state.sqlite_backup_task = start_backup_scheduler(
+        settings.db_path,
+        settings.backup_dir,
+        settings.backup_interval_seconds,
+    )
 
     try:
         yield
     finally:
+        sqlite_backup_task: asyncio.Task[None] | None = app.state.sqlite_backup_task
+        if sqlite_backup_task is not None:
+            sqlite_backup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sqlite_backup_task
+
         http_client: AsyncClient = app.state.http_client
         await http_client.aclose()
         logger.info("Shutting down application")

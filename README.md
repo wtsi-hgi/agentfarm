@@ -133,6 +133,9 @@ Important runtime notes:
   hostname/FQDN, and any extra aliases in `FRONTEND_ALLOWED_DEV_ORIGINS`.
 - `run-dev.sh` passes `BACKEND_URL=https://127.0.0.1:${BACKEND_PORT}` to the
   frontend process.
+- SQLite online backups are disabled unless `AGENTFARM_BACKUP_DIR` is set.
+  When enabled, committed writes mark the database dirty and a background
+  scheduler writes an online backup at most once per configured interval.
 - Next still logs that self-signed certificates are experimental because local
   HTTPS is intentionally enabled for credential entry.
 - Backend runtime state defaults to repo-root `data/`, which is ignored by git.
@@ -168,6 +171,8 @@ Common local settings:
 - `BACKEND_PORT` (default `8000`)
 - `BACKEND_URL` (frontend server-side backend URL)
 - `AGENTFARM_DATA_DIR` (default `data`)
+- `AGENTFARM_BACKUP_DIR` (optional backup directory; unset/blank disables)
+- `AGENTFARM_BACKUP_INTERVAL_SECONDS` (default `600`)
 - `AGENTFARM_OWNER` (defaults to the OS user)
 - `AGENTFARM_WHITELIST` (comma-separated viewer usernames)
 - `AGENTFARM_LDAP_SERVER`
@@ -185,6 +190,8 @@ FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk
 BACKEND_PORT=9000
 BACKEND_URL=https://127.0.0.1:9000
 AGENTFARM_DATA_DIR=data
+AGENTFARM_BACKUP_DIR=data/backups
+AGENTFARM_BACKUP_INTERVAL_SECONDS=600
 AGENTFARM_OWNER=alice
 AGENTFARM_WHITELIST=bob,carol
 AGENTFARM_LDAP_SERVER=ldaps://ldap.example.com

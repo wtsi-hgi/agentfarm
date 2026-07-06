@@ -24,6 +24,7 @@ from pathlib import Path
 from threading import Lock
 
 from config import settings
+from services.sqlite_backups import record_committed_write
 
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 _wal_initialized_paths: set[Path] = set()
@@ -113,10 +114,20 @@ def get_write_connection(
     writer overlap wait away from the event loop and holds the process lock
     until the commit/rollback completes.
     """
+    resolved = _resolve_db_path(db_path)
+    changed = False
     with _write_transaction_lock:
-        with get_connection(db_path) as conn:
+        with get_connection(resolved) as conn:
             begin_immediate(conn)
+            changes_before = conn.total_changes
             yield conn
+            changed = conn.total_changes > changes_before
+    if changed:
+        record_committed_write(
+            resolved,
+            settings.backup_dir,
+            settings.backup_interval_seconds,
+        )
 
 
 def get_db() -> Iterator[sqlite3.Connection]:

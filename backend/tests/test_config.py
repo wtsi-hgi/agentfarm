@@ -55,6 +55,40 @@ def test_data_dir_drives_db_location(monkeypatch, tmp_path) -> None:
     assert db_path.resolve().is_relative_to(tmp_path.resolve())
 
 
+def test_backup_settings_default_to_disabled_with_ten_minute_interval(
+    monkeypatch,
+) -> None:
+    """Unset backup location disables backups while keeping the default cadence."""
+    monkeypatch.delenv("AGENTFARM_BACKUP_DIR", raising=False)
+    monkeypatch.delenv("AGENTFARM_BACKUP_INTERVAL_SECONDS", raising=False)
+
+    settings = Settings()
+
+    assert settings.backup_dir is None
+    assert settings.backup_interval_seconds == 600
+
+
+def test_backup_settings_read_from_env(monkeypatch, tmp_path) -> None:
+    """Backup location and cadence can be configured through AGENTFARM env vars."""
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setenv("AGENTFARM_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("AGENTFARM_BACKUP_INTERVAL_SECONDS", "120")
+
+    settings = Settings()
+
+    assert settings.backup_dir == backup_dir
+    assert settings.backup_interval_seconds == 120
+
+
+def test_blank_backup_dir_env_disables_backups(monkeypatch) -> None:
+    """A blank AGENTFARM_BACKUP_DIR behaves like an unset backup location."""
+    monkeypatch.setenv("AGENTFARM_BACKUP_DIR", "   ")
+
+    settings = Settings()
+
+    assert settings.backup_dir is None
+
+
 def test_owner_defaults_to_os_user_when_unset(monkeypatch) -> None:
     """With AGENTFARM_OWNER unset, owner is the OS user running the process (N1 #3)."""
     monkeypatch.delenv("AGENTFARM_OWNER", raising=False)
