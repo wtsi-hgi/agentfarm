@@ -85,8 +85,6 @@ type OutlinerRowProps = {
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
-  onDragStart?: React.DragEventHandler<HTMLElement>
-  onDragEnd?: React.DragEventHandler<HTMLElement>
   draftResetRequest?: { requestId: number; text: string } | null
 }
 
@@ -108,8 +106,6 @@ export function OutlinerRow({
   onChangeDone,
   onOpenNotes,
   onOpenPromptTimeline,
-  onDragStart,
-  onDragEnd,
   draftResetRequest,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
@@ -259,8 +255,6 @@ export function OutlinerRow({
         title="Drag"
         disabled={pending}
         draggable={false}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
       >
         {DRAG_ICON}

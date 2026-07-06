@@ -3398,10 +3398,6 @@ export function Outliner({
             onOpenNotes={openNotes}
             onOpenPromptTimeline={openPromptTimeline}
             draftResetRequest={rowDraftResetRequest}
-            onDragStart={(event) => {
-              handleNativeDragStart(item, event)
-            }}
-            onDragEnd={clearDragState}
           />
           {filteredOutNewlyAdded ? (
             <div
