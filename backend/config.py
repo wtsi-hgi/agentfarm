@@ -45,6 +45,20 @@ class Settings(BaseSettings):
 
     # Storage: the SQLite DB file lives under this directory (see ``db_path``).
     data_dir: Path = Field(default=Path("data"), alias="AGENTFARM_DATA_DIR")
+    # Optional SQLite online backup target. Empty/unset means backups are off.
+    backup_dir: Path | None = Field(default=None, alias="AGENTFARM_BACKUP_DIR")
+    backup_interval_seconds: int = Field(
+        default=600,
+        ge=0,
+        alias="AGENTFARM_BACKUP_INTERVAL_SECONDS",
+    )
+    # Retain successful timestamped backups for 30 days by default. Set to 0 to
+    # keep all backups; negative values are rejected to avoid surprising deletes.
+    backup_retention_days: int = Field(
+        default=30,
+        ge=0,
+        alias="AGENTFARM_BACKUP_RETENTION_DAYS",
+    )
 
     # Authentication / authorisation
     ldap_server: str | None = Field(default=None, alias="AGENTFARM_LDAP_SERVER")
@@ -71,6 +85,17 @@ class Settings(BaseSettings):
 
         if isinstance(value, str):
             return _unwrap_shell_style_outer_quotes(value)
+        return value
+
+    @field_validator("backup_dir", mode="before")
+    @classmethod
+    def blank_backup_dir_disables_backups(cls, value: Any) -> Any:
+        """Treat a blank backup directory setting as disabled."""
+
+        if isinstance(value, str):
+            value = _unwrap_shell_style_outer_quotes(value)
+            if not value.strip():
+                return None
         return value
 
     @computed_field  # type: ignore[prop-decorator]

@@ -20,6 +20,8 @@ next_log="${scratch_dir}/next.log"
 curl_log="${scratch_dir}/curl.log"
 tls_cert="${scratch_dir}/configured.crt"
 tls_key="${scratch_dir}/configured.key"
+backup_dir="${scratch_dir}/backups"
+backup_retention_days=9
 real_git="$(command -v git)"
 export RUN_DEV_SETSID_LOG="${setsid_log}"
 export RUN_DEV_NEXT_LOG="${next_log}"
@@ -118,7 +120,7 @@ fi
 set +e
 (
   cd "${repo_root}"
-  FRONTEND_HOST=0.0.0.0 FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 > "${run_log}" 2>&1
+  FRONTEND_HOST=0.0.0.0 FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 --backup-dir "${backup_dir}" --backup-interval-seconds 42 --backup-retention-days "${backup_retention_days}" > "${run_log}" 2>&1
 )
 status=$?
 set -e
@@ -133,6 +135,24 @@ expected_data_dir="${repo_root}/data"
 if ! grep -F "AGENTFARM_DATA_DIR=${expected_data_dir}" "${setsid_log}" >/dev/null; then
   cat "${setsid_log}"
   echo "backend was not started with repo-root AGENTFARM_DATA_DIR" >&2
+  exit 1
+fi
+
+if ! grep -F "AGENTFARM_BACKUP_DIR=${backup_dir}" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was not started with the configured backup directory" >&2
+  exit 1
+fi
+
+if ! grep -F "AGENTFARM_BACKUP_INTERVAL_SECONDS=42" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was not started with the configured backup interval" >&2
+  exit 1
+fi
+
+if ! grep -F "AGENTFARM_BACKUP_RETENTION_DAYS=${backup_retention_days}" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was not started with the configured backup retention" >&2
   exit 1
 fi
 
@@ -193,6 +213,28 @@ fi
 if ! grep -F "https://localhost:3999/api/health" "${curl_log}" | grep -F -- "-k" >/dev/null; then
   cat "${curl_log}"
   echo "run-dev.sh did not allow the self-signed frontend cert during health checks" >&2
+  exit 1
+fi
+
+: > "${setsid_log}"
+: > "${run_log}"
+set +e
+(
+  cd "${repo_root}"
+  FRONTEND_HOST=0.0.0.0 AGENTFARM_BACKUP_DIR="   " AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9553 --frontend-port 4001 > "${run_log}" 2>&1
+)
+status=$?
+set -e
+
+if [[ "${status}" -ne 0 && "${status}" -ne 124 && "${status}" -ne 143 ]]; then
+  cat "${run_log}"
+  echo "run-dev.sh exited unexpectedly with status ${status} for blank backup dir" >&2
+  exit 1
+fi
+
+if grep -F "AGENTFARM_BACKUP_DIR=" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was started with AGENTFARM_BACKUP_DIR for a whitespace-only backup dir" >&2
   exit 1
 fi
 

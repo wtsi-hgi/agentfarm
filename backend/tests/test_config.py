@@ -11,6 +11,9 @@ from __future__ import annotations
 import getpass
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from config import Settings
 
 
@@ -53,6 +56,63 @@ def test_data_dir_drives_db_location(monkeypatch, tmp_path) -> None:
 
     # The derived DB location lives strictly inside the configured data dir.
     assert db_path.resolve().is_relative_to(tmp_path.resolve())
+
+
+def test_backup_settings_default_to_disabled_with_ten_minute_interval(
+    monkeypatch,
+) -> None:
+    """Unset backup location disables backups while keeping default backup policy."""
+    monkeypatch.delenv("AGENTFARM_BACKUP_DIR", raising=False)
+    monkeypatch.delenv("AGENTFARM_BACKUP_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("AGENTFARM_BACKUP_RETENTION_DAYS", raising=False)
+
+    settings = Settings()
+
+    assert settings.backup_dir is None
+    assert settings.backup_interval_seconds == 600
+    assert settings.backup_retention_days == 30
+
+
+def test_backup_settings_read_from_env(monkeypatch, tmp_path) -> None:
+    """Backup location, cadence, and retention are configurable through env vars."""
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setenv("AGENTFARM_BACKUP_DIR", str(backup_dir))
+    monkeypatch.setenv("AGENTFARM_BACKUP_INTERVAL_SECONDS", "120")
+    monkeypatch.setenv("AGENTFARM_BACKUP_RETENTION_DAYS", "14")
+
+    settings = Settings()
+
+    assert settings.backup_dir == backup_dir
+    assert settings.backup_interval_seconds == 120
+    assert settings.backup_retention_days == 14
+
+
+def test_zero_backup_retention_days_is_allowed_to_disable_pruning(
+    monkeypatch,
+) -> None:
+    """Retention can be set to 0 when operators want to keep all backups."""
+    monkeypatch.setenv("AGENTFARM_BACKUP_RETENTION_DAYS", "0")
+
+    settings = Settings()
+
+    assert settings.backup_retention_days == 0
+
+
+def test_negative_backup_retention_days_is_rejected(monkeypatch) -> None:
+    """Negative retention days are rejected instead of becoming surprising deletes."""
+    monkeypatch.setenv("AGENTFARM_BACKUP_RETENTION_DAYS", "-1")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_blank_backup_dir_env_disables_backups(monkeypatch) -> None:
+    """A blank AGENTFARM_BACKUP_DIR behaves like an unset backup location."""
+    monkeypatch.setenv("AGENTFARM_BACKUP_DIR", "   ")
+
+    settings = Settings()
+
+    assert settings.backup_dir is None
 
 
 def test_owner_defaults_to_os_user_when_unset(monkeypatch) -> None:
