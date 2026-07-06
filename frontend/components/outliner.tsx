@@ -243,6 +243,7 @@ type SameSectionLowerLeafDependencyPlacement = {
 }
 
 type FirstRootCreatorProps = {
+  autoFocus?: boolean
   onCreate: (title: string) => Promise<void>
 }
 
@@ -297,7 +298,10 @@ const ROOT_SECTION_TONES = [
   },
 ] satisfies readonly RootSectionTone[]
 
-function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
+function FirstRootCreator({
+  autoFocus = true,
+  onCreate,
+}: FirstRootCreatorProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [draft, setDraft] = React.useState(NEW_ITEM_TITLE)
   const [pending, setPending] = React.useState(false)
@@ -305,6 +309,10 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
   const trimmedDraft = draft.trim()
 
   React.useEffect(() => {
+    if (!autoFocus) {
+      return
+    }
+
     const input = inputRef.current
     if (!input) {
       return
@@ -312,7 +320,7 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
 
     input.focus()
     input.select()
-  }, [])
+  }, [autoFocus])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -3337,22 +3345,22 @@ export function Outliner({
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="flex min-w-0 flex-col gap-3 text-sm">
-          {activeItems.length === 0 ? (
-            <div className="border-border border-y">
-              <FirstRootCreator onCreate={createRoot} />
+          {rootSections.map((section) => (
+            <div
+              key={section.key}
+              className="border-border/70 divide-border/60 divide-y overflow-hidden rounded-md border bg-[var(--root-section-background)] shadow-sm dark:bg-[var(--root-section-background-dark)] dark:shadow-none"
+              style={rootSectionStyle(section.tone)}
+              data-outliner-root-section-id={section.root.id}
+            >
+              {section.rows.map((row) => renderVisibleRow(row))}
             </div>
-          ) : (
-            rootSections.map((section) => (
-              <div
-                key={section.key}
-                className="border-border/70 divide-border/60 divide-y overflow-hidden rounded-md border bg-[var(--root-section-background)] shadow-sm dark:bg-[var(--root-section-background-dark)] dark:shadow-none"
-                style={rootSectionStyle(section.tone)}
-                data-outliner-root-section-id={section.root.id}
-              >
-                {section.rows.map((row) => renderVisibleRow(row))}
-              </div>
-            ))
-          )}
+          ))}
+          <div className="border-border border-y">
+            <FirstRootCreator
+              autoFocus={activeItems.length === 0}
+              onCreate={createRoot}
+            />
+          </div>
           {dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker
               slot={dragOriginMarker}

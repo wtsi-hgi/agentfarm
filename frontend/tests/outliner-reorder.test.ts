@@ -505,9 +505,15 @@ describe('Outliner reorder controls', () => {
     })
     actionMocks.createItem.mockImplementation(async () => createdItemPromise)
     const container = await render([
-      item({ id: 'first', title: 'First', sort_order: 1 }),
-      item({ id: 'second', title: 'Second', sort_order: 2 }),
-      item({ id: 'third', title: 'Third', sort_order: 3 }),
+      item({ id: 'root', title: 'Root', actionable: false, sort_order: 1 }),
+      item({ id: 'first', title: 'First', parent_id: 'root', sort_order: 1 }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'root',
+        sort_order: 2,
+      }),
+      item({ id: 'third', title: 'Third', parent_id: 'root', sort_order: 3 }),
     ])
     const secondRow = outlinerItem(container, 'second')
 
@@ -525,6 +531,7 @@ describe('Outliner reorder controls', () => {
         item({
           id: 'created',
           title: 'New item',
+          parent_id: 'root',
           slug: 'created',
           sort_order: 3,
         })

@@ -233,6 +233,7 @@ export function OutlinerRow({
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
   const showDoneCheckbox = item.parent_id !== null
+  const showAddSibling = item.parent_id !== null
 
   return (
     <div
@@ -307,18 +308,22 @@ export function OutlinerRow({
             aria-label="Item text"
             className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Add sibling"
-            title="Add sibling"
-            disabled={pending}
-            onClick={createSibling}
-          >
-            {ADD_SIBLING_ICON}
-          </Button>
+          {showAddSibling ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label="Add sibling"
+              title="Add sibling"
+              disabled={pending}
+              onClick={createSibling}
+            >
+              {ADD_SIBLING_ICON}
+            </Button>
+          ) : (
+            <span className="size-8 shrink-0" aria-hidden="true" />
+          )}
         </div>
         {error ? (
           <div className="text-destructive truncate text-xs" role="alert">

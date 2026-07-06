@@ -32,13 +32,13 @@ const nestedFixtureItemCount =
   nestedSectionCount +
   nestedSectionCount * nestedSubsectionCount +
   nestedSectionCount * nestedSubsectionCount * nestedLeafCount
-const requiredRowControlLabels = [
+const requiredRootRowControlLabels = [
   'Drag item',
-  'Add sibling',
   'Open notes',
   'Open prompt/response timeline',
   'Delete item',
 ] as const
+const requiredChildRowControlLabels = ['Add sibling'] as const
 const loadBudgetMs = 1000
 const measuredLoadCount = 10
 const warmupLoadCount = 1
@@ -172,7 +172,8 @@ async function waitForNestedFixtureReady(
     ({
       expectedStateValues,
       fixtureTitles,
-      requiredControlLabels,
+      requiredChildControlLabels,
+      requiredRootControlLabels,
       titleProbes,
     }) => {
       const titleInputs = Array.from(
@@ -204,20 +205,42 @@ async function waitForNestedFixtureReady(
           const icon = button.querySelector<SVGElement>('svg')
           return label && icon ? [[label, icon]] : []
         })
-      const firstRowIconsByLabel = new Map(
-        firstRow ? rowControlIcons(firstRow) : []
-      )
-      const firstRowControlIcons = firstRow
-        ? requiredControlLabels
-            .map((label) => firstRowIconsByLabel.get(label) ?? null)
-            .filter((icon): icon is SVGElement => icon !== null)
-        : []
-      const firstRowControlIconsVisible =
-        firstRowControlIcons.length === requiredControlLabels.length &&
-        firstRowControlIcons.every((icon) => {
+
+      const visibleIconsForLabels = (
+        row: HTMLElement | undefined,
+        labels: readonly string[]
+      ) => {
+        if (!row) {
+          return []
+        }
+        const rowIconsByLabel = new Map(rowControlIcons(row))
+        return labels
+          .map((label) => rowIconsByLabel.get(label) ?? null)
+          .filter((icon): icon is SVGElement => icon !== null)
+      }
+      const iconsAreVisible = (
+        icons: readonly SVGElement[],
+        expectedCount: number
+      ) =>
+        icons.length === expectedCount &&
+        icons.every((icon) => {
           const rect = icon.getBoundingClientRect()
           return rect.width > 0 && rect.height > 0
         })
+      const firstRowControlIcons = visibleIconsForLabels(
+        firstRow,
+        requiredRootControlLabels
+      )
+      const firstRowControlIconsVisible = iconsAreVisible(
+        firstRowControlIcons,
+        requiredRootControlLabels.length
+      )
+      const childRowControlIconsVisible = rows.some((row) =>
+        iconsAreVisible(
+          visibleIconsForLabels(row, requiredChildControlLabels),
+          requiredChildControlLabels.length
+        )
+      )
 
       const stateSelectors = Array.from(
         document.querySelectorAll<HTMLSelectElement>(
@@ -245,7 +268,10 @@ async function waitForNestedFixtureReady(
         scratchpadRect.height > 0
 
       const ready =
-        firstRowControlIconsVisible && stateSelectorsReady && scratchpadReady
+        firstRowControlIconsVisible &&
+        childRowControlIconsVisible &&
+        stateSelectorsReady &&
+        scratchpadReady
       if (!ready) {
         return false
       }
@@ -263,7 +289,8 @@ async function waitForNestedFixtureReady(
     {
       expectedStateValues,
       fixtureTitles: [...fixtureTitles],
-      requiredControlLabels: [...requiredRowControlLabels],
+      requiredChildControlLabels: [...requiredChildRowControlLabels],
+      requiredRootControlLabels: [...requiredRootRowControlLabels],
       titleProbes,
     },
     {

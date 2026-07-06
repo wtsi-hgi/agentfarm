@@ -1802,7 +1802,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(getItemInput(container, 'current').value).toBe('Renamed by backend')
   })
 
-  it('renders a returned created sibling without waiting for a parent refresh', async () => {
+  it('renders a bottom-created root without waiting for a parent refresh', async () => {
     actionMocks.createItem.mockImplementation(async (input: CreateItemInput) =>
       item({
         id: 'created-without-refresh',
@@ -1813,14 +1813,16 @@ describe('Outliner live newly added filter exemptions', () => {
     )
     const container = await render(React.createElement(SiblingCreationHarness))
 
-    await click(getItemButton(container, 'current', 'Add sibling'))
+    await click(getButton(container, 'Create root'))
 
     const createdInput = getItemInput(container, 'created-without-refresh')
     expect(actionMocks.createItem).toHaveBeenCalledWith({
       title: 'New item',
       parent_id: null,
-      after_id: 'current',
     })
+    expect(actionMocks.createItem.mock.calls[0]?.[0]).not.toHaveProperty(
+      'after_id'
+    )
     expect(getOutlinerItemIds(container)).toEqual([
       'current',
       'created-without-refresh',
@@ -1830,7 +1832,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('selects the default title for a button-created sibling so immediate typing replaces it', async () => {
+  it('selects the default title for a bottom-created root so immediate typing replaces it', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1845,7 +1847,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
     const container = await render(React.createElement(SiblingCreationHarness))
 
-    await click(getItemButton(container, 'current', 'Add sibling'))
+    await click(getButton(container, 'Create root'))
 
     const createdInput = getItemInput(container, 'created-sibling')
 
@@ -1900,7 +1902,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('keeps a button-created root sibling beneath the completed root subtree in priority sort', async () => {
+  it('keeps a bottom-created root beneath the completed root subtree in priority sort', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1923,14 +1925,16 @@ describe('Outliner live newly added filter exemptions', () => {
       'priority-anchor',
     ])
 
-    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+    await click(getButton(container, 'Create root'))
 
     const createdInput = getItemInput(container, 'created-root-sibling')
     expect(actionMocks.createItem).toHaveBeenCalledWith({
       title: 'New item',
       parent_id: null,
-      after_id: 'completed-root',
     })
+    expect(actionMocks.createItem.mock.calls[0]?.[0]).not.toHaveProperty(
+      'after_id'
+    )
     expect(getOutlinerItemIds(container)).toEqual([
       'completed-root',
       'completed-child',
@@ -1942,7 +1946,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('keeps a recreated sibling id in alphabetical root order after removal and restore', async () => {
+  it('keeps a recreated bottom root id in alphabetical root order after removal and restore', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1959,7 +1963,7 @@ describe('Outliner live newly added filter exemptions', () => {
       React.createElement(PrunedRootSiblingAnchorHarness)
     )
 
-    await click(getItemButton(container, 'completed-root', 'Add sibling'))
+    await click(getButton(container, 'Create root'))
 
     expect(getOutlinerItemIds(container)).toEqual([
       'completed-root',
@@ -1986,7 +1990,7 @@ describe('Outliner live newly added filter exemptions', () => {
     ])
   })
 
-  it('orders a created root sibling changed to respond by priority in up-next', async () => {
+  it('orders a bottom-created root changed to respond by priority in up-next', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -2016,13 +2020,15 @@ describe('Outliner live newly added filter exemptions', () => {
       React.createElement(RootSiblingPriorityProjectionHarness)
     )
 
-    await click(getItemButton(container, 'ready-root', 'Add sibling'))
+    await click(getButton(container, 'Create root'))
 
     expect(actionMocks.createItem).toHaveBeenCalledWith({
       title: 'New item',
       parent_id: null,
-      after_id: 'ready-root',
     })
+    expect(actionMocks.createItem.mock.calls[0]?.[0]).not.toHaveProperty(
+      'after_id'
+    )
     expect(getOutlinerItemIds(container)).toEqual([
       'created-root-sibling',
       'ready-root',
