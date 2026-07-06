@@ -52,6 +52,13 @@ class Settings(BaseSettings):
         ge=0,
         alias="AGENTFARM_BACKUP_INTERVAL_SECONDS",
     )
+    # Retain successful timestamped backups for 30 days by default. Set to 0 to
+    # keep all backups; negative values are rejected to avoid surprising deletes.
+    backup_retention_days: int = Field(
+        default=30,
+        ge=0,
+        alias="AGENTFARM_BACKUP_RETENTION_DAYS",
+    )
 
     # Authentication / authorisation
     ldap_server: str | None = Field(default=None, alias="AGENTFARM_LDAP_SERVER")

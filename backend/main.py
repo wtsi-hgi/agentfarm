@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.db_path,
         settings.backup_dir,
         settings.backup_interval_seconds,
+        settings.backup_retention_days,
     )
 
     try:

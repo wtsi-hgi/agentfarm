@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<-EOF
-Usage: $0 [--frontend-host HOST] [--frontend-port PORT] [--backend-port PORT] [--backup-dir DIR] [--backup-interval-seconds SECONDS]
+Usage: $0 [--frontend-host HOST] [--frontend-port PORT] [--backend-port PORT] [--backup-dir DIR] [--backup-interval-seconds SECONDS] [--backup-retention-days DAYS]
 
 Starts frontend and backend in development mode.
 
@@ -15,6 +15,8 @@ Options:
       --backup-dir DIR       Directory for SQLite online backups (default: off)
       --backup-interval-seconds SECONDS
                               Minimum seconds between backup attempts (default: 600)
+      --backup-retention-days DAYS
+                              Days to retain backup files; 0 keeps all (default: 30)
   -h, --help                 Show this help
 
 Examples:
@@ -30,6 +32,9 @@ Examples:
   # back up the SQLite database at most every 10 minutes after writes
   $0 --backup-dir data/backups
 
+  # keep timestamped backups for 14 days
+  $0 --backup-dir data/backups --backup-retention-days 14
+
 When the frontend binds to 0.0.0.0, open https://localhost:PORT on this machine
 or use this machine's hostname/LAN IP from another device. The frontend dev
 server uses HTTPS for credential entry.
@@ -43,6 +48,7 @@ FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 BACKEND_PORT=8000
 BACKUP_DIR="${AGENTFARM_BACKUP_DIR:-}"
 BACKUP_INTERVAL_SECONDS="${AGENTFARM_BACKUP_INTERVAL_SECONDS:-600}"
+BACKUP_RETENTION_DAYS="${AGENTFARM_BACKUP_RETENTION_DAYS:-30}"
 FRONT_PID=""
 BACK_PID=""
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,6 +91,10 @@ while [[ ${#} -gt 0 ]]; do
       ;;
     --backup-interval-seconds)
       BACKUP_INTERVAL_SECONDS=${2:-}
+      shift 2
+      ;;
+    --backup-retention-days)
+      BACKUP_RETENTION_DAYS=${2:-}
       shift 2
       ;;
     -h|--help)
@@ -321,6 +331,7 @@ echo "Backend data dir: ${BACKEND_DATA_DIR}"
 BACKEND_ENV=(
   "AGENTFARM_DATA_DIR=${BACKEND_DATA_DIR}"
   "AGENTFARM_BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS}"
+  "AGENTFARM_BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS}"
   "BACKEND_PORT=${BACKEND_PORT}"
 )
 if [[ -n "${BACKUP_DIR}" ]]; then

@@ -21,6 +21,7 @@ curl_log="${scratch_dir}/curl.log"
 tls_cert="${scratch_dir}/configured.crt"
 tls_key="${scratch_dir}/configured.key"
 backup_dir="${scratch_dir}/backups"
+backup_retention_days=9
 real_git="$(command -v git)"
 export RUN_DEV_SETSID_LOG="${setsid_log}"
 export RUN_DEV_NEXT_LOG="${next_log}"
@@ -119,7 +120,7 @@ fi
 set +e
 (
   cd "${repo_root}"
-  FRONTEND_HOST=0.0.0.0 FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 --backup-dir "${backup_dir}" --backup-interval-seconds 42 > "${run_log}" 2>&1
+  FRONTEND_HOST=0.0.0.0 FRONTEND_ALLOWED_DEV_ORIGINS=farm22-wrstat01.internal.sanger.ac.uk AGENTFARM_TLS_CERT="${tls_cert}" AGENTFARM_TLS_KEY="${tls_key}" PATH="${stub_bin}:${PATH}" timeout 8s bash ./run-dev.sh --backend-port 9443 --frontend-port 3999 --backup-dir "${backup_dir}" --backup-interval-seconds 42 --backup-retention-days "${backup_retention_days}" > "${run_log}" 2>&1
 )
 status=$?
 set -e
@@ -146,6 +147,12 @@ fi
 if ! grep -F "AGENTFARM_BACKUP_INTERVAL_SECONDS=42" "${setsid_log}" >/dev/null; then
   cat "${setsid_log}"
   echo "backend was not started with the configured backup interval" >&2
+  exit 1
+fi
+
+if ! grep -F "AGENTFARM_BACKUP_RETENTION_DAYS=${backup_retention_days}" "${setsid_log}" >/dev/null; then
+  cat "${setsid_log}"
+  echo "backend was not started with the configured backup retention" >&2
   exit 1
 fi
 

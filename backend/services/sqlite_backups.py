@@ -5,18 +5,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
 logger = logging.getLogger("agentfarm.backups")
 
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
+_DEFAULT_RETENTION_DAYS = 30
+_BACKUP_FILENAME_PATTERN = re.compile(
+    r"^agentfarm-backup-(?P<timestamp>\d{8}T\d{12}Z)-\d{6}\.db$"
+)
 _BackupClock = Callable[[], float]
 _BackupSleep = Callable[[float], Awaitable[None]]
 _backup_clock: _BackupClock = time.monotonic
@@ -55,6 +60,7 @@ def record_committed_write(
     db_path: Path | str,
     backup_dir: Path | str | None,
     interval_seconds: int,
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
 ) -> Path | None:
     """Mark the DB dirty and maybe create an online backup after a write commit.
 
@@ -64,6 +70,8 @@ def record_committed_write(
             ``None`` or an empty string disables backups.
         interval_seconds: Minimum time between backup attempts for this source DB
             and destination. ``0`` means each committed write may try to back up.
+        retention_days: Number of days to retain timestamped Agent Farm backup
+            files after each successful backup. ``0`` disables pruning.
 
     Returns:
         The created backup file path, or ``None`` when disabled, throttled, or
@@ -76,7 +84,12 @@ def record_committed_write(
     source_path = Path(db_path)
     try:
         _mark_dirty(source_path, destination_dir)
-        return flush_due_backup(source_path, destination_dir, interval_seconds)
+        return flush_due_backup(
+            source_path,
+            destination_dir,
+            interval_seconds,
+            retention_days,
+        )
     except Exception:
         logger.exception("SQLite backup scheduling failed for %s", source_path)
         return None
@@ -86,6 +99,7 @@ def flush_due_backup(
     db_path: Path | str,
     backup_dir: Path | str | None,
     interval_seconds: int,
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
 ) -> Path | None:
     """Create an online backup when dirty state is due for a flush.
 
@@ -132,6 +146,7 @@ def flush_due_backup(
             state.last_success_at = now
 
         logger.info("SQLite backup written to %s", backup_path)
+        _prune_old_backups_best_effort(destination_dir, retention_days)
         return backup_path
     except Exception:
         if temp_path is not None:
@@ -145,6 +160,7 @@ async def run_backup_scheduler(
     db_path: Path | str,
     backup_dir: Path | str | None,
     interval_seconds: int,
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
     *,
     sleep: _BackupSleep = asyncio.sleep,
 ) -> None:
@@ -160,6 +176,7 @@ async def run_backup_scheduler(
             db_path,
             backup_dir,
             interval_seconds,
+            retention_days,
         )
 
 
@@ -167,12 +184,13 @@ def start_backup_scheduler(
     db_path: Path | str,
     backup_dir: Path | str | None,
     interval_seconds: int,
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
 ) -> asyncio.Task[None] | None:
     """Start the background backup scheduler, or return ``None`` when disabled."""
     if _normalise_backup_dir(backup_dir) is None:
         return None
     return asyncio.create_task(
-        run_backup_scheduler(db_path, backup_dir, interval_seconds),
+        run_backup_scheduler(db_path, backup_dir, interval_seconds, retention_days),
         name="sqlite-backup-scheduler",
     )
 
@@ -225,6 +243,44 @@ def _next_backup_path(backup_dir: Path, state: _BackupState) -> Path:
         candidate = backup_dir / f"agentfarm-backup-{timestamp}-{state.sequence:06d}.db"
         if not candidate.exists():
             return candidate
+
+
+def _prune_old_backups_best_effort(backup_dir: Path, retention_days: int) -> None:
+    """Prune old app-created backup files without affecting backup success."""
+    try:
+        _prune_old_backup_files(backup_dir, retention_days)
+    except Exception:
+        logger.exception("SQLite backup retention pruning failed in %s", backup_dir)
+
+
+def _prune_old_backup_files(backup_dir: Path, retention_days: int) -> None:
+    """Delete app-created backup files older than the configured retention."""
+    if retention_days <= 0:
+        return
+
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    for path in backup_dir.iterdir():
+        timestamp = _backup_timestamp_from_name(path.name)
+        if timestamp is None or timestamp >= cutoff:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            logger.exception("Failed to prune old SQLite backup %s", path)
+
+
+def _backup_timestamp_from_name(name: str) -> datetime | None:
+    """Extract the UTC timestamp from an Agent Farm backup filename."""
+    match = _BACKUP_FILENAME_PATTERN.match(name)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(
+            match.group("timestamp"),
+            "%Y%m%dT%H%M%S%fZ",
+        ).replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def _online_backup(source_path: Path, target_path: Path) -> None:
