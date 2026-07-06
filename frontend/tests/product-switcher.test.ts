@@ -72,16 +72,32 @@ const items = [
 ]
 
 let roots: Root[] = []
+let originalScrollIntoView: HTMLElement['scrollIntoView'] | undefined
 
 function selectOptionLabels(markup: string) {
   const selectMatch = markup.match(
-    /<select[^>]*aria-label="Jump to product"[^>]*>(.*?)<\/select>/
+    /<select[^>]*aria-label="Filter by product"[^>]*>(.*?)<\/select>/
   )
 
   return [...(selectMatch?.[1] ?? '').matchAll(/<option[^>]*>(.*?)<\/option>/g)]
-    .filter((match) => !match[0].includes('disabled'))
+    .filter(
+      (match) =>
+        !match[0].includes('disabled') && !match[0].includes('value=""')
+    )
     .map((match) => match[1])
     .filter(Boolean)
+}
+
+function productSwitcherProps(
+  overrides: Partial<React.ComponentProps<typeof ProductSwitcher>> = {}
+) {
+  return {
+    items,
+    onJump: () => undefined,
+    onProductFilterChange: () => undefined,
+    selectedProductId: null,
+    ...overrides,
+  } satisfies React.ComponentProps<typeof ProductSwitcher>
 }
 
 async function flushReact() {
@@ -93,7 +109,7 @@ async function flushReact() {
 
 async function renderProductSwitcher(
   productItems: TreeItem[],
-  onJump: (itemId: string) => void
+  overrides: Partial<React.ComponentProps<typeof ProductSwitcher>> = {}
 ) {
   const container = document.createElement('div')
   document.body.append(container)
@@ -102,8 +118,25 @@ async function renderProductSwitcher(
 
   await act(async () => {
     root.render(
-      React.createElement(ProductSwitcher, { items: productItems, onJump })
+      React.createElement(
+        ProductSwitcher,
+        productSwitcherProps({ items: productItems, ...overrides })
+      )
     )
+  })
+  await flushReact()
+
+  return container
+}
+
+async function renderOutliner(productItems: TreeItem[]) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  await act(async () => {
+    root.render(React.createElement(Outliner, { items: productItems }))
   })
   await flushReact()
 
@@ -126,6 +159,14 @@ function getButton(container: ParentNode, ariaLabel: string) {
   return button
 }
 
+function getSelect(container: ParentNode, ariaLabel: string) {
+  const select = container.querySelector(`select[aria-label="${ariaLabel}"]`)
+  if (!(select instanceof HTMLSelectElement)) {
+    throw new Error(`Missing select: ${ariaLabel}`)
+  }
+  return select
+}
+
 async function changeInput(input: HTMLInputElement, value: string) {
   const valueSetter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -138,6 +179,22 @@ async function changeInput(input: HTMLInputElement, value: string) {
   await act(async () => {
     valueSetter.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
+}
+
+async function changeSelect(select: HTMLSelectElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing select value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(select, value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
   })
   await flushReact()
 }
@@ -157,6 +214,14 @@ function datalistOptionValues(container: ParentNode) {
   ).map((option) => option.value)
 }
 
+function outlinerItemIds(container: ParentNode) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  )
+    .map((row) => row.dataset.outlinerItemId)
+    .filter((itemId): itemId is string => Boolean(itemId))
+}
+
 function useTurkishDefaultLocaleLowerCase() {
   const original = String.prototype.toLocaleLowerCase
   vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (
@@ -174,6 +239,11 @@ describe('ProductSwitcher', () => {
         IS_REACT_ACT_ENVIRONMENT?: boolean
       }
     ).IS_REACT_ACT_ENVIRONMENT = true
+    originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    })
   })
 
   afterEach(() => {
@@ -182,12 +252,22 @@ describe('ProductSwitcher', () => {
     }
     roots = []
     document.body.replaceChildren()
+    if (originalScrollIntoView) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+        configurable: true,
+        value: originalScrollIntoView,
+      })
+    } else {
+      delete (
+        HTMLElement.prototype as Partial<Pick<HTMLElement, 'scrollIntoView'>>
+      ).scrollIntoView
+    }
     vi.restoreAllMocks()
   })
 
   it('lists every product root exactly once', () => {
     const markup = renderToStaticMarkup(
-      React.createElement(ProductSwitcher, { items, onJump: () => undefined })
+      React.createElement(ProductSwitcher, productSwitcherProps())
     )
 
     expect(productRootOptions(items).map((option) => option.title)).toEqual([
@@ -234,6 +314,52 @@ describe('ProductSwitcher', () => {
     expect(items).toEqual(before)
   })
 
+  it('selecting a product applies a filter without using item jump and can clear it', async () => {
+    const onJump = vi.fn()
+    const onProductFilterChange = vi.fn()
+    const container = await renderProductSwitcher(items, {
+      onJump,
+      onProductFilterChange,
+      selectedProductId: null,
+    })
+
+    await changeSelect(getSelect(container, 'Filter by product'), 'beta')
+
+    expect(onProductFilterChange).toHaveBeenCalledWith('beta')
+    expect(onJump).not.toHaveBeenCalled()
+
+    const selectedContainer = await renderProductSwitcher(items, {
+      onJump,
+      onProductFilterChange,
+      selectedProductId: 'beta',
+    })
+
+    await click(getButton(selectedContainer, 'Show all products'))
+
+    expect(onProductFilterChange).toHaveBeenLastCalledWith(null)
+    expect(onJump).not.toHaveBeenCalled()
+  })
+
+  it('keeps item search as a jump when a product filter is active', async () => {
+    const container = await renderOutliner(items)
+
+    await changeSelect(getSelect(container, 'Filter by product'), 'beta')
+
+    expect(outlinerItemIds(container)).toEqual(['beta', 'beta-1', 'beta-2'])
+
+    await changeInput(getInput(container, 'Jump to item'), 'Alpha')
+    await click(getButton(container, 'Jump to item'))
+
+    expect(getSelect(container, 'Filter by product').value).toBe('')
+    expect(outlinerItemIds(container)).toEqual([
+      'alpha',
+      'beta',
+      'beta-1',
+      'beta-2',
+      'gamma',
+    ])
+  })
+
   it('selecting a nested target focuses it and expands collapsed ancestors', () => {
     expect(
       visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
@@ -258,7 +384,7 @@ describe('ProductSwitcher', () => {
         item({ id: 'ITEM-1', title: 'ITEM Roadmap', sort_order: 1 }),
         item({ id: 'other', title: 'Other', sort_order: 2 }),
       ],
-      onJump
+      { onJump }
     )
     const input = getInput(container, 'Jump to item')
 

@@ -282,7 +282,7 @@ describe('app page BFF wiring', () => {
     expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('1')
     expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('1')
     expect(itemInputValues(document)).toContain('Alpha')
-    expect(document.body.textContent).toContain('Product')
+    expect(document.body.textContent).toContain('All products')
     expect(document.body.textContent).toContain('Scratch pad')
     expect(document.body.textContent).toContain('Read only')
     expect(document.body.textContent).not.toContain('Unified Tree')

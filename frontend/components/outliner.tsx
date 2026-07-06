@@ -79,6 +79,7 @@ export type VisibleOutlinerOptions = {
   dragPreview?: DragPreview | null
   leverageSort?: boolean
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
+  rootItemId?: string | null
   view?: OutlinerView
   hiddenItemIds?: IdCollection
   newlyAddedIds?: IdCollection
@@ -1432,6 +1433,34 @@ function collectionToSet(collection: IdCollection | undefined): Set<string> {
   return isIdSet(collection) ? new Set(collection) : new Set(collection)
 }
 
+function itemBelongsToRoot(
+  itemsById: ReadonlyMap<string, TreeItem>,
+  itemId: string,
+  rootItemId: string
+): boolean {
+  return rootItemIdForItem(itemsById, itemId) === rootItemId
+}
+
+function rootItemIdForItem(
+  itemsById: ReadonlyMap<string, TreeItem>,
+  itemId: string
+): string | null {
+  let current = itemsById.get(itemId) ?? null
+  const visited = new Set<string>()
+
+  while (current && !visited.has(current.id)) {
+    if (current.parent_id === null) {
+      return current.id
+    }
+    visited.add(current.id)
+    current = current.parent_id
+      ? (itemsById.get(current.parent_id) ?? null)
+      : null
+  }
+
+  return null
+}
+
 function itemAncestorBreadcrumbs(
   item: TreeItem | null,
   itemsById: ReadonlyMap<string, TreeItem>
@@ -1776,6 +1805,12 @@ export function visibleOutlinerRows(
 ): VisibleOutlinerRow[] {
   const view = options.view ?? 'tree'
   const priorityRanks = makePriorityRanks(options.priorityItems)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const rootItem =
+    options.rootItemId === null || options.rootItemId === undefined
+      ? null
+      : (itemsById.get(options.rootItemId) ?? null)
+  const filteredRootItem = rootItem?.parent_id === null ? rootItem : null
   const children = makeChildMap(items, {
     ...options,
     leverageSort: view !== 'tree' ? true : options.leverageSort,
@@ -1867,48 +1902,16 @@ export function visibleOutlinerRows(
     return visible
   }
 
-  function visitTree(parentId: string | null, depth: number) {
-    for (const item of children.get(parentId) ?? []) {
-      const {
-        collapsed,
-        directlyVisible,
-        displayReadiness,
-        filteredOutNewlyAdded,
-        hasChildren,
-      } = projection(item)
+  function visitTreeItem(item: TreeItem, depth: number) {
+    const {
+      collapsed,
+      directlyVisible,
+      displayReadiness,
+      filteredOutNewlyAdded,
+      hasChildren,
+    } = projection(item)
 
-      if (directlyVisible) {
-        rows.push({
-          item,
-          depth,
-          hasChildren,
-          collapsed,
-          displayReadiness,
-          filteredOutNewlyAdded,
-        })
-      }
-
-      if (!directlyVisible || !collapsed) {
-        visitTree(item.id, directlyVisible ? depth + 1 : depth)
-      }
-    }
-  }
-
-  function visitFiltered(parentId: string | null, depth: number) {
-    for (const item of children.get(parentId) ?? []) {
-      const {
-        collapsed,
-        directlyVisible,
-        displayReadiness,
-        filteredOutNewlyAdded,
-        hasChildren,
-      } = projection(item)
-      const visible = directlyVisible || hasVisibleDescendant(item)
-
-      if (!visible) {
-        continue
-      }
-
+    if (directlyVisible) {
       rows.push({
         item,
         depth,
@@ -1917,17 +1920,65 @@ export function visibleOutlinerRows(
         displayReadiness,
         filteredOutNewlyAdded,
       })
+    }
 
-      if (!collapsed) {
-        visitFiltered(item.id, depth + 1)
-      }
+    if (!directlyVisible || !collapsed) {
+      visitTree(item.id, directlyVisible ? depth + 1 : depth)
+    }
+  }
+
+  function visitTree(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      visitTreeItem(item, depth)
+    }
+  }
+
+  function visitFilteredItem(item: TreeItem, depth: number) {
+    const {
+      collapsed,
+      directlyVisible,
+      displayReadiness,
+      filteredOutNewlyAdded,
+      hasChildren,
+    } = projection(item)
+    const visible = directlyVisible || hasVisibleDescendant(item)
+
+    if (!visible) {
+      return
+    }
+
+    rows.push({
+      item,
+      depth,
+      hasChildren,
+      collapsed,
+      displayReadiness,
+      filteredOutNewlyAdded,
+    })
+
+    if (!collapsed) {
+      visitFiltered(item.id, depth + 1)
+    }
+  }
+
+  function visitFiltered(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      visitFilteredItem(item, depth)
     }
   }
 
   if (view === 'tree') {
-    visitTree(null, 0)
+    if (filteredRootItem) {
+      visitTreeItem(filteredRootItem, 0)
+    } else {
+      visitTree(null, 0)
+    }
   } else {
-    visitFiltered(null, 0)
+    if (filteredRootItem) {
+      visitFilteredItem(filteredRootItem, 0)
+    } else {
+      visitFiltered(null, 0)
+    }
   }
   return rows
 }
@@ -1973,6 +2024,9 @@ export function Outliner({
   const [draftResetRequest, setDraftResetRequest] =
     React.useState<RowDraftResetRequest | null>(null)
   const [selectedView, setSelectedView] = React.useState<OutlinerView>('tree')
+  const [selectedProductId, setSelectedProductId] = React.useState<
+    string | null
+  >(null)
   const [sessionNewlyAddedIds, setSessionNewlyAddedIds] = React.useState(
     () => new Set<string>()
   )
@@ -2162,6 +2216,7 @@ export function Outliner({
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems: effectivePriorityItems,
+        rootItemId: selectedProductId,
         view: selectedView,
       }),
     [
@@ -2172,6 +2227,7 @@ export function Outliner({
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
+      selectedProductId,
       selectedView,
     ]
   )
@@ -2185,6 +2241,7 @@ export function Outliner({
       leverageSort: selectedView !== 'tree' ? true : leverageSort,
       newlyAddedIds: mergedNewlyAddedIds,
       priorityItems: effectivePriorityItems,
+      rootItemId: selectedProductId,
       view: selectedView,
     })
   }, [
@@ -2195,6 +2252,7 @@ export function Outliner({
     mergedHiddenItemIds,
     leverageSort,
     mergedNewlyAddedIds,
+    selectedProductId,
     selectedView,
   ])
   const dragSubtreeIds = React.useMemo(
@@ -2264,6 +2322,27 @@ export function Outliner({
     }
     setSelectedItemId(activeItems[0]?.id ?? null)
   }, [activeItems, itemsById, selectedItemId])
+
+  React.useEffect(() => {
+    if (!selectedProductId) {
+      return
+    }
+
+    const selectedProduct = itemsById.get(selectedProductId)
+    if (!selectedProduct || selectedProduct.parent_id !== null) {
+      setSelectedProductId(null)
+      return
+    }
+
+    if (
+      selectedItemId &&
+      itemBelongsToRoot(itemsById, selectedItemId, selectedProductId)
+    ) {
+      return
+    }
+
+    setSelectedItemId(selectedProductId)
+  }, [itemsById, selectedItemId, selectedProductId])
 
   React.useEffect(() => {
     setPreviousDoneStateById((current) => {
@@ -2366,12 +2445,31 @@ export function Outliner({
     setMarkerFilterItemIds(itemIds ? new Set(itemIds) : null)
   }
 
+  function changeProductFilter(itemId: string | null) {
+    setSelectedProductId(itemId)
+    clearItemFocus()
+
+    if (!itemId) {
+      return
+    }
+
+    setSelectedItemId((current) =>
+      current && itemBelongsToRoot(itemsById, current, itemId)
+        ? current
+        : itemId
+    )
+  }
+
   function jumpToItem(itemId: string) {
     const jumpState = resolveJumpState(activeItems, itemId, expandedIds)
     if (!jumpState.focusedItemId) {
       return
     }
 
+    const targetRootId = rootItemIdForItem(itemsById, itemId)
+    if (selectedProductId && targetRootId !== selectedProductId) {
+      setSelectedProductId(null)
+    }
     setExpandedIds(jumpState.expandedIds)
     requestItemFocus(jumpState.focusedItemId)
     setSelectedItemId(jumpState.focusedItemId)
@@ -2385,6 +2483,9 @@ export function Outliner({
       current && deletedIds.has(current) ? null : current
     )
     setNotesItemId((current) =>
+      current && deletedIds.has(current) ? null : current
+    )
+    setSelectedProductId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
@@ -3339,6 +3440,8 @@ export function Outliner({
           <ProductSwitcher
             items={activeItems}
             onJump={jumpToItem}
+            onProductFilterChange={changeProductFilter}
+            selectedProductId={selectedProductId}
             className="xl:max-w-xl"
           />
         </div>

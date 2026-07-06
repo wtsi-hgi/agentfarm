@@ -526,6 +526,85 @@ describe('Outliner', () => {
     ])
   })
 
+  it('filters tree, up-next, and follow-up rows to one selected root product', () => {
+    const items = [
+      item({
+        id: 'alpha-root',
+        title: 'Alpha product',
+        actionable: false,
+      }),
+      item({
+        id: 'alpha-ready',
+        title: 'Alpha ready',
+        parent_id: 'alpha-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'alpha-waiting',
+        title: 'Alpha waiting',
+        parent_id: 'alpha-root',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+      item({
+        id: 'beta-root',
+        title: 'Beta product',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'beta-ready',
+        title: 'Beta ready',
+        parent_id: 'beta-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'beta-waiting',
+        title: 'Beta waiting',
+        parent_id: 'beta-root',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+    ]
+    const expandedIds = new Set(['alpha-root', 'beta-root'])
+    const priorityItems = [
+      { id: 'alpha-ready', rank: 1 },
+      { id: 'beta-ready', rank: 2 },
+    ]
+
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        rootItemId: 'beta-root',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-ready', 'beta-waiting'])
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems,
+        rootItemId: 'beta-root',
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-ready'])
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems,
+        rootItemId: 'beta-root',
+        view: 'follow-up',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-waiting'])
+    expect(
+      visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
+    ).toEqual([
+      'alpha-root',
+      'alpha-ready',
+      'alpha-waiting',
+      'beta-root',
+      'beta-ready',
+      'beta-waiting',
+    ])
+  })
+
   it('lets collapsed context rows hide matching descendants in filtered views', () => {
     const items = [
       item({

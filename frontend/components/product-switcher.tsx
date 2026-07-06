@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { LocateFixed } from 'lucide-react'
+import { LocateFixed, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils'
 type ProductSwitcherProps = {
   items: TreeItem[]
   onJump: (itemId: string) => void
+  onProductFilterChange: (itemId: string | null) => void
+  selectedProductId: string | null
   className?: string
 }
 
@@ -120,10 +122,17 @@ export function focusAndScrollOutlinerItem(
 export function ProductSwitcher({
   items,
   onJump,
+  onProductFilterChange,
+  selectedProductId,
   className,
 }: ProductSwitcherProps) {
   const [query, setQuery] = React.useState('')
   const products = React.useMemo(() => productRootOptions(items), [items])
+  const hasSelectedProduct = products.some(
+    (product) => product.id === selectedProductId
+  )
+  const productSelectValue =
+    hasSelectedProduct && selectedProductId ? selectedProductId : ''
   const searchOptions = React.useMemo(() => itemSearchOptions(items), [items])
   const suggestedOptions = React.useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase()
@@ -159,26 +168,34 @@ export function ProductSwitcher({
   return (
     <div className={cn('flex w-full flex-wrap items-center gap-2', className)}>
       <select
-        aria-label="Jump to product"
+        aria-label="Filter by product"
         className="border-input bg-background text-foreground focus-visible:ring-ring h-9 min-w-36 rounded-md border px-3 text-sm outline-none focus-visible:ring-2"
-        defaultValue=""
+        value={productSelectValue}
         onChange={(event) => {
           const itemId = event.currentTarget.value
-          if (itemId) {
-            onJump(itemId)
-            event.currentTarget.value = ''
-          }
+          onProductFilterChange(itemId || null)
         }}
       >
-        <option value="" disabled hidden>
-          Product
-        </option>
+        <option value="">All products</option>
         {products.map((product) => (
           <option key={product.id} value={product.id}>
             {product.title}
           </option>
         ))}
       </select>
+      {hasSelectedProduct ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0"
+          aria-label="Show all products"
+          onClick={() => onProductFilterChange(null)}
+        >
+          <X className="size-3.5" aria-hidden="true" />
+          Show all
+        </Button>
+      ) : null}
 
       <div className="flex min-w-52 flex-1 items-center gap-1.5">
         <Input
