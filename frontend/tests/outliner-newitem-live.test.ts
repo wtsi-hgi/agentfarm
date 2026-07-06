@@ -803,11 +803,11 @@ describe('Outliner live newly added filter exemptions', () => {
     )
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'ready-row',
-      'feedback-row',
       'implement-row',
-      'respond-row',
+      'feedback-row',
       'blocked-row',
+      'ready-row',
+      'respond-row',
     ])
 
     await click(getButton(container, 'Show up next work'))
@@ -837,11 +837,11 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Show tree view'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'ready-row',
-      'feedback-row',
       'implement-row',
-      'respond-row',
+      'feedback-row',
       'blocked-row',
+      'ready-row',
+      'respond-row',
     ])
   })
 
@@ -994,9 +994,9 @@ describe('Outliner live newly added filter exemptions', () => {
     )
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'waiting-row',
-      'respond-row',
       'ready-row',
+      'respond-row',
+      'waiting-row',
     ])
 
     await click(getButton(container, 'Show up next work'))
@@ -1396,7 +1396,7 @@ describe('Outliner live newly added filter exemptions', () => {
       })
     )
 
-    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
     expect(getItemCheckbox(container, 'review-row').checked).toBe(false)
     expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
       'review'
@@ -1407,7 +1407,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(actionMocks.patchItem).toHaveBeenCalledWith('review-row', {
       state: 'done',
     })
-    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
     expect(getItemCheckbox(container, 'review-row').checked).toBe(true)
     expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
       'done'
@@ -1421,7 +1421,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(actionMocks.patchItem).toHaveBeenLastCalledWith('review-row', {
       state: 'review',
     })
-    expect(getOutlinerItemIds(container)).toEqual(['review-row', 'ready-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'review-row'])
     expect(getItemCheckbox(container, 'review-row').checked).toBe(false)
     expect(getItemSelect(container, 'review-row', 'Item state').value).toBe(
       'review'
@@ -1845,9 +1845,9 @@ describe('Outliner live newly added filter exemptions', () => {
     )
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'completed-root',
       'completed-child',
+      'priority-anchor',
     ])
 
     await click(getItemButton(container, 'completed-root', 'Add sibling'))
@@ -1859,17 +1859,17 @@ describe('Outliner live newly added filter exemptions', () => {
       after_id: 'completed-root',
     })
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'completed-root',
       'completed-child',
       'created-root-sibling',
+      'priority-anchor',
     ])
     expect(document.activeElement).toBe(createdInput)
     expect(createdInput.selectionStart).toBe(0)
     expect(createdInput.selectionEnd).toBe('New item'.length)
   })
 
-  it('lets a recreated sibling id use manual root ordering after its local anchor is pruned', async () => {
+  it('keeps a recreated sibling id in alphabetical root order after removal and restore', async () => {
     actionMocks.createItem.mockImplementation(
       async (input: CreateItemInput) => {
         const created = item({
@@ -1889,27 +1889,27 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getItemButton(container, 'completed-root', 'Add sibling'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'completed-root',
       'completed-child',
       'created-root-sibling',
+      'priority-anchor',
     ])
 
     await click(getButton(container, 'Remove created sibling from server'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'priority-anchor',
       'completed-root',
       'completed-child',
+      'priority-anchor',
     ])
 
     await click(getButton(container, 'Restore created sibling from server'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'created-root-sibling',
-      'priority-anchor',
       'completed-root',
       'completed-child',
+      'priority-anchor',
+      'created-root-sibling',
     ])
   })
 
@@ -1951,8 +1951,8 @@ describe('Outliner live newly added filter exemptions', () => {
       after_id: 'ready-root',
     })
     expect(getOutlinerItemIds(container)).toEqual([
-      'ready-root',
       'created-root-sibling',
+      'ready-root',
     ])
 
     await changeSelect(
@@ -1964,8 +1964,8 @@ describe('Outliner live newly added filter exemptions', () => {
       state: 'respond',
     })
     expect(getOutlinerItemIds(container)).toEqual([
-      'ready-root',
       'created-root-sibling',
+      'ready-root',
     ])
 
     await click(getButton(container, 'Show up next work'))

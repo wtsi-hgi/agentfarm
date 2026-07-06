@@ -78,7 +78,6 @@ type IdCollection = ReadonlySet<string> | readonly string[]
 export type VisibleOutlinerOptions = {
   dragPreview?: DragPreview | null
   leverageSort?: boolean
-  localSiblingAnchorIds?: ReadonlyMap<string, string>
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
   view?: OutlinerView
   hiddenItemIds?: IdCollection
@@ -1217,6 +1216,13 @@ function makeChildMap(
     return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
   }
 
+  function rootTreeOrder(a: TreeItem, b: TreeItem) {
+    const byTitle = a.title.localeCompare(b.title, undefined, {
+      sensitivity: 'base',
+    })
+    return byTitle !== 0 ? byTitle : a.id.localeCompare(b.id)
+  }
+
   function doneOrder(a: TreeItem, b: TreeItem) {
     return (
       Number(isDoneForProjection(a, { hasChildren: hasChildItems(a) })) -
@@ -1233,35 +1239,6 @@ function makeChildMap(
 
     const completeOrder = doneOrder(a, b)
     return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
-  }
-
-  function applyLocalSiblingAnchors(siblings: TreeItem[]) {
-    const anchors = order.localSiblingAnchorIds
-    if (!anchors || anchors.size === 0) {
-      return
-    }
-
-    for (const [itemId, anchorId] of anchors) {
-      const itemIndex = siblings.findIndex((item) => item.id === itemId)
-      if (itemIndex < 0) {
-        continue
-      }
-
-      const [item] = siblings.splice(itemIndex, 1)
-      if (!item) {
-        continue
-      }
-
-      const anchorIndex = siblings.findIndex(
-        (sibling) => sibling.id === anchorId
-      )
-      if (anchorIndex < 0) {
-        siblings.splice(itemIndex, 0, item)
-        continue
-      }
-
-      siblings.splice(anchorIndex + 1, 0, item)
-    }
   }
 
   function applyExplicitSectionDependencyOrder(siblings: TreeItem[]) {
@@ -1326,6 +1303,17 @@ function makeChildMap(
     }
   }
 
+  function applyExplicitSectionDependencyOrderFor(
+    parentId: string | null,
+    siblings: TreeItem[]
+  ) {
+    if (parentId === null && view === 'tree') {
+      return
+    }
+
+    applyExplicitSectionDependencyOrder(siblings)
+  }
+
   function hasChildItems(item: TreeItem) {
     return (children.get(item.id) ?? []).length > 0
   }
@@ -1380,23 +1368,22 @@ function makeChildMap(
 
   for (const [parentId, siblings] of children.entries()) {
     if (!order.leverageSort) {
-      siblings.sort(treeOrder)
-      applyExplicitSectionDependencyOrder(siblings)
+      siblings.sort(
+        parentId === null && view === 'tree' ? rootTreeOrder : treeOrder
+      )
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
     if (parentId === null) {
-      siblings.sort(usePriorityRanks ? priorityOrder : treeOrder)
-      if (view === 'tree') {
-        applyLocalSiblingAnchors(siblings)
-      }
-      applyExplicitSectionDependencyOrder(siblings)
+      siblings.sort(usePriorityRanks ? priorityOrder : rootTreeOrder)
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
     if (!usePriorityRanks) {
       siblings.sort(treeOrder)
-      applyExplicitSectionDependencyOrder(siblings)
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
@@ -1409,7 +1396,7 @@ function makeChildMap(
         .map((item) => [item]),
     ]
     siblings.splice(0, siblings.length, ...sortSectionUnits(sectionUnits))
-    applyExplicitSectionDependencyOrder(siblings)
+    applyExplicitSectionDependencyOrderFor(parentId, siblings)
   }
 
   applyDragPreviewToChildren(children, items, order.dragPreview)
@@ -2001,9 +1988,6 @@ export function Outliner({
   const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
     () => new Set<string>()
   )
-  const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
-    () => new Map<string, string>()
-  )
   const previousItemsRef = React.useRef(items)
   React.useEffect(() => {
     if (previousItemsRef.current === items) {
@@ -2168,7 +2152,6 @@ export function Outliner({
         dragPreview,
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
-        localSiblingAnchorIds,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems: effectivePriorityItems,
         view: selectedView,
@@ -2178,7 +2161,6 @@ export function Outliner({
       dragPreview,
       effectivePriorityItems,
       expandedIds,
-      localSiblingAnchorIds,
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
@@ -2193,7 +2175,6 @@ export function Outliner({
     return visibleOutlinerRows(activeItems, expandedIds, {
       hiddenItemIds: mergedHiddenItemIds,
       leverageSort: selectedView !== 'tree' ? true : leverageSort,
-      localSiblingAnchorIds,
       newlyAddedIds: mergedNewlyAddedIds,
       priorityItems: effectivePriorityItems,
       view: selectedView,
@@ -2203,7 +2184,6 @@ export function Outliner({
     dragPreview,
     effectivePriorityItems,
     expandedIds,
-    localSiblingAnchorIds,
     mergedHiddenItemIds,
     leverageSort,
     mergedNewlyAddedIds,
@@ -2318,22 +2298,6 @@ export function Outliner({
   }, [localItems])
 
   React.useEffect(() => {
-    setLocalSiblingAnchorIds((current) => {
-      if (current.size === 0) {
-        return current
-      }
-
-      const itemIds = new Set(localItems.map((item) => item.id))
-      const next = new Map(
-        [...current].filter(
-          ([itemId, anchorId]) => itemIds.has(itemId) && itemIds.has(anchorId)
-        )
-      )
-      return next.size === current.size ? current : next
-    })
-  }, [localItems])
-
-  React.useEffect(() => {
     if (!focusRequest) {
       return
     }
@@ -2432,11 +2396,6 @@ export function Outliner({
 
   function focusCreatedSibling(item: TreeItem, createdItemId: string) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
-    setLocalSiblingAnchorIds((current) => {
-      const next = new Map(current)
-      next.set(createdItemId, item.id)
-      return next
-    })
     const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))
@@ -2646,6 +2605,10 @@ export function Outliner({
     item: TreeItem,
     direction: 'up' | 'down'
   ) {
+    if (rootTreeRowReorderDisabled(item.id)) {
+      return
+    }
+
     if (direction === 'up') {
       await moveUp(item)
     } else {
@@ -2745,11 +2708,21 @@ export function Outliner({
     setCoordinateDependencyDropActive(false)
   }
 
+  function rootTreeRowReorderDisabled(itemId: string): boolean {
+    return selectedView === 'tree' && itemsById.get(itemId)?.parent_id === null
+  }
+
   function updateDragPreview(
     draggedItemId: string,
     targetItemId: string,
     position: DropPosition
   ): boolean {
+    if (rootTreeRowReorderDisabled(draggedItemId)) {
+      dragPreviewRef.current = null
+      setDragPreview(null)
+      return false
+    }
+
     const nextPreview = { draggedItemId, targetItemId, position }
     if (!resolveDragPreviewItems(activeItems, nextPreview)) {
       dragPreviewRef.current = null
@@ -2806,7 +2779,10 @@ export function Outliner({
     targetItemId: string,
     position: DropPosition
   ) {
-    if (draggedItemId === targetItemId) {
+    if (
+      draggedItemId === targetItemId ||
+      rootTreeRowReorderDisabled(draggedItemId)
+    ) {
       return
     }
 

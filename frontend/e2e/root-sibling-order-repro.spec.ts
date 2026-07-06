@@ -137,7 +137,7 @@ function orderedTitlesFor(
 }
 
 test.describe('root sibling creation order', () => {
-  test('keeps a row-created root sibling beneath the root row', async ({
+  test('uses alphabetical Tree order after row-created root sibling creation', async ({
     page,
     request,
   }, testInfo) => {
@@ -174,7 +174,7 @@ test.describe('root sibling creation order', () => {
             completedChild.id,
           ])
         )
-        .toEqual([priorityRoot.title, root.title, completedChild.title])
+        .toEqual([root.title, completedChild.title, priorityRoot.title])
 
       const beforeCreateItems = await visibleItems(page)
       const beforeCreateIds = new Set(beforeCreateItems.map((item) => item.id))
@@ -238,9 +238,9 @@ test.describe('root sibling creation order', () => {
         afterCreateOrder,
         `visible order after root Add sibling: ${afterCreateOrder.join(' > ')}`
       ).toEqual([
-        priorityRoot.title,
         root.title,
         completedChild.title,
+        priorityRoot.title,
         'New item',
       ])
     } finally {

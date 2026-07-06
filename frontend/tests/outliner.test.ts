@@ -248,9 +248,16 @@ describe('Outliner', () => {
   it('displays an explicit sibling section dependency before its waiting section', () => {
     const items = [
       item({
+        id: 'root',
+        title: 'Product root',
+        slug: 'product-root',
+        actionable: false,
+      }),
+      item({
         id: 'dependent',
         title: 'Dependent section',
         slug: 'dependent-section',
+        parent_id: 'root',
         actionable: false,
         needs: ['blocking-section'],
         needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
@@ -265,6 +272,7 @@ describe('Outliner', () => {
         id: 'blocking',
         title: 'Blocking section',
         slug: 'blocking-section',
+        parent_id: 'root',
         sort_order: 2,
         actionable: false,
       }),
@@ -277,10 +285,64 @@ describe('Outliner', () => {
     ]
 
     expect(
-      visibleOutlinerRows(items, new Set(['dependent', 'blocking'])).map(
+      visibleOutlinerRows(
+        items,
+        new Set(['root', 'dependent', 'blocking'])
+      ).map((row) => row.item.id)
+    ).toEqual([
+      'root',
+      'blocking',
+      'blocking-child',
+      'dependent',
+      'dependent-child',
+    ])
+  })
+
+  it('keeps Tree root sections alphabetical even when a root depends on another root section', () => {
+    const items = [
+      item({
+        id: 'alpha-root',
+        title: 'Alpha root',
+        slug: 'alpha-root',
+        actionable: false,
+        needs: ['zulu-root'],
+        needs_edges: [{ id: 'dep-root-1', slug: 'zulu-root' }],
+        sort_order: 1,
+      }),
+      item({
+        id: 'alpha-child',
+        title: 'Alpha child',
+        parent_id: 'alpha-root',
+      }),
+      item({
+        id: 'zulu-root',
+        title: 'Zulu root',
+        slug: 'zulu-root',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'zulu-child',
+        title: 'Zulu child',
+        parent_id: 'zulu-root',
+      }),
+    ]
+    const expandedIds = new Set(['alpha-root', 'zulu-root'])
+    const alphabeticalTreeOrder = [
+      'alpha-root',
+      'alpha-child',
+      'zulu-root',
+      'zulu-child',
+    ]
+
+    expect(
+      visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
+    ).toEqual(alphabeticalTreeOrder)
+    expect(
+      visibleOutlinerRows(items, expandedIds, { leverageSort: true }).map(
         (row) => row.item.id
       )
-    ).toEqual(['blocking', 'blocking-child', 'dependent', 'dependent-child'])
+    ).toEqual(alphabeticalTreeOrder)
   })
 
   it('shows up-next rows as actionable non-waiting work with section context', () => {
@@ -548,7 +610,7 @@ describe('Outliner', () => {
 
     expect(
       visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
-    ).toEqual(['gamma', 'g1', 'beta', 'b1', 'alpha', 'a1'])
+    ).toEqual(['alpha', 'a1', 'beta', 'b1', 'gamma', 'g1'])
     expect(
       visibleOutlinerRows(items, expandedIds, {
         leverageSort: true,
@@ -561,23 +623,44 @@ describe('Outliner', () => {
     expect(items).toEqual(before)
   })
 
-  it('keeps manual tree order when priority ranks prefer different roots, sections, and children', () => {
+  it('uses item id as a stable Tree root tie-breaker for matching titles', () => {
     const items = [
       item({
+        id: 'root-b',
+        title: 'Same title',
+        sort_order: 1,
+      }),
+      item({
         id: 'root-a',
-        title: 'Root A',
+        title: 'Same title',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), { leverageSort: true }).map(
+        (row) => row.item.id
+      )
+    ).toEqual(['root-a', 'root-b'])
+  })
+
+  it('keeps alphabetical Tree root order when priority ranks prefer different roots, sections, and children', () => {
+    const items = [
+      item({
+        id: 'root-z',
+        title: 'Root Z',
         actionable: false,
         sort_order: 1,
       }),
       item({
-        id: 'root-a-child-one',
-        title: 'Root A child one',
-        parent_id: 'root-a',
+        id: 'root-z-child-one',
+        title: 'Root Z child one',
+        parent_id: 'root-z',
         sort_order: 1,
       }),
       item({
-        id: 'root-b',
-        title: 'Root B',
+        id: 'root-a',
+        title: 'Root A',
         actionable: false,
         sort_order: 2,
       }),
@@ -585,14 +668,14 @@ describe('Outliner', () => {
         id: 'section-one',
         title: 'Section one',
         actionable: false,
-        parent_id: 'root-b',
+        parent_id: 'root-a',
         sort_order: 1,
       }),
       item({
         id: 'section-two',
         title: 'Section two',
         actionable: false,
-        parent_id: 'root-b',
+        parent_id: 'root-a',
         sort_order: 2,
       }),
       item({
@@ -608,9 +691,9 @@ describe('Outliner', () => {
         sort_order: 2,
       }),
       item({
-        id: 'loose-root-b-child',
-        title: 'Loose root B child',
-        parent_id: 'root-b',
+        id: 'loose-root-a-child',
+        title: 'Loose root A child',
+        parent_id: 'root-a',
         sort_order: 3,
       }),
     ]
@@ -618,25 +701,25 @@ describe('Outliner', () => {
     expect(
       visibleOutlinerRows(
         items,
-        new Set(['root-a', 'root-b', 'section-one', 'section-two']),
+        new Set(['root-a', 'root-z', 'section-one', 'section-two']),
         {
           leverageSort: true,
           priorityItems: [
             { id: 'section-two-child-two', rank: 1 },
-            { id: 'loose-root-b-child', rank: 2 },
-            { id: 'root-a-child-one', rank: 3 },
+            { id: 'loose-root-a-child', rank: 2 },
+            { id: 'root-z-child-one', rank: 3 },
           ],
         }
       ).map((row) => row.item.id)
     ).toEqual([
       'root-a',
-      'root-a-child-one',
-      'root-b',
       'section-one',
       'section-two',
       'section-two-child-one',
       'section-two-child-two',
-      'loose-root-b-child',
+      'loose-root-a-child',
+      'root-z',
+      'root-z-child-one',
     ])
   })
 
@@ -786,7 +869,7 @@ describe('Outliner', () => {
           ],
         })
       )
-    ).toEqual(['section', 'urgent-child', 'ready-root'])
+    ).toEqual(['ready-root', 'section', 'urgent-child'])
     expect(
       visibleOutlinerRows(items, new Set(['section']), {
         leverageSort: true,
@@ -795,14 +878,14 @@ describe('Outliner', () => {
           { id: 'ready-root', rank: 2 },
         ],
       }).map((row) => row.item.id)
-    ).toEqual(['section', 'urgent-child', 'ready-root'])
+    ).toEqual(['ready-root', 'section', 'urgent-child'])
   })
 
-  it('keeps manual root order in Tree when an unranked done row precedes an open row', () => {
+  it('keeps alphabetical root order in Tree when an unranked done row precedes an open row', () => {
     const items = [
       item({
         id: 'done',
-        title: 'Done',
+        title: 'Zulu done',
         state: 'done',
         complete: true,
         actionable: false,
@@ -810,7 +893,7 @@ describe('Outliner', () => {
       }),
       item({
         id: 'open',
-        title: 'Open',
+        title: 'Alpha open',
         sort_order: 2,
       }),
     ]
@@ -820,7 +903,7 @@ describe('Outliner', () => {
         leverageSort: true,
         priorityItems: [],
       }).map((row) => row.item.id)
-    ).toEqual(['done', 'open'])
+    ).toEqual(['open', 'done'])
   })
 
   it('keeps collapsed child data available for expansion', () => {
@@ -973,7 +1056,7 @@ describe('Outliner', () => {
           ],
         })
       )
-    ).toEqual(['active', 'new-done', 'legacy-done'])
+    ).toEqual(['active', 'legacy-done', 'new-done'])
   })
 
   it('uses the replacement marker timestamp for the default tree cutoff', () => {

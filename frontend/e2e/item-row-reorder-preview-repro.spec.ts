@@ -942,6 +942,7 @@ test.describe('item row reorder affordance', () => {
     const sessionToken = await signInAs(page)
     const titlePrefix = `Bug 4 middle-zone indent preview ${Date.now()}`
     let parent: ItemSummary | undefined
+    let sourceParent: ItemSummary | undefined
     let dragged: ItemSummary | undefined
 
     try {
@@ -952,8 +953,12 @@ test.describe('item row reorder affordance', () => {
         parent_id: parent.id,
         title: `${titlePrefix} existing child`,
       })
+      sourceParent = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} source parent`,
+      })
       dragged = await createBackendItem(request, sessionToken, {
-        title: `${titlePrefix} dragged root`,
+        parent_id: sourceParent.id,
+        title: `${titlePrefix} dragged child`,
       })
 
       await gotoPath(page, '/')
@@ -1040,6 +1045,9 @@ test.describe('item row reorder affordance', () => {
     } finally {
       if (dragged) {
         await deleteBackendItem(request, sessionToken, dragged.id)
+      }
+      if (sourceParent) {
+        await deleteBackendItem(request, sessionToken, sourceParent.id)
       }
       if (parent) {
         await deleteBackendItem(request, sessionToken, parent.id)

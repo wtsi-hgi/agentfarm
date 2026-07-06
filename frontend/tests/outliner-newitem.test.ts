@@ -65,7 +65,7 @@ describe('Outliner newly added filter exemptions', () => {
       })
     )
 
-    expect(rows.map((row) => row.item.id)).toEqual(['ready', 'captured'])
+    expect(rows.map((row) => row.item.id)).toEqual(['captured', 'ready'])
     expect(rows.find((row) => row.item.id === 'captured')).toMatchObject({
       filteredOutNewlyAdded: true,
     })

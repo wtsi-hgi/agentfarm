@@ -334,7 +334,26 @@ test.describe('many-item outliner editing', () => {
         page,
         childItemCount + 1
       )
-      const firstChildInput = itemInputs.nth(1)
+      const firstChildTitle = `${titlePrefix} child 01`
+      const firstChildId = await page
+        .locator('[data-outliner-item-id]')
+        .evaluateAll((rows, title) => {
+          const row = rows.find((candidate) => {
+            const input = candidate.querySelector<HTMLInputElement>(
+              'input[aria-label="Item text"]'
+            )
+            return input?.value === title
+          })
+          return row instanceof HTMLElement
+            ? (row.dataset.outlinerItemId ?? null)
+            : null
+        }, firstChildTitle)
+      if (!firstChildId) {
+        throw new Error(`Expected row id for ${firstChildTitle}`)
+      }
+      const firstChildInput = page
+        .locator(`[data-outliner-item-id="${firstChildId}"]`)
+        .getByRole('textbox', { name: 'Item text' })
       const savedTitle = `${titlePrefix} saved`
 
       await firstChildInput.click()
