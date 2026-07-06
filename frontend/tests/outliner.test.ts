@@ -177,6 +177,102 @@ describe('Outliner', () => {
     )
   })
 
+  it('keeps hidden-root marker-filtered children in their root product section', () => {
+    const rootTitle = 'Northstar Console'
+    const visibleRootDocument = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'northstar',
+            title: rootTitle,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar active task',
+            parent_id: 'northstar',
+          }),
+        ],
+        markers: [],
+      })
+    )
+    const markerFilteredDocument = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'atlas',
+            title: 'Atlas Platform',
+            sort_order: 1,
+          }),
+          item({
+            id: 'northstar',
+            title: rootTitle,
+            sort_order: 2,
+            actionable: false,
+            complete: true,
+            state: 'done',
+            completed_at: '2026-06-30T00:00:00.000000Z',
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar active task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+          item({
+            id: 'zephyr',
+            title: 'Zephyr Reports',
+            sort_order: 3,
+          }),
+        ],
+        markers: [
+          marker({
+            id: 'latest-marker',
+            at: '2026-06-30T00:00:00.000000Z',
+          }),
+        ],
+      })
+    )
+
+    expect(
+      renderedItemIds(
+        React.createElement(Outliner, {
+          items: [
+            item({
+              id: 'northstar',
+              title: rootTitle,
+              actionable: false,
+              complete: true,
+              state: 'done',
+              completed_at: '2026-06-30T00:00:00.000000Z',
+            }),
+            item({
+              id: 'northstar-child',
+              title: 'Northstar active task',
+              parent_id: 'northstar',
+            }),
+          ],
+          markers: [
+            marker({
+              id: 'latest-marker',
+              at: '2026-06-30T00:00:00.000000Z',
+            }),
+          ],
+        })
+      )
+    ).toEqual(['northstar-child'])
+    expect(renderedRootSectionIds(markerFilteredDocument)).toEqual([
+      'atlas',
+      'northstar',
+      'zephyr',
+    ])
+    expect(rootSectionBackground(markerFilteredDocument, 'northstar')).toBe(
+      rootSectionBackground(visibleRootDocument, 'northstar')
+    )
+    expect(() =>
+      rootSectionBackground(markerFilteredDocument, 'northstar-child')
+    ).toThrow('Missing root section block for northstar-child')
+  })
+
   it('keeps review-state rows visible in the default tree view', () => {
     const items = [
       item({ id: 'prompt', title: 'Prompt work', mode: 'prompt-agent' }),

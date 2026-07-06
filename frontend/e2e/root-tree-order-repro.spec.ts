@@ -189,43 +189,6 @@ async function attemptRowReorderWithPointer(
   }
 }
 
-async function dragRowToAddDependency(
-  page: Page,
-  row: Locator,
-  dropTarget: Locator
-): Promise<void> {
-  const dragHandle = row.getByRole('button', { name: 'Drag item' })
-  await dragHandle.scrollIntoViewIfNeeded()
-  await dropTarget.scrollIntoViewIfNeeded()
-
-  const handleBox = await dragHandle.boundingBox()
-  const targetBox = await dropTarget.boundingBox()
-  if (!handleBox) {
-    throw new Error('Expected dependency source drag handle to be visible')
-  }
-  if (!targetBox) {
-    throw new Error('Expected dependency drop target to be visible')
-  }
-
-  const start = {
-    x: handleBox.x + handleBox.width / 2,
-    y: handleBox.y + handleBox.height / 2,
-  }
-  const target = {
-    x: targetBox.x + targetBox.width / 2,
-    y: targetBox.y + targetBox.height / 2,
-  }
-
-  await page.mouse.move(start.x, start.y)
-  await page.mouse.down()
-  try {
-    await page.mouse.move(start.x, start.y + 8, { steps: 2 })
-    await page.mouse.move(target.x, target.y, { steps: 16 })
-  } finally {
-    await page.mouse.up()
-  }
-}
-
 test.describe('root product Tree order reproduction', () => {
   test('Tree view sorts root products alphabetically instead of stored manual order', async ({
     page,
@@ -442,11 +405,7 @@ test.describe('root product Tree order reproduction', () => {
       await expect(detailsPanel).toContainText(alpha.title)
       await expect(dependenciesSection.getByText(zulu.title)).toHaveCount(0)
 
-      await dragRowToAddDependency(
-        page,
-        blockingRow,
-        detailsPanel.getByLabel(/add dependency/i)
-      )
+      await blockingRow.dragTo(detailsPanel.getByLabel(/add dependency/i))
       await expect(dependenciesSection.getByText(zulu.title)).toBeVisible()
       await expect(dependenciesSection.getByText(`>${zulu.slug}`)).toBeVisible()
 

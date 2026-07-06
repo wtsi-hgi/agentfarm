@@ -393,20 +393,31 @@ function rootSectionStyle(tone: RootSectionTone): RootSectionStyle {
 }
 
 function rootSectionBlocks(
-  rows: readonly VisibleOutlinerRow[]
+  rows: readonly VisibleOutlinerRow[],
+  itemsById: ReadonlyMap<string, TreeItem>
 ): RootSectionBlock[] {
+  const projectedItemsById = new Map(itemsById)
+  for (const row of rows) {
+    projectedItemsById.set(row.item.id, row.item)
+  }
+
   const groups: {
     root: TreeItem
     rows: VisibleOutlinerRow[]
   }[] = []
 
   for (const row of rows) {
-    if (row.depth === 0 || groups.length === 0) {
-      groups.push({ root: row.item, rows: [row] })
+    const rootItemId = rootItemIdForItem(projectedItemsById, row.item.id)
+    const root = rootItemId
+      ? (projectedItemsById.get(rootItemId) ?? row.item)
+      : row.item
+    const currentGroup = groups[groups.length - 1]
+    if (!currentGroup || currentGroup.root.id !== root.id) {
+      groups.push({ root, rows: [row] })
       continue
     }
 
-    groups[groups.length - 1]?.rows.push(row)
+    currentGroup.rows.push(row)
   }
 
   return groups.map((group) => {
@@ -2298,7 +2309,10 @@ export function Outliner({
     dragSlotsMatch(dragOriginStructuralSlot, dragCurrentStructuralSlot)
   const dragOriginMarker =
     dragOriginSlot && !isDragReturnTarget ? dragOriginSlot : null
-  const rootSections = React.useMemo(() => rootSectionBlocks(rows), [rows])
+  const rootSections = React.useMemo(
+    () => rootSectionBlocks(rows, itemsById),
+    [itemsById, rows]
+  )
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
