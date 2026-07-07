@@ -78,8 +78,8 @@ type IdCollection = ReadonlySet<string> | readonly string[]
 export type VisibleOutlinerOptions = {
   dragPreview?: DragPreview | null
   leverageSort?: boolean
-  localSiblingAnchorIds?: ReadonlyMap<string, string>
   priorityItems?: readonly Pick<PriorityItem, 'id' | 'rank'>[]
+  rootItemId?: string | null
   view?: OutlinerView
   hiddenItemIds?: IdCollection
   newlyAddedIds?: IdCollection
@@ -149,6 +149,23 @@ type DragSlot = {
   nextItemId: string | null
   preview: DragPreview | null
   title: string
+}
+
+type RootSectionTone = {
+  dark: string
+  light: string
+}
+
+type RootSectionBlock = {
+  key: string
+  root: TreeItem
+  rows: VisibleOutlinerRow[]
+  tone: RootSectionTone
+}
+
+type RootSectionStyle = React.CSSProperties & {
+  '--root-section-background': string
+  '--root-section-background-dark': string
 }
 
 type DragStructuralSlot = {
@@ -227,10 +244,65 @@ type SameSectionLowerLeafDependencyPlacement = {
 }
 
 type FirstRootCreatorProps = {
+  autoFocus?: boolean
   onCreate: (title: string) => Promise<void>
 }
 
-function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
+const ROOT_SECTION_TONES = [
+  {
+    light: 'rgb(255 235 238)',
+    dark: 'rgb(69 26 37)',
+  },
+  {
+    light: 'rgb(220 252 231)',
+    dark: 'rgb(20 83 45)',
+  },
+  {
+    light: 'rgb(224 242 254)',
+    dark: 'rgb(12 74 110)',
+  },
+  {
+    light: 'rgb(243 232 255)',
+    dark: 'rgb(59 7 100)',
+  },
+  {
+    light: 'rgb(254 243 199)',
+    dark: 'rgb(69 26 3)',
+  },
+  {
+    light: 'rgb(207 250 254)',
+    dark: 'rgb(22 78 99)',
+  },
+  {
+    light: 'rgb(255 237 213)',
+    dark: 'rgb(67 20 7)',
+  },
+  {
+    light: 'rgb(224 231 255)',
+    dark: 'rgb(49 46 129)',
+  },
+  {
+    light: 'rgb(236 252 203)',
+    dark: 'rgb(54 83 20)',
+  },
+  {
+    light: 'rgb(252 231 243)',
+    dark: 'rgb(80 7 36)',
+  },
+  {
+    light: 'rgb(204 251 241)',
+    dark: 'rgb(19 78 74)',
+  },
+  {
+    light: 'rgb(241 245 249)',
+    dark: 'rgb(30 41 59)',
+  },
+] satisfies readonly RootSectionTone[]
+
+function FirstRootCreator({
+  autoFocus = true,
+  onCreate,
+}: FirstRootCreatorProps) {
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [draft, setDraft] = React.useState(NEW_ITEM_TITLE)
   const [pending, setPending] = React.useState(false)
@@ -238,6 +310,10 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
   const trimmedDraft = draft.trim()
 
   React.useEffect(() => {
+    if (!autoFocus) {
+      return
+    }
+
     const input = inputRef.current
     if (!input) {
       return
@@ -245,7 +321,7 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
 
     input.focus()
     input.select()
-  }, [])
+  }, [autoFocus])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -294,6 +370,65 @@ function FirstRootCreator({ onCreate }: FirstRootCreatorProps) {
       ) : null}
     </form>
   )
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function rootSectionToneIndex(rootTitle: string): number {
+  return hashString(rootTitle.trim()) % ROOT_SECTION_TONES.length
+}
+
+function rootSectionStyle(tone: RootSectionTone): RootSectionStyle {
+  return {
+    '--root-section-background': tone.light,
+    '--root-section-background-dark': tone.dark,
+  }
+}
+
+function rootSectionBlocks(
+  rows: readonly VisibleOutlinerRow[],
+  itemsById: ReadonlyMap<string, TreeItem>
+): RootSectionBlock[] {
+  const projectedItemsById = new Map(itemsById)
+  for (const row of rows) {
+    projectedItemsById.set(row.item.id, row.item)
+  }
+
+  const groups: {
+    root: TreeItem
+    rows: VisibleOutlinerRow[]
+  }[] = []
+
+  for (const row of rows) {
+    const rootItemId = rootItemIdForItem(projectedItemsById, row.item.id)
+    const root = rootItemId
+      ? (projectedItemsById.get(rootItemId) ?? row.item)
+      : row.item
+    const currentGroup = groups[groups.length - 1]
+    if (!currentGroup || currentGroup.root.id !== root.id) {
+      groups.push({ root, rows: [row] })
+      continue
+    }
+
+    currentGroup.rows.push(row)
+  }
+
+  return groups.map((group) => {
+    const toneIndex = rootSectionToneIndex(group.root.title)
+    return {
+      key: group.root.id,
+      root: group.root,
+      rows: group.rows,
+      tone: ROOT_SECTION_TONES[toneIndex] ?? ROOT_SECTION_TONES[0],
+    }
+  })
 }
 
 function makePriorityRanks(
@@ -1101,6 +1236,13 @@ function makeChildMap(
     return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
   }
 
+  function rootTreeOrder(a: TreeItem, b: TreeItem) {
+    const byTitle = a.title.localeCompare(b.title, undefined, {
+      sensitivity: 'base',
+    })
+    return byTitle !== 0 ? byTitle : a.id.localeCompare(b.id)
+  }
+
   function doneOrder(a: TreeItem, b: TreeItem) {
     return (
       Number(isDoneForProjection(a, { hasChildren: hasChildItems(a) })) -
@@ -1117,35 +1259,6 @@ function makeChildMap(
 
     const completeOrder = doneOrder(a, b)
     return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
-  }
-
-  function applyLocalSiblingAnchors(siblings: TreeItem[]) {
-    const anchors = order.localSiblingAnchorIds
-    if (!anchors || anchors.size === 0) {
-      return
-    }
-
-    for (const [itemId, anchorId] of anchors) {
-      const itemIndex = siblings.findIndex((item) => item.id === itemId)
-      if (itemIndex < 0) {
-        continue
-      }
-
-      const [item] = siblings.splice(itemIndex, 1)
-      if (!item) {
-        continue
-      }
-
-      const anchorIndex = siblings.findIndex(
-        (sibling) => sibling.id === anchorId
-      )
-      if (anchorIndex < 0) {
-        siblings.splice(itemIndex, 0, item)
-        continue
-      }
-
-      siblings.splice(anchorIndex + 1, 0, item)
-    }
   }
 
   function applyExplicitSectionDependencyOrder(siblings: TreeItem[]) {
@@ -1210,6 +1323,17 @@ function makeChildMap(
     }
   }
 
+  function applyExplicitSectionDependencyOrderFor(
+    parentId: string | null,
+    siblings: TreeItem[]
+  ) {
+    if (parentId === null && view === 'tree') {
+      return
+    }
+
+    applyExplicitSectionDependencyOrder(siblings)
+  }
+
   function hasChildItems(item: TreeItem) {
     return (children.get(item.id) ?? []).length > 0
   }
@@ -1264,23 +1388,22 @@ function makeChildMap(
 
   for (const [parentId, siblings] of children.entries()) {
     if (!order.leverageSort) {
-      siblings.sort(treeOrder)
-      applyExplicitSectionDependencyOrder(siblings)
+      siblings.sort(
+        parentId === null && view === 'tree' ? rootTreeOrder : treeOrder
+      )
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
     if (parentId === null) {
-      siblings.sort(usePriorityRanks ? priorityOrder : treeOrder)
-      if (view === 'tree') {
-        applyLocalSiblingAnchors(siblings)
-      }
-      applyExplicitSectionDependencyOrder(siblings)
+      siblings.sort(usePriorityRanks ? priorityOrder : rootTreeOrder)
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
     if (!usePriorityRanks) {
       siblings.sort(treeOrder)
-      applyExplicitSectionDependencyOrder(siblings)
+      applyExplicitSectionDependencyOrderFor(parentId, siblings)
       continue
     }
 
@@ -1293,7 +1416,7 @@ function makeChildMap(
         .map((item) => [item]),
     ]
     siblings.splice(0, siblings.length, ...sortSectionUnits(sectionUnits))
-    applyExplicitSectionDependencyOrder(siblings)
+    applyExplicitSectionDependencyOrderFor(parentId, siblings)
   }
 
   applyDragPreviewToChildren(children, items, order.dragPreview)
@@ -1319,6 +1442,34 @@ function collectionToSet(collection: IdCollection | undefined): Set<string> {
   }
 
   return isIdSet(collection) ? new Set(collection) : new Set(collection)
+}
+
+function itemBelongsToRoot(
+  itemsById: ReadonlyMap<string, TreeItem>,
+  itemId: string,
+  rootItemId: string
+): boolean {
+  return rootItemIdForItem(itemsById, itemId) === rootItemId
+}
+
+function rootItemIdForItem(
+  itemsById: ReadonlyMap<string, TreeItem>,
+  itemId: string
+): string | null {
+  let current = itemsById.get(itemId) ?? null
+  const visited = new Set<string>()
+
+  while (current && !visited.has(current.id)) {
+    if (current.parent_id === null) {
+      return current.id
+    }
+    visited.add(current.id)
+    current = current.parent_id
+      ? (itemsById.get(current.parent_id) ?? null)
+      : null
+  }
+
+  return null
 }
 
 function itemAncestorBreadcrumbs(
@@ -1665,6 +1816,12 @@ export function visibleOutlinerRows(
 ): VisibleOutlinerRow[] {
   const view = options.view ?? 'tree'
   const priorityRanks = makePriorityRanks(options.priorityItems)
+  const itemsById = new Map(items.map((item) => [item.id, item]))
+  const rootItem =
+    options.rootItemId === null || options.rootItemId === undefined
+      ? null
+      : (itemsById.get(options.rootItemId) ?? null)
+  const filteredRootItem = rootItem?.parent_id === null ? rootItem : null
   const children = makeChildMap(items, {
     ...options,
     leverageSort: view !== 'tree' ? true : options.leverageSort,
@@ -1756,48 +1913,16 @@ export function visibleOutlinerRows(
     return visible
   }
 
-  function visitTree(parentId: string | null, depth: number) {
-    for (const item of children.get(parentId) ?? []) {
-      const {
-        collapsed,
-        directlyVisible,
-        displayReadiness,
-        filteredOutNewlyAdded,
-        hasChildren,
-      } = projection(item)
+  function visitTreeItem(item: TreeItem, depth: number) {
+    const {
+      collapsed,
+      directlyVisible,
+      displayReadiness,
+      filteredOutNewlyAdded,
+      hasChildren,
+    } = projection(item)
 
-      if (directlyVisible) {
-        rows.push({
-          item,
-          depth,
-          hasChildren,
-          collapsed,
-          displayReadiness,
-          filteredOutNewlyAdded,
-        })
-      }
-
-      if (!directlyVisible || !collapsed) {
-        visitTree(item.id, directlyVisible ? depth + 1 : depth)
-      }
-    }
-  }
-
-  function visitFiltered(parentId: string | null, depth: number) {
-    for (const item of children.get(parentId) ?? []) {
-      const {
-        collapsed,
-        directlyVisible,
-        displayReadiness,
-        filteredOutNewlyAdded,
-        hasChildren,
-      } = projection(item)
-      const visible = directlyVisible || hasVisibleDescendant(item)
-
-      if (!visible) {
-        continue
-      }
-
+    if (directlyVisible) {
       rows.push({
         item,
         depth,
@@ -1806,17 +1931,65 @@ export function visibleOutlinerRows(
         displayReadiness,
         filteredOutNewlyAdded,
       })
+    }
 
-      if (!collapsed) {
-        visitFiltered(item.id, depth + 1)
-      }
+    if (!directlyVisible || !collapsed) {
+      visitTree(item.id, directlyVisible ? depth + 1 : depth)
+    }
+  }
+
+  function visitTree(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      visitTreeItem(item, depth)
+    }
+  }
+
+  function visitFilteredItem(item: TreeItem, depth: number) {
+    const {
+      collapsed,
+      directlyVisible,
+      displayReadiness,
+      filteredOutNewlyAdded,
+      hasChildren,
+    } = projection(item)
+    const visible = directlyVisible || hasVisibleDescendant(item)
+
+    if (!visible) {
+      return
+    }
+
+    rows.push({
+      item,
+      depth,
+      hasChildren,
+      collapsed,
+      displayReadiness,
+      filteredOutNewlyAdded,
+    })
+
+    if (!collapsed) {
+      visitFiltered(item.id, depth + 1)
+    }
+  }
+
+  function visitFiltered(parentId: string | null, depth: number) {
+    for (const item of children.get(parentId) ?? []) {
+      visitFilteredItem(item, depth)
     }
   }
 
   if (view === 'tree') {
-    visitTree(null, 0)
+    if (filteredRootItem) {
+      visitTreeItem(filteredRootItem, 0)
+    } else {
+      visitTree(null, 0)
+    }
   } else {
-    visitFiltered(null, 0)
+    if (filteredRootItem) {
+      visitFilteredItem(filteredRootItem, 0)
+    } else {
+      visitFiltered(null, 0)
+    }
   }
   return rows
 }
@@ -1862,6 +2035,9 @@ export function Outliner({
   const [draftResetRequest, setDraftResetRequest] =
     React.useState<RowDraftResetRequest | null>(null)
   const [selectedView, setSelectedView] = React.useState<OutlinerView>('tree')
+  const [selectedProductId, setSelectedProductId] = React.useState<
+    string | null
+  >(null)
   const [sessionNewlyAddedIds, setSessionNewlyAddedIds] = React.useState(
     () => new Set<string>()
   )
@@ -1884,9 +2060,6 @@ export function Outliner({
   )
   const [locallyRankedItemIds, setLocallyRankedItemIds] = React.useState(
     () => new Set<string>()
-  )
-  const [localSiblingAnchorIds, setLocalSiblingAnchorIds] = React.useState(
-    () => new Map<string, string>()
   )
   const previousItemsRef = React.useRef(items)
   React.useEffect(() => {
@@ -2052,9 +2225,9 @@ export function Outliner({
         dragPreview,
         hiddenItemIds: mergedHiddenItemIds,
         leverageSort: selectedView !== 'tree' ? true : leverageSort,
-        localSiblingAnchorIds,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems: effectivePriorityItems,
+        rootItemId: selectedProductId,
         view: selectedView,
       }),
     [
@@ -2062,10 +2235,10 @@ export function Outliner({
       dragPreview,
       effectivePriorityItems,
       expandedIds,
-      localSiblingAnchorIds,
       mergedHiddenItemIds,
       leverageSort,
       mergedNewlyAddedIds,
+      selectedProductId,
       selectedView,
     ]
   )
@@ -2077,9 +2250,9 @@ export function Outliner({
     return visibleOutlinerRows(activeItems, expandedIds, {
       hiddenItemIds: mergedHiddenItemIds,
       leverageSort: selectedView !== 'tree' ? true : leverageSort,
-      localSiblingAnchorIds,
       newlyAddedIds: mergedNewlyAddedIds,
       priorityItems: effectivePriorityItems,
+      rootItemId: selectedProductId,
       view: selectedView,
     })
   }, [
@@ -2087,10 +2260,10 @@ export function Outliner({
     dragPreview,
     effectivePriorityItems,
     expandedIds,
-    localSiblingAnchorIds,
     mergedHiddenItemIds,
     leverageSort,
     mergedNewlyAddedIds,
+    selectedProductId,
     selectedView,
   ])
   const dragSubtreeIds = React.useMemo(
@@ -2136,6 +2309,10 @@ export function Outliner({
     dragSlotsMatch(dragOriginStructuralSlot, dragCurrentStructuralSlot)
   const dragOriginMarker =
     dragOriginSlot && !isDragReturnTarget ? dragOriginSlot : null
+  const rootSections = React.useMemo(
+    () => rootSectionBlocks(rows, itemsById),
+    [itemsById, rows]
+  )
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -2159,6 +2336,27 @@ export function Outliner({
     }
     setSelectedItemId(activeItems[0]?.id ?? null)
   }, [activeItems, itemsById, selectedItemId])
+
+  React.useEffect(() => {
+    if (!selectedProductId) {
+      return
+    }
+
+    const selectedProduct = itemsById.get(selectedProductId)
+    if (!selectedProduct || selectedProduct.parent_id !== null) {
+      setSelectedProductId(null)
+      return
+    }
+
+    if (
+      selectedItemId &&
+      itemBelongsToRoot(itemsById, selectedItemId, selectedProductId)
+    ) {
+      return
+    }
+
+    setSelectedItemId(selectedProductId)
+  }, [itemsById, selectedItemId, selectedProductId])
 
   React.useEffect(() => {
     setPreviousDoneStateById((current) => {
@@ -2196,22 +2394,6 @@ export function Outliner({
 
       const itemIds = new Set(localItems.map((item) => item.id))
       const next = new Set([...current].filter((itemId) => itemIds.has(itemId)))
-      return next.size === current.size ? current : next
-    })
-  }, [localItems])
-
-  React.useEffect(() => {
-    setLocalSiblingAnchorIds((current) => {
-      if (current.size === 0) {
-        return current
-      }
-
-      const itemIds = new Set(localItems.map((item) => item.id))
-      const next = new Map(
-        [...current].filter(
-          ([itemId, anchorId]) => itemIds.has(itemId) && itemIds.has(anchorId)
-        )
-      )
       return next.size === current.size ? current : next
     })
   }, [localItems])
@@ -2277,12 +2459,31 @@ export function Outliner({
     setMarkerFilterItemIds(itemIds ? new Set(itemIds) : null)
   }
 
+  function changeProductFilter(itemId: string | null) {
+    setSelectedProductId(itemId)
+    clearItemFocus()
+
+    if (!itemId) {
+      return
+    }
+
+    setSelectedItemId((current) =>
+      current && itemBelongsToRoot(itemsById, current, itemId)
+        ? current
+        : itemId
+    )
+  }
+
   function jumpToItem(itemId: string) {
     const jumpState = resolveJumpState(activeItems, itemId, expandedIds)
     if (!jumpState.focusedItemId) {
       return
     }
 
+    const targetRootId = rootItemIdForItem(itemsById, itemId)
+    if (selectedProductId && targetRootId !== selectedProductId) {
+      setSelectedProductId(null)
+    }
     setExpandedIds(jumpState.expandedIds)
     requestItemFocus(jumpState.focusedItemId)
     setSelectedItemId(jumpState.focusedItemId)
@@ -2296,6 +2497,9 @@ export function Outliner({
       current && deletedIds.has(current) ? null : current
     )
     setNotesItemId((current) =>
+      current && deletedIds.has(current) ? null : current
+    )
+    setSelectedProductId((current) =>
       current && deletedIds.has(current) ? null : current
     )
     clearItemFocus()
@@ -2315,11 +2519,6 @@ export function Outliner({
 
   function focusCreatedSibling(item: TreeItem, createdItemId: string) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
-    setLocalSiblingAnchorIds((current) => {
-      const next = new Map(current)
-      next.set(createdItemId, item.id)
-      return next
-    })
     const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))
@@ -2529,6 +2728,10 @@ export function Outliner({
     item: TreeItem,
     direction: 'up' | 'down'
   ) {
+    if (rootTreeRowReorderDisabled(item.id)) {
+      return
+    }
+
     if (direction === 'up') {
       await moveUp(item)
     } else {
@@ -2628,11 +2831,21 @@ export function Outliner({
     setCoordinateDependencyDropActive(false)
   }
 
+  function rootTreeRowReorderDisabled(itemId: string): boolean {
+    return selectedView === 'tree' && itemsById.get(itemId)?.parent_id === null
+  }
+
   function updateDragPreview(
     draggedItemId: string,
     targetItemId: string,
     position: DropPosition
   ): boolean {
+    if (rootTreeRowReorderDisabled(draggedItemId)) {
+      dragPreviewRef.current = null
+      setDragPreview(null)
+      return false
+    }
+
     const nextPreview = { draggedItemId, targetItemId, position }
     if (!resolveDragPreviewItems(activeItems, nextPreview)) {
       dragPreviewRef.current = null
@@ -2689,7 +2902,10 @@ export function Outliner({
     targetItemId: string,
     position: DropPosition
   ) {
-    if (draggedItemId === targetItemId) {
+    if (
+      draggedItemId === targetItemId ||
+      rootTreeRowReorderDisabled(draggedItemId)
+    ) {
       return
     }
 
@@ -3064,6 +3280,154 @@ export function Outliner({
     setSelectedItemId(created.id)
   }
 
+  function renderVisibleRow({
+    item,
+    depth,
+    hasChildren,
+    collapsed,
+    displayReadiness,
+    filteredOutNewlyAdded,
+  }: VisibleOutlinerRow) {
+    const rowDraftResetRequest =
+      draftResetRequest?.itemId === item.id
+        ? {
+            requestId: draftResetRequest.requestId,
+            text: draftResetRequest.text,
+          }
+        : null
+    const returningDraggedItem =
+      isDragReturnTarget && dragPreview?.draggedItemId === item.id
+
+    return (
+      <React.Fragment key={item.id}>
+        {dragOriginMarker?.nextItemId === item.id ? (
+          <DragOriginSlotMarker
+            slot={dragOriginMarker}
+            onDragOver={(event) =>
+              handleDragOriginSlotDragOver(event, dragOriginMarker)
+            }
+            onDrop={(event) =>
+              handleDragOriginSlotDrop(event, dragOriginMarker)
+            }
+          />
+        ) : null}
+        <div
+          data-outliner-item-id={item.id}
+          tabIndex={-1}
+          draggable
+          onDragStart={(event) => {
+            handleNativeDragStart(item, event)
+          }}
+          onDragEnd={clearDragState}
+          onMouseDownCapture={(event) => {
+            const target = event.target
+            if (
+              target instanceof Element &&
+              target.closest('button[aria-label="Drag item"]')
+            ) {
+              beginCoordinateDrag(item, event)
+            }
+          }}
+          onDragOver={(event) => {
+            const draggedId =
+              draggingItemId || event.dataTransfer.getData('text/plain') || null
+            if (!draggedId || draggedId === item.id) {
+              if (draggedId && !returningDraggedItem) {
+                const acceptsPreviewDrop = updatePreviewFromDraggedRow(
+                  event,
+                  draggedId
+                )
+                if (acceptsPreviewDrop) {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                }
+              }
+              return
+            }
+
+            const position = dropPosition(event)
+            if (updateDragPreview(draggedId, item.id, position)) {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            if (suppressNextNativeDropRef.current) {
+              suppressNextNativeDropRef.current = false
+              return
+            }
+            const draggedId =
+              draggingItemId || event.dataTransfer.getData('text/plain') || null
+            const currentDragPreview = dragPreviewRef.current
+            const returnsToOrigin =
+              currentDragPreview !== null &&
+              dragPreviewReturnsToOrigin(currentDragPreview)
+            const returningDrop = returnsToOrigin && item.id === draggedId
+            const previewDrop =
+              currentDragPreview?.draggedItemId === draggedId && !returningDrop
+                ? currentDragPreview
+                : null
+            const targetItemId = previewDrop?.targetItemId ?? item.id
+            const position = previewDrop?.position ?? dropPosition(event)
+            clearDragState()
+            if (draggedId && !returningDrop) {
+              void moveDragged(draggedId, targetItemId, position)
+            }
+          }}
+          className={cn(
+            'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
+            focusedItemId === item.id && 'ring-ring/30 ring-1 ring-inset',
+            dragPreview?.draggedItemId === item.id
+              ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
+              : draggingItemId === item.id && 'opacity-60',
+            returningDraggedItem && 'bg-emerald-500/10 ring-emerald-500/60'
+          )}
+          data-drag-preview={
+            dragPreview?.draggedItemId === item.id ? 'true' : undefined
+          }
+          data-drag-return-target={returningDraggedItem ? item.id : undefined}
+          aria-label={
+            returningDraggedItem
+              ? `Drop to return ${item.title} to its original position`
+              : undefined
+          }
+        >
+          <OutlinerRow
+            item={item}
+            depth={depth}
+            hasChildren={hasChildren}
+            collapsed={collapsed}
+            displayReadiness={displayReadiness}
+            selected={selectedItemId === item.id}
+            onToggle={toggle}
+            onSelect={(itemId) => setSelectedItemId(itemId)}
+            onSubmitText={submitText}
+            onCreateSibling={createSibling}
+            onKeyboardCommand={runKeyboardCommand}
+            onDelete={requestItemDelete}
+            onKeyboardReorder={reorderFromDragHandleKeyboard}
+            onChangeState={changeItemState}
+            onChangeDone={changeItemDone}
+            onOpenNotes={openNotes}
+            onOpenPromptTimeline={openPromptTimeline}
+            draftResetRequest={rowDraftResetRequest}
+          />
+          {filteredOutNewlyAdded ? (
+            <div
+              className="border-border/50 text-muted-foreground border-t px-2 py-1 text-xs"
+              style={{
+                paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+              }}
+            >
+              added this session, currently filtered out
+            </div>
+          ) : null}
+        </div>
+      </React.Fragment>
+    )
+  }
+
   const pendingDependencyCount =
     pendingDependencyRemoval?.dependencies.length ?? 0
   const pendingDependencyLabel =
@@ -3086,180 +3450,30 @@ export function Outliner({
           <ProductSwitcher
             items={activeItems}
             onJump={jumpToItem}
+            onProductFilterChange={changeProductFilter}
+            selectedProductId={selectedProductId}
             className="xl:max-w-xl"
           />
         </div>
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="divide-border border-border min-w-0 divide-y border-y text-sm">
-          {activeItems.length === 0 ? (
-            <FirstRootCreator onCreate={createRoot} />
-          ) : (
-            rows.map(
-              ({
-                item,
-                depth,
-                hasChildren,
-                collapsed,
-                displayReadiness,
-                filteredOutNewlyAdded,
-              }) => {
-                const rowDraftResetRequest =
-                  draftResetRequest?.itemId === item.id
-                    ? {
-                        requestId: draftResetRequest.requestId,
-                        text: draftResetRequest.text,
-                      }
-                    : null
-                const returningDraggedItem =
-                  isDragReturnTarget && dragPreview?.draggedItemId === item.id
-
-                return (
-                  <React.Fragment key={item.id}>
-                    {dragOriginMarker?.nextItemId === item.id ? (
-                      <DragOriginSlotMarker
-                        slot={dragOriginMarker}
-                        onDragOver={(event) =>
-                          handleDragOriginSlotDragOver(event, dragOriginMarker)
-                        }
-                        onDrop={(event) =>
-                          handleDragOriginSlotDrop(event, dragOriginMarker)
-                        }
-                      />
-                    ) : null}
-                    <div
-                      data-outliner-item-id={item.id}
-                      tabIndex={-1}
-                      draggable
-                      onDragStart={(event) => {
-                        handleNativeDragStart(item, event)
-                      }}
-                      onDragEnd={clearDragState}
-                      onMouseDownCapture={(event) => {
-                        const target = event.target
-                        if (
-                          target instanceof Element &&
-                          target.closest('button[aria-label="Drag item"]')
-                        ) {
-                          beginCoordinateDrag(item, event)
-                        }
-                      }}
-                      onDragOver={(event) => {
-                        const draggedId =
-                          draggingItemId ||
-                          event.dataTransfer.getData('text/plain') ||
-                          null
-                        if (!draggedId || draggedId === item.id) {
-                          if (draggedId && !returningDraggedItem) {
-                            const acceptsPreviewDrop =
-                              updatePreviewFromDraggedRow(event, draggedId)
-                            if (acceptsPreviewDrop) {
-                              event.preventDefault()
-                              event.dataTransfer.dropEffect = 'move'
-                            }
-                          }
-                          return
-                        }
-
-                        const position = dropPosition(event)
-                        if (updateDragPreview(draggedId, item.id, position)) {
-                          event.preventDefault()
-                          event.dataTransfer.dropEffect = 'move'
-                        }
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        if (suppressNextNativeDropRef.current) {
-                          suppressNextNativeDropRef.current = false
-                          return
-                        }
-                        const draggedId =
-                          draggingItemId ||
-                          event.dataTransfer.getData('text/plain') ||
-                          null
-                        const currentDragPreview = dragPreviewRef.current
-                        const returnsToOrigin =
-                          currentDragPreview !== null &&
-                          dragPreviewReturnsToOrigin(currentDragPreview)
-                        const returningDrop =
-                          returnsToOrigin && item.id === draggedId
-                        const previewDrop =
-                          currentDragPreview?.draggedItemId === draggedId &&
-                          !returningDrop
-                            ? currentDragPreview
-                            : null
-                        const targetItemId =
-                          previewDrop?.targetItemId ?? item.id
-                        const position =
-                          previewDrop?.position ?? dropPosition(event)
-                        clearDragState()
-                        if (draggedId && !returningDrop) {
-                          void moveDragged(draggedId, targetItemId, position)
-                        }
-                      }}
-                      className={cn(
-                        'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-                        focusedItemId === item.id && 'bg-accent/60',
-                        dragPreview?.draggedItemId === item.id
-                          ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
-                          : draggingItemId === item.id && 'opacity-60',
-                        returningDraggedItem &&
-                          'bg-emerald-500/10 ring-emerald-500/60'
-                      )}
-                      data-drag-preview={
-                        dragPreview?.draggedItemId === item.id
-                          ? 'true'
-                          : undefined
-                      }
-                      data-drag-return-target={
-                        returningDraggedItem ? item.id : undefined
-                      }
-                      aria-label={
-                        returningDraggedItem
-                          ? `Drop to return ${item.title} to its original position`
-                          : undefined
-                      }
-                    >
-                      <OutlinerRow
-                        item={item}
-                        depth={depth}
-                        hasChildren={hasChildren}
-                        collapsed={collapsed}
-                        displayReadiness={displayReadiness}
-                        selected={selectedItemId === item.id}
-                        onToggle={toggle}
-                        onSelect={(itemId) => setSelectedItemId(itemId)}
-                        onSubmitText={submitText}
-                        onCreateSibling={createSibling}
-                        onKeyboardCommand={runKeyboardCommand}
-                        onDelete={requestItemDelete}
-                        onKeyboardReorder={reorderFromDragHandleKeyboard}
-                        onChangeState={changeItemState}
-                        onChangeDone={changeItemDone}
-                        onOpenNotes={openNotes}
-                        onOpenPromptTimeline={openPromptTimeline}
-                        draftResetRequest={rowDraftResetRequest}
-                        onDragStart={(event) => {
-                          handleNativeDragStart(item, event)
-                        }}
-                        onDragEnd={clearDragState}
-                      />
-                      {filteredOutNewlyAdded ? (
-                        <div
-                          className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
-                          style={{
-                            paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
-                          }}
-                        >
-                          added this session, currently filtered out
-                        </div>
-                      ) : null}
-                    </div>
-                  </React.Fragment>
-                )
-              }
-            )
-          )}
+        <div className="flex min-w-0 flex-col gap-3 text-sm">
+          {rootSections.map((section) => (
+            <div
+              key={section.key}
+              className="border-border/70 divide-border/60 divide-y overflow-hidden rounded-md border bg-[var(--root-section-background)] shadow-sm dark:bg-[var(--root-section-background-dark)] dark:shadow-none"
+              style={rootSectionStyle(section.tone)}
+              data-outliner-root-section-id={section.root.id}
+            >
+              {section.rows.map((row) => renderVisibleRow(row))}
+            </div>
+          ))}
+          <div className="border-border border-y">
+            <FirstRootCreator
+              autoFocus={activeItems.length === 0}
+              onCreate={createRoot}
+            />
+          </div>
           {dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker
               slot={dragOriginMarker}

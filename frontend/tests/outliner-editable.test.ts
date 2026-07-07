@@ -62,6 +62,10 @@ function mutationActions() {
   }
 }
 
+function countOccurrences(value: string, needle: string) {
+  return value.split(needle).length - 1
+}
+
 describe('editable outliner behaviours', () => {
   it('submits row text through parseRow and adds only explicit new dependencies', async () => {
     const current = item({
@@ -305,15 +309,40 @@ describe('editable outliner behaviours', () => {
       React.createElement(Outliner, { items: [] })
     )
 
-    expect(markup).toContain('aria-label="First root title"')
+    expect(countOccurrences(markup, 'aria-label="First root title"')).toBe(1)
     expect(markup).toContain('Create root')
-    expect(markup).toContain('aria-label="Create root"')
+    expect(countOccurrences(markup, 'aria-label="Create root"')).toBe(1)
+  })
+
+  it('renders one bottom root creator and hides Add sibling on root rows only', () => {
+    const items = [
+      item({ id: 'root', title: 'Root', parent_id: null, sort_order: 1 }),
+      item({
+        id: 'child',
+        title: 'Child',
+        parent_id: 'root',
+        sort_order: 1,
+      }),
+    ]
+
+    const markup = renderToStaticMarkup(
+      React.createElement(Outliner, { items })
+    )
+
+    expect(countOccurrences(markup, 'aria-label="First root title"')).toBe(1)
+    expect(countOccurrences(markup, 'aria-label="Create root"')).toBe(1)
+    expect(countOccurrences(markup, 'aria-label="Add sibling"')).toBe(1)
   })
 
   it('renders editable row, drag, delete, marker, and details controls from the primary surface', () => {
     const items = [
       item({ id: 'first', title: 'First', parent_id: null, sort_order: 1 }),
-      item({ id: 'second', title: 'Second', parent_id: null, sort_order: 2 }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'first',
+        sort_order: 1,
+      }),
     ]
 
     const markup = renderToStaticMarkup(

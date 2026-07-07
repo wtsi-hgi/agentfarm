@@ -352,17 +352,25 @@ test.describe('dependency details UI reproduction', () => {
       const dependenciesSection = detailsPanel.getByRole('region', {
         name: 'Dependencies',
       })
+      const draggedDependencyTitle = dependenciesSection.getByText(
+        draggedBlockingSection.title
+      )
+      const draggedDependencySlug = dependenciesSection.getByText(
+        `>${draggedBlockingSection.slug}`
+      )
       await expect(
         dependenciesSection.getByText(existingBlockingSection.title)
       ).toBeVisible()
-      await expect(
-        dependenciesSection.getByText(draggedBlockingSection.title)
-      ).toHaveCount(0)
+      await expect(draggedDependencyTitle).toHaveCount(0)
 
       await draggedBlockingRow.dragTo(
         detailsPanel.getByLabel(/add dependency/i)
       )
-      await page.waitForTimeout(250)
+      await expect(
+        draggedDependencyTitle,
+        'Dragging a row into the populated Details Add dependency box should create an explicit dependency.'
+      ).toBeVisible()
+      await expect(draggedDependencySlug).toBeVisible()
 
       await mkdir(path.dirname(dragRegressionScreenshotPath), {
         recursive: true,
@@ -376,14 +384,6 @@ test.describe('dependency details UI reproduction', () => {
         path: dragRegressionScreenshotPath,
         contentType: 'image/png',
       })
-
-      await expect(
-        dependenciesSection.getByText(draggedBlockingSection.title),
-        'Dragging a row into the populated Details Add dependency box should create an explicit dependency.'
-      ).toBeVisible()
-      await expect(
-        dependenciesSection.getByText(`>${draggedBlockingSection.slug}`)
-      ).toBeVisible()
     } finally {
       await deleteBackendItems(request, sessionToken, cleanupRootIds)
     }

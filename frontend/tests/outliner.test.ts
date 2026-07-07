@@ -76,6 +76,23 @@ function itemActionButton(
   return button
 }
 
+function rootSectionBackground(document: Document, rootId: string) {
+  const section = document.querySelector(
+    `[data-outliner-root-section-id="${rootId}"]`
+  )
+  if (!(section instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing root section block for ${rootId}`)
+  }
+
+  return section.style.getPropertyValue('--root-section-background')
+}
+
+function renderedRootSectionIds(document: Document) {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-outliner-root-section-id]')
+  ).map((section) => section.dataset.outlinerRootSectionId)
+}
+
 describe('Outliner', () => {
   it('defines one distinct colour token for every mode', () => {
     expect(Object.keys(MODE_COLOUR_MAP).sort()).toEqual([...MODES].sort())
@@ -85,6 +102,175 @@ describe('Outliner', () => {
     for (const mode of MODES) {
       expect(MODE_COLOUR_MAP[mode]).toBeDefined()
     }
+  })
+
+  it('keeps a root product section background stable when neighbours and order change', () => {
+    const targetTitle = 'Northstar Console'
+    const firstRender = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'atlas',
+            title: 'Atlas Platform',
+            sort_order: 1,
+          }),
+          item({
+            id: 'northstar',
+            title: targetTitle,
+            sort_order: 2,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+          item({
+            id: 'zephyr',
+            title: 'Zephyr Reports',
+            sort_order: 3,
+          }),
+        ],
+      })
+    )
+    const secondRender = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'beacon',
+            title: 'Beacon Console',
+            sort_order: 1,
+          }),
+          item({
+            id: 'cinder',
+            title: 'Cinder Pipeline',
+            sort_order: 2,
+          }),
+          item({
+            id: 'northstar',
+            title: targetTitle,
+            sort_order: 3,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+        ],
+      })
+    )
+
+    expect(renderedRootSectionIds(firstRender)).toEqual([
+      'atlas',
+      'northstar',
+      'zephyr',
+    ])
+    expect(renderedRootSectionIds(secondRender)).toEqual([
+      'beacon',
+      'cinder',
+      'northstar',
+    ])
+    expect(rootSectionBackground(firstRender, 'northstar')).toBeTruthy()
+    expect(rootSectionBackground(secondRender, 'northstar')).toBe(
+      rootSectionBackground(firstRender, 'northstar')
+    )
+  })
+
+  it('keeps hidden-root marker-filtered children in their root product section', () => {
+    const rootTitle = 'Northstar Console'
+    const visibleRootDocument = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'northstar',
+            title: rootTitle,
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar active task',
+            parent_id: 'northstar',
+          }),
+        ],
+        markers: [],
+      })
+    )
+    const markerFilteredDocument = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'atlas',
+            title: 'Atlas Platform',
+            sort_order: 1,
+          }),
+          item({
+            id: 'northstar',
+            title: rootTitle,
+            sort_order: 2,
+            actionable: false,
+            complete: true,
+            state: 'done',
+            completed_at: '2026-06-30T00:00:00.000000Z',
+          }),
+          item({
+            id: 'northstar-child',
+            title: 'Northstar active task',
+            parent_id: 'northstar',
+            sort_order: 1,
+          }),
+          item({
+            id: 'zephyr',
+            title: 'Zephyr Reports',
+            sort_order: 3,
+          }),
+        ],
+        markers: [
+          marker({
+            id: 'latest-marker',
+            at: '2026-06-30T00:00:00.000000Z',
+          }),
+        ],
+      })
+    )
+
+    expect(
+      renderedItemIds(
+        React.createElement(Outliner, {
+          items: [
+            item({
+              id: 'northstar',
+              title: rootTitle,
+              actionable: false,
+              complete: true,
+              state: 'done',
+              completed_at: '2026-06-30T00:00:00.000000Z',
+            }),
+            item({
+              id: 'northstar-child',
+              title: 'Northstar active task',
+              parent_id: 'northstar',
+            }),
+          ],
+          markers: [
+            marker({
+              id: 'latest-marker',
+              at: '2026-06-30T00:00:00.000000Z',
+            }),
+          ],
+        })
+      )
+    ).toEqual(['northstar-child'])
+    expect(renderedRootSectionIds(markerFilteredDocument)).toEqual([
+      'atlas',
+      'northstar',
+      'zephyr',
+    ])
+    expect(rootSectionBackground(markerFilteredDocument, 'northstar')).toBe(
+      rootSectionBackground(visibleRootDocument, 'northstar')
+    )
+    expect(() =>
+      rootSectionBackground(markerFilteredDocument, 'northstar-child')
+    ).toThrow('Missing root section block for northstar-child')
   })
 
   it('keeps review-state rows visible in the default tree view', () => {
@@ -158,9 +344,16 @@ describe('Outliner', () => {
   it('displays an explicit sibling section dependency before its waiting section', () => {
     const items = [
       item({
+        id: 'root',
+        title: 'Product root',
+        slug: 'product-root',
+        actionable: false,
+      }),
+      item({
         id: 'dependent',
         title: 'Dependent section',
         slug: 'dependent-section',
+        parent_id: 'root',
         actionable: false,
         needs: ['blocking-section'],
         needs_edges: [{ id: 'dep-1', slug: 'blocking-section' }],
@@ -175,6 +368,7 @@ describe('Outliner', () => {
         id: 'blocking',
         title: 'Blocking section',
         slug: 'blocking-section',
+        parent_id: 'root',
         sort_order: 2,
         actionable: false,
       }),
@@ -187,10 +381,64 @@ describe('Outliner', () => {
     ]
 
     expect(
-      visibleOutlinerRows(items, new Set(['dependent', 'blocking'])).map(
+      visibleOutlinerRows(
+        items,
+        new Set(['root', 'dependent', 'blocking'])
+      ).map((row) => row.item.id)
+    ).toEqual([
+      'root',
+      'blocking',
+      'blocking-child',
+      'dependent',
+      'dependent-child',
+    ])
+  })
+
+  it('keeps Tree root sections alphabetical even when a root depends on another root section', () => {
+    const items = [
+      item({
+        id: 'alpha-root',
+        title: 'Alpha root',
+        slug: 'alpha-root',
+        actionable: false,
+        needs: ['zulu-root'],
+        needs_edges: [{ id: 'dep-root-1', slug: 'zulu-root' }],
+        sort_order: 1,
+      }),
+      item({
+        id: 'alpha-child',
+        title: 'Alpha child',
+        parent_id: 'alpha-root',
+      }),
+      item({
+        id: 'zulu-root',
+        title: 'Zulu root',
+        slug: 'zulu-root',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'zulu-child',
+        title: 'Zulu child',
+        parent_id: 'zulu-root',
+      }),
+    ]
+    const expandedIds = new Set(['alpha-root', 'zulu-root'])
+    const alphabeticalTreeOrder = [
+      'alpha-root',
+      'alpha-child',
+      'zulu-root',
+      'zulu-child',
+    ]
+
+    expect(
+      visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
+    ).toEqual(alphabeticalTreeOrder)
+    expect(
+      visibleOutlinerRows(items, expandedIds, { leverageSort: true }).map(
         (row) => row.item.id
       )
-    ).toEqual(['blocking', 'blocking-child', 'dependent', 'dependent-child'])
+    ).toEqual(alphabeticalTreeOrder)
   })
 
   it('shows up-next rows as actionable non-waiting work with section context', () => {
@@ -374,6 +622,85 @@ describe('Outliner', () => {
     ])
   })
 
+  it('filters tree, up-next, and follow-up rows to one selected root product', () => {
+    const items = [
+      item({
+        id: 'alpha-root',
+        title: 'Alpha product',
+        actionable: false,
+      }),
+      item({
+        id: 'alpha-ready',
+        title: 'Alpha ready',
+        parent_id: 'alpha-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'alpha-waiting',
+        title: 'Alpha waiting',
+        parent_id: 'alpha-root',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+      item({
+        id: 'beta-root',
+        title: 'Beta product',
+        actionable: false,
+        sort_order: 2,
+      }),
+      item({
+        id: 'beta-ready',
+        title: 'Beta ready',
+        parent_id: 'beta-root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'beta-waiting',
+        title: 'Beta waiting',
+        parent_id: 'beta-root',
+        sort_order: 2,
+        state: 'feedback',
+        actionable: false,
+      }),
+    ]
+    const expandedIds = new Set(['alpha-root', 'beta-root'])
+    const priorityItems = [
+      { id: 'alpha-ready', rank: 1 },
+      { id: 'beta-ready', rank: 2 },
+    ]
+
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        rootItemId: 'beta-root',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-ready', 'beta-waiting'])
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems,
+        rootItemId: 'beta-root',
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-ready'])
+    expect(
+      visibleOutlinerRows(items, expandedIds, {
+        priorityItems,
+        rootItemId: 'beta-root',
+        view: 'follow-up',
+      }).map((row) => row.item.id)
+    ).toEqual(['beta-root', 'beta-waiting'])
+    expect(
+      visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
+    ).toEqual([
+      'alpha-root',
+      'alpha-ready',
+      'alpha-waiting',
+      'beta-root',
+      'beta-ready',
+      'beta-waiting',
+    ])
+  })
+
   it('lets collapsed context rows hide matching descendants in filtered views', () => {
     const items = [
       item({
@@ -458,7 +785,7 @@ describe('Outliner', () => {
 
     expect(
       visibleOutlinerRows(items, expandedIds).map((row) => row.item.id)
-    ).toEqual(['gamma', 'g1', 'beta', 'b1', 'alpha', 'a1'])
+    ).toEqual(['alpha', 'a1', 'beta', 'b1', 'gamma', 'g1'])
     expect(
       visibleOutlinerRows(items, expandedIds, {
         leverageSort: true,
@@ -471,23 +798,44 @@ describe('Outliner', () => {
     expect(items).toEqual(before)
   })
 
-  it('keeps manual tree order when priority ranks prefer different roots, sections, and children', () => {
+  it('uses item id as a stable Tree root tie-breaker for matching titles', () => {
     const items = [
       item({
+        id: 'root-b',
+        title: 'Same title',
+        sort_order: 1,
+      }),
+      item({
         id: 'root-a',
-        title: 'Root A',
+        title: 'Same title',
+        sort_order: 2,
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), { leverageSort: true }).map(
+        (row) => row.item.id
+      )
+    ).toEqual(['root-a', 'root-b'])
+  })
+
+  it('keeps alphabetical Tree root order when priority ranks prefer different roots, sections, and children', () => {
+    const items = [
+      item({
+        id: 'root-z',
+        title: 'Root Z',
         actionable: false,
         sort_order: 1,
       }),
       item({
-        id: 'root-a-child-one',
-        title: 'Root A child one',
-        parent_id: 'root-a',
+        id: 'root-z-child-one',
+        title: 'Root Z child one',
+        parent_id: 'root-z',
         sort_order: 1,
       }),
       item({
-        id: 'root-b',
-        title: 'Root B',
+        id: 'root-a',
+        title: 'Root A',
         actionable: false,
         sort_order: 2,
       }),
@@ -495,14 +843,14 @@ describe('Outliner', () => {
         id: 'section-one',
         title: 'Section one',
         actionable: false,
-        parent_id: 'root-b',
+        parent_id: 'root-a',
         sort_order: 1,
       }),
       item({
         id: 'section-two',
         title: 'Section two',
         actionable: false,
-        parent_id: 'root-b',
+        parent_id: 'root-a',
         sort_order: 2,
       }),
       item({
@@ -518,9 +866,9 @@ describe('Outliner', () => {
         sort_order: 2,
       }),
       item({
-        id: 'loose-root-b-child',
-        title: 'Loose root B child',
-        parent_id: 'root-b',
+        id: 'loose-root-a-child',
+        title: 'Loose root A child',
+        parent_id: 'root-a',
         sort_order: 3,
       }),
     ]
@@ -528,25 +876,25 @@ describe('Outliner', () => {
     expect(
       visibleOutlinerRows(
         items,
-        new Set(['root-a', 'root-b', 'section-one', 'section-two']),
+        new Set(['root-a', 'root-z', 'section-one', 'section-two']),
         {
           leverageSort: true,
           priorityItems: [
             { id: 'section-two-child-two', rank: 1 },
-            { id: 'loose-root-b-child', rank: 2 },
-            { id: 'root-a-child-one', rank: 3 },
+            { id: 'loose-root-a-child', rank: 2 },
+            { id: 'root-z-child-one', rank: 3 },
           ],
         }
       ).map((row) => row.item.id)
     ).toEqual([
       'root-a',
-      'root-a-child-one',
-      'root-b',
       'section-one',
       'section-two',
       'section-two-child-one',
       'section-two-child-two',
-      'loose-root-b-child',
+      'loose-root-a-child',
+      'root-z',
+      'root-z-child-one',
     ])
   })
 
@@ -696,7 +1044,7 @@ describe('Outliner', () => {
           ],
         })
       )
-    ).toEqual(['section', 'urgent-child', 'ready-root'])
+    ).toEqual(['ready-root', 'section', 'urgent-child'])
     expect(
       visibleOutlinerRows(items, new Set(['section']), {
         leverageSort: true,
@@ -705,14 +1053,14 @@ describe('Outliner', () => {
           { id: 'ready-root', rank: 2 },
         ],
       }).map((row) => row.item.id)
-    ).toEqual(['section', 'urgent-child', 'ready-root'])
+    ).toEqual(['ready-root', 'section', 'urgent-child'])
   })
 
-  it('keeps manual root order in Tree when an unranked done row precedes an open row', () => {
+  it('keeps alphabetical root order in Tree when an unranked done row precedes an open row', () => {
     const items = [
       item({
         id: 'done',
-        title: 'Done',
+        title: 'Zulu done',
         state: 'done',
         complete: true,
         actionable: false,
@@ -720,7 +1068,7 @@ describe('Outliner', () => {
       }),
       item({
         id: 'open',
-        title: 'Open',
+        title: 'Alpha open',
         sort_order: 2,
       }),
     ]
@@ -730,7 +1078,7 @@ describe('Outliner', () => {
         leverageSort: true,
         priorityItems: [],
       }).map((row) => row.item.id)
-    ).toEqual(['done', 'open'])
+    ).toEqual(['open', 'done'])
   })
 
   it('keeps collapsed child data available for expansion', () => {
@@ -883,7 +1231,7 @@ describe('Outliner', () => {
           ],
         })
       )
-    ).toEqual(['active', 'new-done', 'legacy-done'])
+    ).toEqual(['active', 'legacy-done', 'new-done'])
   })
 
   it('uses the replacement marker timestamp for the default tree cutoff', () => {

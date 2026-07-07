@@ -1,3 +1,6 @@
+import { mkdir } from 'node:fs/promises'
+import path from 'node:path'
+
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import { createItem, deleteBackendItems, gotoPath, signInAs } from './helpers'
@@ -13,6 +16,12 @@ type CheckboxPaintSample = {
   contrastWithSurface: number
   medianLuminance: number
 }
+
+const screenshotDir = path.resolve(__dirname, '..', '..', '.tmp', 'agent')
+const rootDoneCheckboxScreenshotPath = path.join(
+  screenshotDir,
+  'root-done-checkbox-current.png'
+)
 
 async function sampleCheckboxPaint(
   page: Page,
@@ -111,7 +120,7 @@ async function sampleCheckboxPaint(
 }
 
 for (const colorScheme of ['light', 'dark'] as const) {
-  test(`renders checked done checkboxes as muted and visible in ${colorScheme} mode`, async ({
+  test(`renders checked non-root done checkboxes as muted and visible in ${colorScheme} mode`, async ({
     page,
     request,
   }) => {
@@ -120,10 +129,17 @@ for (const colorScheme of ['light', 'dark'] as const) {
     const createdItemIds: string[] = []
 
     try {
+      const root = await createItem(
+        request,
+        sessionToken,
+        `Done checkbox root ${colorScheme} ${Date.now()}`
+      )
+      createdItemIds.push(root.id)
       const item = await createItem(
         request,
         sessionToken,
-        `Done checkbox ${colorScheme} ${Date.now()}`
+        `Done checkbox ${colorScheme} ${Date.now()}`,
+        { parent_id: root.id }
       )
       createdItemIds.push(item.id)
 
@@ -151,3 +167,74 @@ for (const colorScheme of ['light', 'dark'] as const) {
     }
   })
 }
+
+test('hides the Done checkbox on root items while keeping child item checkboxes', async ({
+  page,
+  request,
+}, testInfo) => {
+  const sessionToken = await signInAs(page)
+  const createdItemIds: string[] = []
+
+  try {
+    const root = await createItem(
+      request,
+      sessionToken,
+      `Root done checkbox ${Date.now()}`
+    )
+    createdItemIds.push(root.id)
+    const child = await createItem(
+      request,
+      sessionToken,
+      `Child done checkbox ${Date.now()}`,
+      { parent_id: root.id }
+    )
+    createdItemIds.push(child.id)
+
+    await gotoPath(page, '/')
+
+    const rootRow = page.locator(`[data-outliner-item-id="${root.id}"]`)
+    const childRow = page.locator(`[data-outliner-item-id="${child.id}"]`)
+    await expect(rootRow).toBeVisible()
+    await expect(childRow).toBeVisible()
+
+    const rootCheckbox = rootRow.getByRole('checkbox', {
+      name: 'Mark item done',
+    })
+    const childCheckbox = childRow.getByRole('checkbox', {
+      name: 'Mark item done',
+    })
+
+    await mkdir(screenshotDir, { recursive: true })
+    await page.screenshot({
+      caret: 'initial',
+      fullPage: true,
+      path: rootDoneCheckboxScreenshotPath,
+    })
+    await testInfo.attach('root-done-checkbox-current', {
+      contentType: 'image/png',
+      path: rootDoneCheckboxScreenshotPath,
+    })
+
+    const evidence = {
+      childCheckboxCount: await childCheckbox.count(),
+      childCheckboxVisible: await childCheckbox.isVisible(),
+      rootCheckboxCount: await rootCheckbox.count(),
+      rootCheckboxVisible: await rootCheckbox.isVisible(),
+      screenshotPath: rootDoneCheckboxScreenshotPath,
+    }
+    await testInfo.attach('root-done-checkbox-evidence', {
+      body: JSON.stringify(evidence, null, 2),
+      contentType: 'application/json',
+    })
+
+    await expect(childCheckbox).toBeVisible()
+    await expect(
+      rootCheckbox,
+      `Root rows should hide the done checkbox. Evidence: ${JSON.stringify(
+        evidence
+      )}`
+    ).toBeHidden()
+  } finally {
+    await deleteBackendItems(request, sessionToken, createdItemIds)
+  }
+})

@@ -74,6 +74,9 @@ test.describe('section state menu reproduction', () => {
       ).toBeVisible()
       await expect(
         sectionRow.getByRole('checkbox', { name: 'Mark item done' })
+      ).toHaveCount(0)
+      await expect(
+        childRow.getByRole('checkbox', { name: 'Mark item done' })
       ).toBeVisible()
 
       await page.getByRole('button', { name: 'Show follow up work' }).click()

@@ -85,8 +85,6 @@ type OutlinerRowProps = {
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
-  onDragStart?: React.DragEventHandler<HTMLElement>
-  onDragEnd?: React.DragEventHandler<HTMLElement>
   draftResetRequest?: { requestId: number; text: string } | null
 }
 
@@ -108,8 +106,6 @@ export function OutlinerRow({
   onChangeDone,
   onOpenNotes,
   onOpenPromptTimeline,
-  onDragStart,
-  onDragEnd,
   draftResetRequest,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
@@ -232,13 +228,15 @@ export function OutlinerRow({
   const displayReady = displayReadiness === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
+  const showDoneCheckbox = item.parent_id !== null
+  const showAddSibling = item.parent_id !== null
 
   return (
     <div
       className={cn(
         'grid min-h-11 grid-cols-[auto_auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
         MODE_COLOUR_MAP[item.mode],
-        selected && 'bg-accent/50',
+        selected && 'ring-ring/30 ring-1 ring-inset',
         displayDone && 'text-muted-foreground',
         isExternalWaitingItem(item, { ignoreState: hasChildren }) &&
           'text-muted-foreground'
@@ -257,21 +255,23 @@ export function OutlinerRow({
         title="Drag"
         disabled={pending}
         draggable={false}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
         onKeyDown={handleDragHandleKeyDown}
       >
         {DRAG_ICON}
       </Button>
       <div className="flex size-8 items-center justify-center">
-        <input
-          type="checkbox"
-          aria-label="Mark item done"
-          checked={checkedDone}
-          disabled={pending}
-          onChange={handleDoneChange}
-          className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-        />
+        {showDoneCheckbox ? (
+          <input
+            type="checkbox"
+            aria-label="Mark item done"
+            checked={checkedDone}
+            disabled={pending}
+            onChange={handleDoneChange}
+            className="border-border bg-background text-foreground focus-visible:ring-ring accent-muted-foreground size-4 rounded-sm border focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+        ) : (
+          <span className="size-4" aria-hidden="true" />
+        )}
       </div>
       <div className="flex size-8 items-center justify-center">
         {hasChildren ? (
@@ -302,18 +302,22 @@ export function OutlinerRow({
             aria-label="Item text"
             className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
           />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            aria-label="Add sibling"
-            title="Add sibling"
-            disabled={pending}
-            onClick={createSibling}
-          >
-            {ADD_SIBLING_ICON}
-          </Button>
+          {showAddSibling ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label="Add sibling"
+              title="Add sibling"
+              disabled={pending}
+              onClick={createSibling}
+            >
+              {ADD_SIBLING_ICON}
+            </Button>
+          ) : (
+            <span className="size-8 shrink-0" aria-hidden="true" />
+          )}
         </div>
         {error ? (
           <div className="text-destructive truncate text-xs" role="alert">

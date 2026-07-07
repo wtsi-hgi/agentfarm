@@ -270,9 +270,30 @@ function reorderItems(
 
 function LocalReorderHarness() {
   const [items, setItems] = React.useState<TreeItem[]>([
-    item({ id: 'first', title: 'First', sort_order: 1 }),
-    item({ id: 'second', title: 'Second', sort_order: 2 }),
-    item({ id: 'third', title: 'Third', sort_order: 3 }),
+    item({
+      id: 'first',
+      title: 'First',
+      parent_id: 'section',
+      sort_order: 1,
+    }),
+    item({
+      id: 'second',
+      title: 'Second',
+      parent_id: 'section',
+      sort_order: 2,
+    }),
+    item({
+      id: 'third',
+      title: 'Third',
+      parent_id: 'section',
+      sort_order: 3,
+    }),
+    item({
+      id: 'section',
+      title: 'Section',
+      actionable: false,
+      sort_order: 1,
+    }),
   ])
 
   React.useEffect(() => {
@@ -284,7 +305,7 @@ function LocalReorderHarness() {
     )
   }, [])
 
-  return React.createElement(Outliner, { items })
+  return React.createElement(Outliner, { hiddenItemIds: ['section'], items })
 }
 
 async function click(target: HTMLElement) {
@@ -461,7 +482,7 @@ describe('Outliner reorder controls', () => {
     vi.clearAllMocks()
   })
 
-  it('moves the second root to the explicit first position from the drag handle keyboard shortcut', async () => {
+  it('does not move a root from the drag handle keyboard shortcut', async () => {
     const container = await render([
       item({ id: 'first', title: 'First', sort_order: 1 }),
       item({ id: 'second', title: 'Second', sort_order: 2 }),
@@ -472,10 +493,7 @@ describe('Outliner reorder controls', () => {
       altKey: true,
     })
 
-    expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
-      new_parent_id: null,
-      position: 'first',
-    })
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
   })
 
   it('does not reorder from the drag handle while the row is pending', async () => {
@@ -487,9 +505,15 @@ describe('Outliner reorder controls', () => {
     })
     actionMocks.createItem.mockImplementation(async () => createdItemPromise)
     const container = await render([
-      item({ id: 'first', title: 'First', sort_order: 1 }),
-      item({ id: 'second', title: 'Second', sort_order: 2 }),
-      item({ id: 'third', title: 'Third', sort_order: 3 }),
+      item({ id: 'root', title: 'Root', actionable: false, sort_order: 1 }),
+      item({ id: 'first', title: 'First', parent_id: 'root', sort_order: 1 }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'root',
+        sort_order: 2,
+      }),
+      item({ id: 'third', title: 'Third', parent_id: 'root', sort_order: 3 }),
     ])
     const secondRow = outlinerItem(container, 'second')
 
@@ -507,6 +531,7 @@ describe('Outliner reorder controls', () => {
         item({
           id: 'created',
           title: 'New item',
+          parent_id: 'root',
           slug: 'created',
           sort_order: 3,
         })
@@ -640,8 +665,24 @@ describe('Outliner reorder controls', () => {
 
   it('keeps drag-and-drop reorders anchored after the target item', async () => {
     const container = await render([
-      item({ id: 'first', title: 'First', sort_order: 1 }),
-      item({ id: 'second', title: 'Second', sort_order: 2 }),
+      item({
+        id: 'section',
+        title: 'Section',
+        actionable: false,
+        sort_order: 1,
+      }),
+      item({
+        id: 'first',
+        title: 'First',
+        parent_id: 'section',
+        sort_order: 1,
+      }),
+      item({
+        id: 'second',
+        title: 'Second',
+        parent_id: 'section',
+        sort_order: 2,
+      }),
     ])
     const firstRow = outlinerItem(container, 'first')
     const secondRow = outlinerItem(container, 'second')
@@ -653,7 +694,7 @@ describe('Outliner reorder controls', () => {
     await dispatchDrag(firstRow, 'drop', transfer, { clientY: 135 })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
-      new_parent_id: null,
+      new_parent_id: 'section',
       position: 'after',
       after_id: 'first',
     })
@@ -1035,7 +1076,7 @@ describe('Outliner reorder controls', () => {
     await dispatchDrag(firstRow, 'drop', transfer, { clientY: 105 })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('second', {
-      new_parent_id: null,
+      new_parent_id: 'section',
       position: 'first',
     })
     expect(renderedItemIds(container)).toEqual(['second', 'first', 'third'])
@@ -1060,7 +1101,7 @@ describe('Outliner reorder controls', () => {
     })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
-      new_parent_id: null,
+      new_parent_id: 'section',
       position: 'after',
       after_id: 'second',
     })
@@ -1102,7 +1143,7 @@ describe('Outliner reorder controls', () => {
       await dispatchMouse(window, 'mouseup', { clientX: 500, clientY: 185 })
 
       expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
-        new_parent_id: null,
+        new_parent_id: 'section',
         position: 'after',
         after_id: 'second',
       })
@@ -1146,9 +1187,9 @@ describe('Outliner reorder controls', () => {
       'true'
     )
     expect(renderedItemIds(container)).toEqual([
-      'source-section',
       'destination-section',
       'moving-child',
+      'source-section',
     ])
 
     await dispatchDrag(
@@ -1253,12 +1294,38 @@ describe('Outliner reorder controls', () => {
   it('uses hidden siblings when deciding whether a drag preview returned to origin', async () => {
     const container = await renderElement(
       React.createElement(Outliner, {
-        hiddenItemIds: ['hidden'],
+        hiddenItemIds: ['section', 'hidden'],
         items: [
-          item({ id: 'first', title: 'First', sort_order: 1 }),
-          item({ id: 'second', title: 'Second', sort_order: 2 }),
-          item({ id: 'hidden', title: 'Hidden', sort_order: 3 }),
-          item({ id: 'third', title: 'Third', sort_order: 4 }),
+          item({
+            id: 'first',
+            title: 'First',
+            parent_id: 'section',
+            sort_order: 1,
+          }),
+          item({
+            id: 'second',
+            title: 'Second',
+            parent_id: 'section',
+            sort_order: 2,
+          }),
+          item({
+            id: 'hidden',
+            title: 'Hidden',
+            parent_id: 'section',
+            sort_order: 3,
+          }),
+          item({
+            id: 'third',
+            title: 'Third',
+            parent_id: 'section',
+            sort_order: 4,
+          }),
+          item({
+            id: 'section',
+            title: 'Section',
+            actionable: false,
+            sort_order: 1,
+          }),
         ],
       })
     )
@@ -1336,7 +1403,7 @@ describe('Outliner reorder controls', () => {
     })
 
     expect(actionMocks.moveItem).toHaveBeenCalledWith('first', {
-      new_parent_id: null,
+      new_parent_id: 'section',
       position: 'after',
       after_id: 'second',
     })
@@ -1363,7 +1430,7 @@ describe('Outliner reorder controls', () => {
     ).toBeNull()
   })
 
-  it('previews and persists dragging a root under the hovered row as an indented child', async () => {
+  it('does not preview or persist dragging a root row reorder', async () => {
     const container = await render([
       item({ id: 'section', title: 'Section', sort_order: 1 }),
       item({ id: 'loose', title: 'Loose item', sort_order: 2 }),
@@ -1376,17 +1443,15 @@ describe('Outliner reorder controls', () => {
     await dispatchDrag(dragHandle(looseRow), 'dragstart', transfer)
     await dispatchDrag(sectionRow, 'dragover', transfer, { clientY: 130 })
 
-    expect(outlinerItem(container, 'loose').dataset.dragPreview).toBe('true')
-    expect(renderedItemIds(container)).toEqual(['section', 'loose'])
-    expect(rowIndent(container, 'loose')).toBe('1.25rem')
+    expect(outlinerItem(container, 'loose').dataset.dragPreview).toBeUndefined()
+    expect(renderedItemIds(container)).toEqual(['loose', 'section'])
+    expect(rowIndent(container, 'loose')).toBe('0rem')
     expect(actionMocks.moveItem).not.toHaveBeenCalled()
 
     await dispatchDrag(sectionRow, 'drop', transfer, { clientY: 130 })
 
-    expect(actionMocks.moveItem).toHaveBeenCalledWith('loose', {
-      new_parent_id: 'section',
-      position: 'first',
-    })
+    expect(actionMocks.moveItem).not.toHaveBeenCalled()
+    expect(renderedItemIds(container)).toEqual(['loose', 'section'])
   })
 
   it('previews and persists outdenting beside a row at the desired indentation level', async () => {
@@ -1421,10 +1486,10 @@ describe('Outliner reorder controls', () => {
 
     expect(outlinerItem(container, 'nested').dataset.dragPreview).toBe('true')
     expect(renderedItemIds(container)).toEqual([
+      'next-root',
       'section',
       'child',
       'nested',
-      'next-root',
     ])
     expect(rowIndent(container, 'nested')).toBe('0rem')
 

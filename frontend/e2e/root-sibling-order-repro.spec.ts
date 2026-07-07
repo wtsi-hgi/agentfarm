@@ -136,8 +136,8 @@ function orderedTitlesFor(
   return items.filter((item) => wanted.has(item.id)).map((item) => item.title)
 }
 
-test.describe('root sibling creation order', () => {
-  test('keeps a row-created root sibling beneath the root row', async ({
+test.describe('root product creation order', () => {
+  test('uses alphabetical Tree order after bottom root creation', async ({
     page,
     request,
   }, testInfo) => {
@@ -174,7 +174,7 @@ test.describe('root sibling creation order', () => {
             completedChild.id,
           ])
         )
-        .toEqual([priorityRoot.title, root.title, completedChild.title])
+        .toEqual([root.title, completedChild.title, priorityRoot.title])
 
       const beforeCreateItems = await visibleItems(page)
       const beforeCreateIds = new Set(beforeCreateItems.map((item) => item.id))
@@ -193,10 +193,7 @@ test.describe('root sibling creation order', () => {
           new URL(response.url()).pathname === '/'
         )
       })
-      await page
-        .locator(`[data-outliner-item-id="${root.id}"]`)
-        .getByRole('button', { name: 'Add sibling' })
-        .click()
+      await page.getByRole('button', { name: 'Create root' }).click()
       expect((await createResponsePromise).status()).toBe(200)
 
       const afterCreateItems = await waitForNewVisibleItem(
@@ -236,11 +233,13 @@ test.describe('root sibling creation order', () => {
 
       expect(
         afterCreateOrder,
-        `visible order after root Add sibling: ${afterCreateOrder.join(' > ')}`
+        `visible order after bottom root creation: ${afterCreateOrder.join(
+          ' > '
+        )}`
       ).toEqual([
-        priorityRoot.title,
         root.title,
         completedChild.title,
+        priorityRoot.title,
         'New item',
       ])
     } finally {
