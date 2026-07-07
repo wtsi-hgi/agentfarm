@@ -29,7 +29,7 @@ import type { DestructiveConfirmationDialogProps } from '@/components/destructiv
 import type { MarkdownContentProps } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { Comment, ItemActivity, TreeItem } from '@/lib/contracts'
+import type { Comment, Item, ItemActivity, TreeItem } from '@/lib/contracts'
 import { BALL_LABELS, PHASE_LABELS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
@@ -41,6 +41,7 @@ export type CommentsPanelProps = {
   coordinateDependencyDropActive?: boolean
   draggingItemId?: string | null
   onAddDependency?: (fromId: string, toId: string) => Promise<void>
+  onItemPatched?: (item: Item) => void
   onRemoveDependency?: (dependencyId: string) => Promise<void>
 }
 
@@ -206,6 +207,7 @@ export function CommentsPanel({
   coordinateDependencyDropActive = false,
   draggingItemId = null,
   onAddDependency,
+  onItemPatched,
   onRemoveDependency,
 }: CommentsPanelProps) {
   const [comments, setComments] = React.useState<Comment[]>([])
@@ -624,6 +626,7 @@ export function CommentsPanel({
     setError(null)
     try {
       const savedItem = await patchItem(requestedItemId, patch)
+      onItemPatched?.(savedItem)
       if (currentItemId.current !== requestedItemId) {
         return
       }
@@ -678,6 +681,7 @@ export function CommentsPanel({
     setError(null)
     try {
       const savedItem = await patchItem(requestedItemId, patch)
+      onItemPatched?.(savedItem)
       if (currentItemId.current !== requestedItemId) {
         return
       }

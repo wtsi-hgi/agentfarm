@@ -447,7 +447,7 @@ export function OutlinerRow({
             {showHandoffEditor ? (
               <form
                 id={handoffEditorId}
-                role="dialog"
+                role="group"
                 aria-label="Person hand-off editor"
                 className="bg-popover text-popover-foreground border-border absolute top-9 right-0 z-30 grid w-72 gap-3 rounded-md border p-3 text-sm shadow-lg"
                 onClick={(event) => event.stopPropagation()}

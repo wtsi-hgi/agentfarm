@@ -848,6 +848,76 @@ describe('Outliner comment target lifecycle', () => {
     expect(docsCheckbox.checked).toBe(true)
   })
 
+  it('refreshes container ship rollups after a leaf milestone save', async () => {
+    const child = item({
+      id: 'child',
+      title: 'Child task',
+      parent_id: 'root',
+      dev_updated: true,
+      prod_updated: true,
+      docs_updated: false,
+      announced: true,
+    })
+    actionMocks.patchItem.mockResolvedValue(
+      item({
+        ...child,
+        docs_updated: true,
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            status: 'rollup',
+            rollup: {
+              phase: 'not-started',
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 0,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 1,
+                prod_updated: 1,
+                docs_updated: 0,
+                announced: 1,
+                shipped: 0,
+                total: 1,
+              },
+            },
+          }),
+          child,
+        ],
+      })
+    )
+
+    let shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+    expect(shipSection.textContent).toContain('0/1 shipped')
+    expect(shipSection.textContent).toContain('Docs 0')
+
+    await click(getItemRow(container, 'child'))
+    shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+
+    const docsCheckbox = getInput(shipSection, 'Docs updated')
+    expect(docsCheckbox.checked).toBe(false)
+
+    await click(docsCheckbox)
+    await click(getItemRow(container, 'root'))
+
+    shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('child', {
+      docs_updated: true,
+    })
+    expect(shipSection.textContent).toContain('1/1 shipped')
+    expect(shipSection.textContent).toContain('Docs 1')
+  })
+
   it('shows container ship rollup without editable milestone checkboxes', async () => {
     const container = await render(
       React.createElement(Outliner, {

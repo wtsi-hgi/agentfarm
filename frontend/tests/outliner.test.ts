@@ -330,6 +330,14 @@ function managerProjection(document: Document, itemId: string) {
   return projection
 }
 
+function viewButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing view button: ${ariaLabel}`)
+  }
+  return button
+}
+
 function itemResumeAffordance(document: Document, itemId: string) {
   return document.querySelector(
     `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
@@ -709,6 +717,39 @@ describe('Outliner', () => {
     )
 
     expect(handoffEditor(container)).toBeNull()
+  })
+
+  it('keeps inline hand-off editors out of dialog landmarks', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'first-handoff',
+            title: 'Ask first person',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+          item({
+            id: 'second-handoff',
+            title: 'Ask second person',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const editors = document.querySelectorAll(
+      '[aria-label="Person hand-off editor"]'
+    )
+
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    expect(editors).toHaveLength(2)
+    for (const editor of editors) {
+      expect(editor.getAttribute('role')).toBe('group')
+    }
   })
 
   it('saves the hand-off note and follow-up date together', async () => {
@@ -1289,6 +1330,70 @@ describe('Outliner', () => {
 
     expect(projection.querySelector('[aria-label="Ship: 2 of 6"]')).toBeTruthy()
     expect(projection.textContent).toContain('2/6 shipped')
+  })
+
+  it('refreshes manager container rollups after a descendant leaf is changed locally', async () => {
+    const originalLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      parent_id: 'container',
+    })
+    let savedLeaf = originalLeaf
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        completed_at:
+          patch.state === 'done'
+            ? '2026-06-30T01:00:00.000000Z'
+            : savedLeaf.completed_at,
+        state_changed_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Launch surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 0,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 0,
+                prod_updated: 0,
+                docs_updated: 0,
+                announced: 0,
+                shipped: 0,
+                total: 1,
+              },
+              phase: 'not-started',
+            },
+          }),
+          originalLeaf,
+        ],
+        markers: [],
+      })
+    )
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    await click(viewButton(container, 'Show manager summary'))
+
+    const projection = managerProjection(container.ownerDocument, 'container')
+
+    expect(projection.querySelector('[aria-label="Ready: 0"]')).toBeTruthy()
+    expect(projection.querySelector('[aria-label="Done: 1"]')).toBeTruthy()
+    expect(projection.textContent).not.toContain('Not started')
   })
 
   it('renders the manager projection in viewer mode without removing view toggles', () => {

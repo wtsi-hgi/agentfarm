@@ -258,6 +258,26 @@ type ManagerShipMilestone = Exclude<
   keyof NonNullable<TreeItem['rollup']>['ship'],
   'shipped' | 'total'
 >
+type LocalRollup = NonNullable<TreeItem['rollup']>
+
+const SHIP_MILESTONE_KEYS = [
+  'dev_updated',
+  'prod_updated',
+  'docs_updated',
+  'announced',
+] satisfies readonly ManagerShipMilestone[]
+const ROLLUP_PHASE_ORDER = [
+  'not-started',
+  'defining',
+  'spec',
+  'implement',
+  'review',
+  'merged',
+  'released',
+] satisfies readonly State[]
+const ROLLUP_PHASE_RANKS: ReadonlyMap<State, number> = new Map(
+  ROLLUP_PHASE_ORDER.map((phase, index) => [phase, index] as const)
+)
 const MANAGER_SHIP_BUCKETS = [
   { key: 'dev_updated', label: 'Dev' },
   { key: 'prod_updated', label: 'Prod' },
@@ -1044,6 +1064,105 @@ function moveLocalSiblingAfter(
   return items.map((item) => rewrittenSiblings.get(item.id) ?? item)
 }
 
+function recomputeLocalRollups(items: readonly TreeItem[]): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const leafCache = new Map<string, TreeItem[]>()
+  const visiting = new Set<string>()
+
+  function descendantLeaves(itemId: string): TreeItem[] {
+    const cached = leafCache.get(itemId)
+    if (cached) {
+      return cached
+    }
+
+    if (visiting.has(itemId)) {
+      return []
+    }
+
+    visiting.add(itemId)
+    const leaves: TreeItem[] = []
+    for (const child of children.get(itemId) ?? []) {
+      if ((children.get(child.id) ?? []).length === 0) {
+        leaves.push(child)
+      } else {
+        leaves.push(...descendantLeaves(child.id))
+      }
+    }
+    visiting.delete(itemId)
+    leafCache.set(itemId, leaves)
+    return leaves
+  }
+
+  function rollupFor(item: TreeItem): LocalRollup | null {
+    if ((children.get(item.id) ?? []).length === 0) {
+      return null
+    }
+
+    const status_counts: LocalRollup['status_counts'] = {
+      ready: 0,
+      monitoring: 0,
+      waiting: 0,
+      blocked: 0,
+      done: 0,
+      dropped: 0,
+    }
+    const ship: LocalRollup['ship'] = {
+      dev_updated: 0,
+      prod_updated: 0,
+      docs_updated: 0,
+      announced: 0,
+      shipped: 0,
+      total: 0,
+    }
+    let phase: State | null = null
+    let phaseRank = Number.POSITIVE_INFINITY
+    const leafItems = descendantLeaves(item.id)
+
+    ship.total = leafItems.length
+    for (const leaf of leafItems) {
+      if (leaf.status !== 'rollup') {
+        status_counts[leaf.status] += 1
+      }
+
+      let completedMilestones = 0
+      for (const key of SHIP_MILESTONE_KEYS) {
+        if (leaf[key]) {
+          ship[key] += 1
+          completedMilestones += 1
+        }
+      }
+      if (completedMilestones === SHIP_MILESTONE_KEYS.length) {
+        ship.shipped += 1
+      }
+
+      const nextPhaseRank = ROLLUP_PHASE_RANKS.get(leaf.state)
+      if (nextPhaseRank !== undefined && nextPhaseRank < phaseRank) {
+        phase = leaf.state
+        phaseRank = nextPhaseRank
+      }
+    }
+
+    return {
+      status_counts,
+      ship,
+      phase,
+    }
+  }
+
+  return items.map((item) => {
+    const nextRollup = rollupFor(item)
+    if (nextRollup === null && item.rollup === null) {
+      return item
+    }
+
+    return {
+      ...item,
+      status: nextRollup ? 'rollup' : item.status,
+      rollup: nextRollup,
+    }
+  })
+}
+
 function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
   const children = localChildrenByParent(items)
   const byId = new Map(items.map((item) => [item.id, item]))
@@ -1102,7 +1221,7 @@ function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
     return targetIds
   }
 
-  return items.map((item) => {
+  const withWorkFlags = items.map((item) => {
     const itemComplete = complete(item.id)
     const leaf = isLeaf(item.id)
     const blocked =
@@ -1120,6 +1239,8 @@ function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
       complete: itemComplete,
     }
   })
+
+  return recomputeLocalRollups(withWorkFlags)
 }
 
 type OptimisticItemPatch = {
@@ -3900,6 +4021,7 @@ export function Outliner({
           draggingItemId={draggingItemId}
           className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
           onAddDependency={addExplicitDependency}
+          onItemPatched={mergeReturnedItem}
           onRemoveDependency={removeExplicitDependency}
         />
       </div>
