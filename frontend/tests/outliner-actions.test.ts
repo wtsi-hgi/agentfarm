@@ -1,3 +1,8 @@
+// @vitest-environment jsdom
+
+import * as React from 'react'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -30,6 +35,7 @@ import {
   spawnItem,
   updateScratchpad,
 } from '@/app/actions'
+import { Outliner } from '@/components/outliner'
 import type { Item, TreeItem } from '@/lib/contracts'
 import { submitRowText } from '@/lib/outliner-mutations'
 
@@ -129,8 +135,113 @@ function expectedAuthHeaders(count: number) {
   }))
 }
 
+let roots: Root[] = []
+
+async function flushReact() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+async function render(element: React.ReactElement) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  await act(async () => {
+    root.render(element)
+  })
+  await flushReact()
+
+  return container
+}
+
+function getButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing button: ${ariaLabel}`)
+  }
+  return button
+}
+
+function getItemInput(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input: ${itemId}`)
+  }
+  return input
+}
+
+function getOutlinerItemIds(container: ParentNode) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  ).map((element) => element.dataset.outlinerItemId)
+}
+
+async function click(button: HTMLButtonElement) {
+  await act(async () => {
+    button.click()
+  })
+  await flushReact()
+}
+
+async function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
+}
+
+async function keyDown(input: HTMLInputElement, key: string) {
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function submitItemText(
+  container: ParentNode,
+  itemId: string,
+  text: string
+) {
+  const input = getItemInput(container, itemId)
+  await setInputValue(input, text)
+  await keyDown(input, 'Enter')
+}
+
 describe('outliner mutation Server Actions', () => {
   beforeEach(() => {
+    ;(
+      globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean
+      }
+    ).IS_REACT_ACT_ENVIRONMENT = true
+    window.requestAnimationFrame = (callback) => {
+      callback(0)
+      return 1
+    }
+    window.cancelAnimationFrame = vi.fn()
+    Element.prototype.scrollIntoView = vi.fn()
     sessionMocks.readSessionIdentity.mockResolvedValue({
       username: 'alice',
       role: 'owner',
@@ -139,6 +250,11 @@ describe('outliner mutation Server Actions', () => {
   })
 
   afterEach(() => {
+    for (const root of roots) {
+      act(() => root.unmount())
+    }
+    roots = []
+    document.body.replaceChildren()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -160,6 +276,159 @@ describe('outliner mutation Server Actions', () => {
     })
     expect(actions.createDependency).not.toHaveBeenCalled()
     expect(actions.deleteDependency).not.toHaveBeenCalled()
+  })
+
+  it('removes a ready leaf from Up Next immediately when handed to the agent', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [treeItem({ id: 'handoff-row', title: 'Hand off work' })],
+        markers: [],
+        priorityItems: [{ id: 'handoff-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+
+    await submitItemText(container, 'handoff-row', 'Hand off work ~agent')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/api/v1/items/handoff-row' }),
+      expect.objectContaining({
+        body: JSON.stringify({ ball: 'agent' }),
+        method: 'PATCH',
+      })
+    )
+    expect(getOutlinerItemIds(container)).toEqual([])
+  })
+
+  it('shows the handed-off leaf in Monitoring before the next tree refresh', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [treeItem({ id: 'handoff-row', title: 'Hand off work' })],
+        markers: [],
+        priorityItems: [{ id: 'handoff-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+    await submitItemText(container, 'handoff-row', 'Hand off work ~agent')
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+  })
+
+  it('returns a monitoring leaf to Up Next immediately when handed back to you', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          treeItem({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            actionable: false,
+            ball: 'agent',
+            status: 'monitoring',
+          }),
+        ],
+        markers: [],
+        priorityItems: [],
+      })
+    )
+
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+
+    await submitItemText(container, 'handoff-row', 'Hand off work ~you')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/api/v1/items/handoff-row' }),
+      expect.objectContaining({
+        body: JSON.stringify({ ball: 'you' }),
+        method: 'PATCH',
+      })
+    )
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
   })
 
   it('calls item mutation endpoints and revalidates only route-refreshing changes', async () => {

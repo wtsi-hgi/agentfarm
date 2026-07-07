@@ -81,6 +81,114 @@ def _rows_by_title(rows: list[dict]) -> dict[str, dict]:
     return {row["title"]: row for row in rows}
 
 
+L1_WORKFLOW_CASES = (
+    pytest.param(
+        "01 Idea, no dep",
+        {"state": "not-started", "ball": "you"},
+        False,
+        "ready",
+        False,
+        id="01-idea-no-dep",
+    ),
+    pytest.param(
+        "02 Idea, unfinished dep",
+        {"state": "not-started", "ball": "you"},
+        True,
+        "blocked",
+        False,
+        id="02-idea-unfinished-dep",
+    ),
+    pytest.param(
+        "03 Thinking notes",
+        {"state": "defining", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="03-thinking-notes",
+    ),
+    pytest.param(
+        "04 Spec QA my turn",
+        {"state": "spec", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="04-spec-qa-my-turn",
+    ),
+    pytest.param(
+        "05 Spec QA external answer needed",
+        {"state": "spec", "ball": "person"},
+        False,
+        "waiting",
+        True,
+        id="05-spec-qa-external-answer-needed",
+    ),
+    pytest.param(
+        "06 Spec generating",
+        {"state": "spec", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="06-spec-generating",
+    ),
+    pytest.param(
+        "07 Implementing",
+        {"state": "implement", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="07-implementing",
+    ),
+    pytest.param(
+        "08 Build and manually test",
+        {"state": "review", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="08-build-and-manually-test",
+    ),
+    pytest.param(
+        "09 Re-trigger pr-resolver",
+        {"state": "review", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="09-re-trigger-pr-resolver",
+    ),
+    pytest.param(
+        "10 Waiting on pr-resolver bugfix",
+        {"state": "review", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="10-waiting-on-pr-resolver-bugfix",
+    ),
+    pytest.param(
+        "11 Ship step",
+        {"state": "merged", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="11-ship-step",
+    ),
+    pytest.param(
+        "12 Asked users awaiting feedback",
+        {"state": "released", "ball": "person"},
+        False,
+        "waiting",
+        True,
+        id="12-asked-users-awaiting-feedback",
+    ),
+    pytest.param(
+        "13 Nothing left",
+        {"state": "done", "ball": "person"},
+        False,
+        "done",
+        True,
+        id="13-nothing-left",
+    ),
+)
+
+
 async def _create_bucketed_leaf(
     client: AsyncClient,
     root_id: str,
@@ -168,6 +276,52 @@ def _score(db_path, item_id: str) -> float:
     """Return the unblock-leverage score through the service boundary."""
     with get_connection(db_path) as conn:
         return leverage.score(conn, item_id)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    (
+        "workflow_row",
+        "leaf_body",
+        "has_incomplete_dependency",
+        "expected_status",
+        "expected_resume",
+    ),
+    L1_WORKFLOW_CASES,
+)
+async def test_l1_workflow_table_maps_phase_and_ball_to_tree_status(
+    fresh_db,
+    workflow_row: str,
+    leaf_body: dict,
+    has_incomplete_dependency: bool,
+    expected_status: str,
+    expected_resume: bool,
+) -> None:
+    """L1: each canonical workflow row projects to the expected tree cell."""
+    title = f"L1 {workflow_row}"
+    async with _client() as client:
+        if has_incomplete_dependency:
+            target = await _create(client, {"title": f"{title} blocker"})
+            assert target.status_code == 200
+
+        created = await _create(client, {"title": title, **leaf_body})
+        assert created.status_code == 200
+
+        if has_incomplete_dependency:
+            dependency = await _post_dependency(
+                client,
+                {"from_id": created.json()["id"], "to_id": target.json()["id"]},
+            )
+            assert dependency.status_code == 200
+
+        tree = await _tree(client)
+
+    assert tree.status_code == 200
+    row = _rows_by_title(tree.json())[title]
+    assert row["state"] == leaf_body["state"]
+    assert row["ball"] == leaf_body["ball"]
+    assert row["status"] == expected_status
+    assert row["resume"] is expected_resume
 
 
 def _insert_priority_leaf(

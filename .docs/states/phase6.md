@@ -28,8 +28,8 @@ aria-label, and a distinct icon, following the existing toggle pattern.
 Covering all 2 acceptance tests from H1 (tests in
 `tests/view-controls.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 6.2: L1 - Each workflow row maps to one (Phase, Ball) -> status cell [parallel with H1]
 
@@ -42,8 +42,8 @@ Encode the sec.13 workflow table as tests at the authoritative backend
 `tests/state-metadata.test.ts`). Covering all 13 acceptance tests from L1;
 asserts behaviour already built in phase 2 (status) and phase 5 (labels).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
@@ -63,8 +63,8 @@ Tree only; add pure ordering helpers `compareFollowUp` and
 acceptance tests from H2 (tests in `tests/outliner.test.ts`,
 `tests/state-metadata.test.ts`). Runs after batch 1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.4: H3 - Optimistic re-projection on hand-off
 
@@ -77,8 +77,8 @@ leaves Up Next and joins Monitoring before the next refresh, and treat a
 Covering all 3 acceptance tests from H3 (tests in
 `tests/outliner-actions.test.ts`). Builds on 6.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 6.5: I1 - Manager surface with coarse status, Phase, and roll-ups
 
@@ -93,5 +93,5 @@ both `owner` and `viewer` without removing existing toggles. Covering all 6
 acceptance tests from I1 (tests in `tests/outliner.test.ts`). Builds on
 6.1, 6.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

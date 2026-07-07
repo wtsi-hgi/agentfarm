@@ -86,3 +86,49 @@ export function statusAfterBallChange(
   }
   return 'ready'
 }
+
+function compareAscendingText(left: string, right: string): number {
+  if (left === right) {
+    return 0
+  }
+  return left < right ? -1 : 1
+}
+
+export function compareFollowUp(
+  a: TreeItem,
+  b: TreeItem,
+  today: string
+): number {
+  const aDate = a.blocked_followup_date
+  const bDate = b.blocked_followup_date
+  const aOverdue = aDate !== null && aDate < today
+  const bOverdue = bDate !== null && bDate < today
+
+  if (aOverdue !== bOverdue) {
+    return aOverdue ? -1 : 1
+  }
+
+  if (aDate !== null || bDate !== null) {
+    if (aDate === null) {
+      return 1
+    }
+    if (bDate === null) {
+      return -1
+    }
+
+    const byFollowupDate = compareAscendingText(aDate, bDate)
+    if (byFollowupDate !== 0) {
+      return byFollowupDate
+    }
+  }
+
+  return compareMonitoring(a, b)
+}
+
+export function compareMonitoring(a: TreeItem, b: TreeItem): number {
+  const byBallChangedAt = compareAscendingText(
+    a.ball_changed_at,
+    b.ball_changed_at
+  )
+  return byBallChangedAt !== 0 ? byBallChangedAt : a.id.localeCompare(b.id)
+}

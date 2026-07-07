@@ -96,6 +96,24 @@ function itemReadinessChip(document: Document, itemId: string) {
   return chip
 }
 
+function outlinerItem(document: Document, itemId: string) {
+  const row = document.querySelector(`[data-outliner-item-id="${itemId}"]`)
+  if (!(row instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing outliner item ${itemId}`)
+  }
+  return row
+}
+
+function managerProjection(document: Document, itemId: string) {
+  const projection = outlinerItem(document, itemId).querySelector(
+    '[aria-label="Manager projection"]'
+  )
+  if (!(projection instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing manager projection for ${itemId}`)
+  }
+  return projection
+}
+
 function itemResumeAffordance(document: Document, itemId: string) {
   return document.querySelector(
     `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
@@ -466,6 +484,189 @@ describe('Outliner', () => {
     expect(itemReadinessChip(document, 'done').textContent).toBe('Done')
   })
 
+  it('renders manager status and phase for ready owner work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'ready-review',
+            title: 'Ready review',
+            state: 'review',
+            status: 'ready',
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'ready-review')
+
+    expect(projection.textContent).toContain('On owner')
+    expect(projection.textContent).toContain('Review')
+  })
+
+  it('renders manager status and phase for agent monitoring work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'monitoring-implement',
+            title: 'Agent implementation',
+            state: 'implement',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'monitoring-implement')
+
+    expect(projection.textContent).toContain('In flight (agent)')
+    expect(projection.textContent).toContain('Implement')
+  })
+
+  it('renders manager status and phase for work waiting on others', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'waiting-released',
+            title: 'Awaiting rollout feedback',
+            state: 'released',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'waiting-released')
+
+    expect(projection.textContent).toContain('Waiting on others')
+    expect(projection.textContent).toContain('Released')
+  })
+
+  it('renders manager container status counts and rollup phase', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'container',
+            title: 'Launch surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 2,
+                monitoring: 1,
+                waiting: 0,
+                blocked: 1,
+                done: 3,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 4,
+                prod_updated: 3,
+                docs_updated: 2,
+                announced: 1,
+                shipped: 2,
+                total: 6,
+              },
+              phase: 'review',
+            },
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'container')
+
+    for (const bucket of [
+      'Ready: 2',
+      'Monitoring: 1',
+      'Waiting: 0',
+      'Blocked: 1',
+      'Done: 3',
+      'Dropped: 0',
+    ]) {
+      expect(projection.querySelector(`[aria-label="${bucket}"]`)).toBeTruthy()
+    }
+    expect(projection.textContent).toContain('Review')
+  })
+
+  it('renders the manager container ship summary from rollup totals', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'shipping-container',
+            title: 'Shipping surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 0,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 6,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 6,
+                prod_updated: 5,
+                docs_updated: 4,
+                announced: 3,
+                shipped: 2,
+                total: 6,
+              },
+              phase: null,
+            },
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'shipping-container')
+
+    expect(projection.querySelector('[aria-label="Ship: 2 of 6"]')).toBeTruthy()
+    expect(projection.textContent).toContain('2/6 shipped')
+  })
+
+  it('renders the manager projection in viewer mode without removing view toggles', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        scratchpadEditable: false,
+        items: [item({ id: 'viewer-ready', title: 'Viewer ready' })],
+      })
+    )
+
+    expect(managerProjection(document, 'viewer-ready').textContent).toContain(
+      'On owner'
+    )
+    expect(
+      Array.from(document.querySelectorAll('button')).map((button) =>
+        button.textContent?.trim()
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        'Tree',
+        'Up Next',
+        'Follow Up',
+        'Monitoring',
+        'Manager',
+      ])
+    )
+  })
+
   it('displays an explicit sibling section dependency before its waiting section', () => {
     const items = [
       item({
@@ -519,6 +720,70 @@ describe('Outliner', () => {
     ])
   })
 
+  it('filters work views by derived status and leaves blocked only in Tree', () => {
+    const items = [
+      item({
+        id: 'ready',
+        title: 'Ready work',
+        actionable: false,
+        status: 'ready',
+      }),
+      item({
+        id: 'waiting',
+        title: 'Waiting work',
+        sort_order: 2,
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
+        actionable: false,
+      }),
+      item({
+        id: 'monitoring',
+        title: 'Monitoring work',
+        sort_order: 3,
+        state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
+        actionable: false,
+      }),
+      item({
+        id: 'blocked',
+        title: 'Blocked work',
+        sort_order: 4,
+        status: 'blocked',
+        actionable: true,
+      }),
+    ]
+    const priorityItems = [
+      { id: 'ready', rank: 1 },
+      { id: 'waiting', rank: 2 },
+      { id: 'monitoring', rank: 3 },
+      { id: 'blocked', rank: 4 },
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
+    ).toContain('blocked')
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['ready'])
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'follow-up',
+      }).map((row) => row.item.id)
+    ).toEqual(['waiting'])
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'monitoring',
+      }).map((row) => row.item.id)
+    ).toEqual(['monitoring'])
+  })
+
   it('keeps Tree root sections alphabetical even when a root depends on another root section', () => {
     const items = [
       item({
@@ -566,7 +831,7 @@ describe('Outliner', () => {
     ).toEqual(alphabeticalTreeOrder)
   })
 
-  it('shows up-next rows as actionable non-waiting work with section context', () => {
+  it('shows up-next rows as ready work with section context', () => {
     const items = [
       item({
         id: 'section',
@@ -609,9 +874,8 @@ describe('Outliner', () => {
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 3,
-        actionable: false,
-        ball: 'person',
-        status: 'waiting',
+        actionable: true,
+        status: 'blocked',
       }),
     ]
 
@@ -629,7 +893,35 @@ describe('Outliner', () => {
     ).toEqual(['respond', 'section', 'ready'])
   })
 
-  it('shows follow-up rows as non-me waiting work without respond', () => {
+  it('does not give legacy respond work an up-next ordering boost', () => {
+    const items = [
+      item({
+        id: 'equal-peer',
+        title: 'Equal leverage peer',
+        sort_order: 1,
+      }),
+      item({
+        id: 'legacy-respond',
+        title: 'Legacy respond work',
+        sort_order: 2,
+        state: 'released',
+        ball: 'you',
+        status: 'ready',
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems: [
+          { id: 'legacy-respond', rank: 1 },
+          { id: 'equal-peer', rank: 1 },
+        ],
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['equal-peer', 'legacy-respond'])
+  })
+
+  it('shows follow-up rows as waiting work without ready, monitoring, or blocked rows', () => {
     const items = [
       item({
         id: 'ready',
@@ -663,9 +955,8 @@ describe('Outliner', () => {
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 5,
-        actionable: false,
-        ball: 'person',
-        status: 'waiting',
+        actionable: true,
+        status: 'blocked',
       }),
       item({
         id: 'done-feedback',
@@ -691,7 +982,7 @@ describe('Outliner', () => {
         ],
         view: 'follow-up',
       }).map((row) => row.item.id)
-    ).toEqual(['implement', 'blocked', 'feedback'])
+    ).toEqual(['feedback'])
   })
 
   it('keeps filtered rows under ancestor context while pruning unrelated siblings', () => {

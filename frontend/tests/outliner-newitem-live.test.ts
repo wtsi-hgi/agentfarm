@@ -857,7 +857,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(input.disabled).toBe(false)
   })
 
-  it('shows up-next work and follow-up work in separate priority views', async () => {
+  it('shows up-next, follow-up, and monitoring work in separate priority views', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -931,10 +931,19 @@ describe('Outliner live newly added filter exemptions', () => {
       getButton(container, 'Show follow up work').getAttribute('aria-pressed')
     ).toBe('true')
     expect(getOutlinerItemIds(container)).toEqual([
-      'feedback-row',
-      'implement-row',
       'blocked-row',
+      'feedback-row',
     ])
+
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(
+      getButton(container, 'Show follow up work').getAttribute('aria-pressed')
+    ).toBe('false')
+    expect(
+      getButton(container, 'Show monitoring work').getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(getOutlinerItemIds(container)).toEqual(['implement-row'])
 
     await click(getButton(container, 'Show tree view'))
 
