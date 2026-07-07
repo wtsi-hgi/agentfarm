@@ -497,10 +497,6 @@ async def get_tree(
     """
     projection = leverage.build_projection(conn)
     needs_edges_by_item = _explicit_needs_edges_by_item(conn)
-    item_ids_with_notes = _item_ids_with_notes(conn)
-    item_ids_with_prompt_response_entries = _item_ids_with_prompt_response_entries(
-        conn,
-    )
     result: list[TreeItemOut] = []
     for item_id in projection.tree_order_ids():
         row = projection.item_rows.get(item_id)
@@ -508,16 +504,22 @@ async def get_tree(
             continue
         item = _row_to_item(row)
         needs_edges = needs_edges_by_item.get(item_id, [])
+        status = projection.status(item_id)
+        if status is None:
+            continue
         result.append(
             TreeItemOut(
                 **item.model_dump(),
                 needs=[edge["slug"] for edge in needs_edges],
                 needs_edges=needs_edges,
+                status=status,
+                resume=projection.resume(item_id),
+                rollup=projection.rollup(item_id),
                 actionable=projection.is_actionable(item_id),
                 complete=projection.is_complete(item_id),
-                has_notes=item_id in item_ids_with_notes,
-                has_prompt_response_entries=(
-                    item_id in item_ids_with_prompt_response_entries
+                has_notes=projection.has_notes(item_id),
+                has_prompt_response_entries=projection.has_prompt_response_entries(
+                    item_id
                 ),
             )
         )

@@ -26,8 +26,8 @@ done -> dropped -> blocked -> monitoring -> waiting -> ready), reusing
 and home rows (`api/v1/items.py`, `api/v1/home.py`). Covering all 8
 acceptance tests from B1 (tests in `tests/test_priority.py`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.2: B2 - Ready fresh-vs-resume predicate
 
@@ -39,8 +39,8 @@ every tree row; ensure `home.py`'s `_row_to_home_tree_item` populates it
 too. Covering all 4 acceptance tests from B2 (tests in
 `tests/test_priority.py`). Builds on 2.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.3: B3 - Actionability redefined; special-case sets and respond boost removed
 
@@ -53,8 +53,8 @@ from actionability but still count in `Downstream(...)`. Remove the
 `respond` priority boost. Covering all 4 acceptance tests from B3 (tests in
 `tests/test_priority.py`). Builds on 2.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.4: B4 - Leverage score and ordering preserved exactly
 
@@ -65,8 +65,8 @@ ordering unchanged in `services/leverage.py`; only the actionability gate
 (B3) feeding the ordering changes. Covering all 3 acceptance tests from B4
 (tests in `tests/test_priority.py`). Builds on 2.3.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 2.5: B5 - Container roll-ups (manager data)
 
@@ -79,5 +79,5 @@ rows (`api/v1/items.py`, `api/v1/home.py`), ensuring
 `_row_to_home_tree_item` populates it. Covering all 6 acceptance tests from
 B5 (tests in `tests/test_priority.py`). Builds on 2.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

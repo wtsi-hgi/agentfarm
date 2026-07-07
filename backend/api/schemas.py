@@ -4,7 +4,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, Field, StrictBool, model_validator
 
-from models.enums import Ball, Effort, Mode, State
+from models.enums import Ball, Effort, Mode, State, Status
 
 
 class MessageResponse(BaseModel):
@@ -342,6 +342,36 @@ class TreeDependencyEdgeOut(BaseModel):
     automatic_chain: bool = False
 
 
+class RollupStatusCounts(BaseModel):
+    """Status bucket counts over a container's descendant leaves."""
+
+    ready: int
+    monitoring: int
+    waiting: int
+    blocked: int
+    done: int
+    dropped: int
+
+
+class RollupShipProgress(BaseModel):
+    """Shipping milestone counts over a container's descendant leaves."""
+
+    dev_updated: int
+    prod_updated: int
+    docs_updated: int
+    announced: int
+    shipped: int
+    total: int
+
+
+class RollupOut(BaseModel):
+    """Manager aggregate exposed only for container tree rows."""
+
+    status_counts: RollupStatusCounts
+    ship: RollupShipProgress
+    phase: State | None
+
+
 class TreeItemOut(ItemOut):
     """A single item as returned by GET ``/tree`` (spec: A3, extended by H1).
 
@@ -363,6 +393,9 @@ class TreeItemOut(ItemOut):
 
     needs: list[str]
     needs_edges: list[TreeDependencyEdgeOut]
+    status: Status
+    resume: bool
+    rollup: RollupOut | None
     actionable: bool
     complete: bool
     has_notes: bool
