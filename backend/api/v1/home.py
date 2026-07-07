@@ -28,7 +28,9 @@ def _row_to_home_tree_item(
     has_prompt_response_entries: bool,
 ) -> TreeItemOut:
     data = dict(row)
-    data["blocked_external"] = bool(data["blocked_external"])
+    for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
+        if field in data:
+            data[field] = bool(data[field])
     if data["parent_id"] is not None:
         data["repo_url"] = None
         data["usage"] = ""

@@ -207,12 +207,33 @@ async def test_create_with_defaults(fresh_db) -> None:
     assert body["state"] == "not-started"
     assert body["mode"] == "prompt-agent"
     assert body["effort"] == "medium"
-    assert body["blocked_external"] is False
+    assert body["ball"] == "you"
+    assert body["dev_updated"] is False
+    assert body["prod_updated"] is False
+    assert body["docs_updated"] is False
+    assert body["announced"] is False
     assert body["blocked_note"] is None
     assert body["blocked_followup_date"] is None
     assert body["completed_at"] is None
-    # All four creation timestamps are the same instant.
-    assert body["created_at"] == body["updated_at"] == body["state_changed_at"]
+    # All creation-time timestamps are the same instant.
+    assert (
+        body["created_at"]
+        == body["updated_at"]
+        == body["state_changed_at"]
+        == body["ball_changed_at"]
+    )
+
+
+@pytest.mark.anyio
+async def test_create_with_explicit_ball(fresh_db) -> None:
+    """A2: POST /items accepts an explicit Ball value."""
+    async with _client() as client:
+        response = await _create(client, {"title": "Watch build", "ball": "agent"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ball"] == "agent"
+    assert body["ball_changed_at"] == body["created_at"]
 
 
 @pytest.mark.anyio
@@ -257,6 +278,18 @@ async def test_bad_enum_returns_422_naming_field(fresh_db) -> None:
     body = response.json()
     assert "detail" in body
     assert "mode" in str(body["detail"])
+
+
+@pytest.mark.anyio
+async def test_bad_ball_returns_422_naming_field(fresh_db) -> None:
+    """A2: an out-of-set ``ball`` is a 422 whose detail names the field."""
+    async with _client() as client:
+        response = await _create(client, {"title": "x", "ball": "bogus"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "detail" in body
+    assert "ball" in str(body["detail"])
 
 
 @pytest.mark.anyio
@@ -371,6 +404,27 @@ async def test_tree_marks_rows_with_notes_or_prompt_response_entries(
     assert rows_by_id[noted_id]["has_prompt_response_entries"] is False
     assert rows_by_id[prompted_id]["has_notes"] is False
     assert rows_by_id[prompted_id]["has_prompt_response_entries"] is True
+
+
+@pytest.mark.anyio
+async def test_tree_items_include_ball_and_ship_fields_without_blocked_external(
+    fresh_db,
+) -> None:
+    """A2: GET /tree exposes Ball/ship defaults and omits legacy wait flag."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Fresh item"})
+        tree_response = await _tree(client)
+
+    assert created.status_code == 200
+    assert tree_response.status_code == 200
+    item = _tree_item(tree_response.json(), created.json()["id"])
+    assert "blocked_external" not in item
+    assert item["ball"] == "you"
+    assert item["ball_changed_at"] == item["created_at"]
+    assert item["dev_updated"] is False
+    assert item["prod_updated"] is False
+    assert item["docs_updated"] is False
+    assert item["announced"] is False
 
 
 # --- A2: Edit item fields and timestamp/slug behaviour ----------------------
@@ -497,8 +551,10 @@ async def test_patch_effort_only_leaves_mode_and_state_unchanged(fresh_db) -> No
 
 
 @pytest.mark.anyio
-async def test_patch_blocked_fields_persist_together(fresh_db) -> None:
-    """A2 test 5: blocked_external + note + followup_date all persist."""
+async def test_patch_blocked_note_and_followup_date_persist_together(
+    fresh_db,
+) -> None:
+    """Hand-off note and follow-up date persist together."""
     async with _client() as client:
         created = await _create(client, {"title": "Ship login"})
         item_id = created.json()["id"]
@@ -507,7 +563,6 @@ async def test_patch_blocked_fields_persist_together(fresh_db) -> None:
             client,
             item_id,
             {
-                "blocked_external": True,
                 "blocked_note": "awaiting infra",
                 "blocked_followup_date": "2026-07-10",
             },
@@ -515,14 +570,29 @@ async def test_patch_blocked_fields_persist_together(fresh_db) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["blocked_external"] is True
     assert body["blocked_note"] == "awaiting infra"
     assert body["blocked_followup_date"] == "2026-07-10"
-    # Persisted values agree (blocked_external stored as integer 1).
+    # Persisted values agree.
     row = _item_row(fresh_db, item_id)
-    assert row["blocked_external"] == 1
     assert row["blocked_note"] == "awaiting infra"
     assert row["blocked_followup_date"] == "2026-07-10"
+
+
+@pytest.mark.anyio
+async def test_patch_legacy_blocked_external_is_ignored(fresh_db) -> None:
+    """C4/E1: old wait-flag payloads are ignored after the Ball migration."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Old client"})
+        item_id = created.json()["id"]
+
+        response = await _patch(client, item_id, {"blocked_external": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "blocked_external" not in body
+    assert body["ball"] == "you"
+    assert body["updated_at"] == created.json()["updated_at"]
+    assert _item_row(fresh_db, item_id)["ball"] == "you"
 
 
 @pytest.mark.anyio
@@ -632,10 +702,10 @@ async def test_state_changes_are_listed_as_timestamped_activity(fresh_db) -> Non
 
 
 @pytest.mark.anyio
-async def test_external_waiting_and_respond_states_round_trip_through_activity(
+async def test_defining_and_implement_phases_round_trip_through_activity(
     fresh_db,
 ) -> None:
-    """Feedback, Implement, and Respond are accepted and classify actionability."""
+    """A1 phases round-trip; actionability stays Ball-driven."""
     t1 = "2026-06-29T00:00:00.000000Z"
     t2 = "2026-06-29T00:05:00.000000Z"
     t3 = "2026-06-29T00:10:00.000000Z"
@@ -644,7 +714,7 @@ async def test_external_waiting_and_respond_states_round_trip_through_activity(
     async with _client() as client:
         created = await _create(
             client,
-            {"title": "Clarify acceptance criteria", "state": "feedback"},
+            {"title": "Clarify acceptance criteria", "state": "defining"},
         )
         item_id = created.json()["id"]
         row_after_create = _item_row(fresh_db, item_id)
@@ -656,20 +726,20 @@ async def test_external_waiting_and_respond_states_round_trip_through_activity(
         tree_implementing = await _tree(client)
 
         clock.set_clock(lambda: t3)
-        updated = await _patch(client, item_id, {"state": "respond"})
+        updated = await _patch(client, item_id, {"state": "released"})
         activity = await _activity(client, item_id)
 
     assert created.status_code == 200
     created_body = created.json()
-    assert created_body["state"] == "feedback"
+    assert created_body["state"] == "defining"
     assert created_body["completed_at"] is None
-    assert row_after_create["state"] == "feedback"
+    assert row_after_create["state"] == "defining"
 
     assert tree_before.status_code == 200
-    feedback_tree_item = _tree_item(tree_before.json(), item_id)
-    assert feedback_tree_item["state"] == "feedback"
-    assert feedback_tree_item["actionable"] is False
-    assert feedback_tree_item["complete"] is False
+    defining_tree_item = _tree_item(tree_before.json(), item_id)
+    assert defining_tree_item["state"] == "defining"
+    assert defining_tree_item["actionable"] is True
+    assert defining_tree_item["complete"] is False
 
     assert implementing.status_code == 200
     implementing_body = implementing.json()
@@ -678,15 +748,15 @@ async def test_external_waiting_and_respond_states_round_trip_through_activity(
     assert tree_implementing.status_code == 200
     implementing_tree_item = _tree_item(tree_implementing.json(), item_id)
     assert implementing_tree_item["state"] == "implement"
-    assert implementing_tree_item["actionable"] is False
+    assert implementing_tree_item["actionable"] is True
     assert implementing_tree_item["complete"] is False
 
     assert updated.status_code == 200
     updated_body = updated.json()
-    assert updated_body["state"] == "respond"
+    assert updated_body["state"] == "released"
     assert updated_body["completed_at"] is None
     assert updated_body["state_changed_at"] == t3
-    assert _item_row(fresh_db, item_id)["state"] == "respond"
+    assert _item_row(fresh_db, item_id)["state"] == "released"
 
     assert activity.status_code == 200
     activity_body = activity.json()
@@ -696,7 +766,7 @@ async def test_external_waiting_and_respond_states_round_trip_through_activity(
             "item_id": item_id,
             "kind": "state-change",
             "actor": activity_body[0]["actor"],
-            "from_state": "feedback",
+            "from_state": "defining",
             "to_state": "implement",
             "created_at": t2,
         },
@@ -706,7 +776,7 @@ async def test_external_waiting_and_respond_states_round_trip_through_activity(
             "kind": "state-change",
             "actor": activity_body[1]["actor"],
             "from_state": "implement",
-            "to_state": "respond",
+            "to_state": "released",
             "created_at": t3,
         },
     ]
@@ -733,6 +803,101 @@ async def test_patch_bad_enum_returns_422_naming_field(fresh_db) -> None:
 
     assert response.status_code == 422
     assert "state" in str(response.json()["detail"])
+
+
+@pytest.mark.anyio
+async def test_patch_leaf_ship_milestone_sets_only_requested_flag(fresh_db) -> None:
+    """A3 test 1: leaf milestone PATCH persists one requested ship flag."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ship docs"})
+        item_id = created.json()["id"]
+
+        response = await _patch(client, item_id, {"docs_updated": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["docs_updated"] is True
+    assert body["dev_updated"] is False
+    assert body["prod_updated"] is False
+    assert body["announced"] is False
+
+    row = _item_row(fresh_db, item_id)
+    assert row["docs_updated"] == 1
+    assert row["dev_updated"] == 0
+    assert row["prod_updated"] == 0
+    assert row["announced"] == 0
+
+
+@pytest.mark.anyio
+async def test_patch_container_ship_milestone_is_allowed(fresh_db) -> None:
+    """A3 test 2: containers accept stored ship milestones."""
+    async with _client() as client:
+        container = await _create(client, {"title": "Launch checklist"})
+        container_id = container.json()["id"]
+        child = await _create(client, {"title": "Do work", "parent_id": container_id})
+
+        response = await _patch(client, container_id, {"announced": True})
+
+    assert child.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == container_id
+    assert body["announced"] is True
+    assert _item_row(fresh_db, container_id)["announced"] == 1
+
+
+@pytest.mark.anyio
+async def test_patch_ship_milestone_preserves_state_ball_and_their_timestamps(
+    fresh_db,
+    monkeypatch,
+) -> None:
+    """A3 test 3: ticking a ship milestone touches only audit timestamp fields."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:30:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(
+            client,
+            {"title": "Ship status", "state": "implement", "ball": "agent"},
+        )
+        item_id = created.json()["id"]
+        before = created.json()
+
+        clock.set_clock(lambda: t2)
+        monkeypatch.setattr(config.settings, "owner", "ship-owner")
+        response = await _patch(client, item_id, {"prod_updated": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prod_updated"] is True
+    assert body["state"] == before["state"] == "implement"
+    assert body["ball"] == before["ball"] == "agent"
+    assert body["state_changed_at"] == before["state_changed_at"] == t1
+    assert body["ball_changed_at"] == before["ball_changed_at"] == t1
+    assert body["updated_at"] == t2
+    assert body["updated_by"] == "ship-owner"
+
+    row = _item_row(fresh_db, item_id)
+    assert row["state"] == "implement"
+    assert row["ball"] == "agent"
+    assert row["state_changed_at"] == t1
+    assert row["ball_changed_at"] == t1
+    assert row["updated_at"] == t2
+    assert row["updated_by"] == "ship-owner"
+
+
+@pytest.mark.anyio
+async def test_patch_ship_milestone_rejects_non_bool(fresh_db) -> None:
+    """A3 test 4: milestone PATCH values must be real booleans."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ship safely"})
+        item_id = created.json()["id"]
+
+        response = await _patch(client, item_id, {"dev_updated": "yes"})
+
+    assert response.status_code == 422
+    assert "dev_updated" in str(response.json()["detail"])
 
 
 # --- A3: Slug re-derivation preserves id-based edges ------------------------

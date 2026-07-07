@@ -25,8 +25,8 @@ Delete `EXTERNAL_WAITING_STATES`, `USER_ACTION_STATES`,
 `is_external_waiting`, and `user_action_priority`. Covering all 5
 acceptance tests from A1 (tests in `tests/test_enums.py`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.2: A2 - Ball enum and defaults
 
@@ -40,8 +40,8 @@ columns to `db/schema.sql`. Wire the `ball` default and creation-time
 `ItemOut` (`api/schemas.py`). Covering all 5 acceptance tests from A2
 (tests in `tests/test_enums.py`, `tests/test_items.py`). Builds on 1.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.3: A3 - Ship-milestone booleans on all items
 
@@ -54,8 +54,8 @@ allow PATCH on both leaves and containers with no parent/leaf guard
 `ball`, or their timestamps. Covering all 4 acceptance tests from A3
 (tests in `tests/test_items.py`). Builds on 1.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 1.4: E1 - Migrate rows and activity, drop `blocked_external`
 
@@ -71,5 +71,5 @@ be idempotent (recorded in `schema_migrations`) and a no-op on a fresh DB.
 Covering all 10 acceptance tests from E1 (tests in `tests/test_db.py`).
 Builds on 1.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

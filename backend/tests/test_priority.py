@@ -118,16 +118,17 @@ def _insert_priority_leaf(
     created_at: str,
     updated_at: str,
     state: str = "not-started",
+    ball: str = "you",
 ) -> None:
     """Insert a valid actionable leaf with controlled audit timestamps."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
             INSERT INTO items (
-                id, title, slug, sort_order, state, created_by, updated_by,
-                created_at, updated_at, state_changed_at
+                id, title, slug, sort_order, state, ball, created_by, updated_by,
+                created_at, updated_at, state_changed_at, ball_changed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -135,10 +136,12 @@ def _insert_priority_leaf(
                 item_id,
                 1.0,
                 state,
+                ball,
                 "tester",
                 "tester",
                 created_at,
                 updated_at,
+                created_at,
                 created_at,
             ),
         )
@@ -561,16 +564,11 @@ async def test_priority_tie_break_prefers_lexically_smaller_id_e5(fresh_db) -> N
 
 
 @pytest.mark.anyio
-async def test_priority_excludes_blocked_external_root_leaf_e6(fresh_db) -> None:
-    """E6 test 1: an externally blocked open root leaf is not actionable."""
+async def test_priority_excludes_person_ball_root_leaf(fresh_db) -> None:
+    """Ball/person leaves are waiting on others and are not actionable."""
     async with _client() as client:
-        v1 = await _create(client, {"title": "V1"})
+        v1 = await _create(client, {"title": "V1", "ball": "person"})
         assert v1.status_code == 200
-        blocked = await client.patch(
-            f"/api/v1/items/{v1.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked.status_code == 200
 
         response = await _priority(client)
 
@@ -579,8 +577,8 @@ async def test_priority_excludes_blocked_external_root_leaf_e6(fresh_db) -> None
 
 
 @pytest.mark.anyio
-async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> None:
-    """E6 test 2: blocked downstream leaves still contribute to upstream score."""
+async def test_priority_counts_agent_ball_leaf_downstream(fresh_db) -> None:
+    """Ball/agent leaves still contribute to upstream leverage."""
     async with _client() as client:
         w1 = await _create(client, {"title": "W1", "effort": "quick"})
         assert w1.status_code == 200
@@ -590,27 +588,17 @@ async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> 
                 "title": "W2",
                 "effort": "long",
                 "mode": "prompt-agent",
+                "ball": "agent",
             },
         )
         assert w2.status_code == 200
-
-        blocked = await client.patch(
-            f"/api/v1/items/{w2.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked.status_code == 200
         dependency = await _post_dependency(
             client, {"from_id": w2.json()["id"], "to_id": w1.json()["id"]}
         )
         assert dependency.status_code == 200
 
-        v1 = await _create(client, {"title": "V1"})
+        v1 = await _create(client, {"title": "V1", "ball": "person"})
         assert v1.status_code == 200
-        blocked_v1 = await client.patch(
-            f"/api/v1/items/{v1.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked_v1.status_code == 200
 
         response = await _priority(client)
 
@@ -624,39 +612,32 @@ async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> 
 
 
 @pytest.mark.anyio
-async def test_feedback_and_implement_wait_externally_while_respond_is_prioritized(
+async def test_ball_controls_actionability_regardless_of_open_phase(
     fresh_db,
 ) -> None:
-    """Feedback and Implement are not actionable; Respond surfaces ahead of work."""
+    """Open phases are actionable only while the Ball is with the owner."""
     older_time = "2026-01-01T00:00:00.000000Z"
     newer_time = "2026-01-02T00:00:00.000000Z"
     _insert_priority_leaf(
         fresh_db,
-        "a-respond",
-        "Respond to feedback",
+        "a-defining",
+        "Define next slice",
         older_time,
         older_time,
-        state="respond",
+        state="defining",
     )
     _insert_priority_leaf(
         fresh_db,
-        "b-feedback",
-        "Await requested feedback",
-        newer_time,
-        newer_time,
-        state="feedback",
-    )
-    _insert_priority_leaf(
-        fresh_db,
-        "c-implement",
+        "b-implement",
         "Agent is implementing",
         newer_time,
         newer_time,
         state="implement",
+        ball="agent",
     )
     _insert_priority_leaf(
         fresh_db,
-        "d-ready",
+        "c-ready",
         "Ready ordinary work",
         newer_time,
         newer_time,
@@ -667,9 +648,9 @@ async def test_feedback_and_implement_wait_externally_while_respond_is_prioritiz
 
     assert response.status_code == 200
     body = response.json()
-    assert [entry["id"] for entry in body] == ["a-respond", "d-ready"]
+    assert [entry["id"] for entry in body] == ["c-ready", "a-defining"]
     assert [entry["rank"] for entry in body] == [1, 2]
-    assert [entry["state"] for entry in body] == ["respond", "not-started"]
+    assert [entry["state"] for entry in body] == ["not-started", "defining"]
 
 
 @pytest.mark.anyio

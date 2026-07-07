@@ -8,7 +8,7 @@ An item is actionable iff ALL of:
 
 * it is a LEAF (has no children) -- containers are NEVER actionable;
 * it is NOT complete (its own state is not ``done``/``abandoned``);
-* ``blocked_external`` is false and its state is not externally waiting; and
+* its ``ball`` is ``you``; and
 * EVERY stored dependency target attached to the item or any ancestor section is
   complete. A section-level dependency gates all leaves nested inside that
   section. Automatic ordinary-leaf chain dependencies are persisted as rows, so
@@ -21,8 +21,8 @@ Unblock leverage
 ----------------
 ``Downstream(L)`` is every open leaf whose own dependency edges, inherited
 ancestor-section dependency edges depend on ``L`` directly or transitively.
-``blocked_external`` and external-waiting states exclude a leaf from
-actionability, but not from downstream membership.
+``ball`` values other than ``you`` exclude a leaf from actionability, but not
+from downstream membership.
 """
 
 from __future__ import annotations
@@ -36,11 +36,10 @@ from typing import Any
 from models.enums import (
     EFFORT_WEIGHT,
     MODE_WEIGHT,
+    Ball,
     Effort,
     Mode,
     State,
-    is_external_waiting,
-    user_action_priority,
 )
 from models.enums import (
     is_complete as state_is_complete,
@@ -247,12 +246,10 @@ class LeverageProjection:
     ) -> dict[str, bool]:
         actionable: dict[str, bool] = {}
         for item_id, row in item_rows.items():
-            state = State(row["state"])
             actionable[item_id] = (
                 not children_by_parent.get(item_id)
                 and not complete_by_id.get(item_id, False)
-                and not is_external_waiting(state)
-                and not row["blocked_external"]
+                and Ball(row["ball"]) == Ball.you
                 and all(
                     complete_by_id.get(target_id, False)
                     for target_id in dependency_targets_by_id[item_id]
@@ -371,7 +368,6 @@ class LeverageProjection:
         )
         ordered.sort(
             key=lambda item_id: (
-                user_action_priority(State(self.item_rows[item_id]["state"])),
                 self.score_by_id.get(item_id, 0.0),
                 self.item_rows[item_id]["updated_at"],
                 self.item_rows[item_id]["created_at"],
@@ -409,8 +405,8 @@ def build_projection(conn: sqlite3.Connection) -> LeverageProjection:
 def is_actionable(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether ``item_id`` is actionable right now (Core domain rules).
 
-    True iff ``item_id`` is a leaf, is not itself complete, is not
-    ``blocked_external`` or in an external-waiting state, and every dependency
+    True iff ``item_id`` is a leaf, is not itself complete, has ``ball == you``,
+    and every dependency
     target on the item or its ancestor sections is complete under the recursive
     container-completeness rule.
     Containers are never actionable; a missing id is not actionable.

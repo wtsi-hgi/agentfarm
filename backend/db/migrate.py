@@ -17,6 +17,7 @@ from services import graph
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 AUTOMATIC_CHAIN_MIGRATION_ID = "20260701_automatic_sibling_chain"
+PHASE_BALL_SPLIT_MIGRATION_ID = "20260707_phase_ball_split"
 
 
 def _read_schema() -> str:
@@ -58,6 +59,48 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(
         conn,
+        table="items",
+        column="ball",
+        definition="ball TEXT NOT NULL DEFAULT 'you'",
+    )
+    _ensure_column(
+        conn,
+        table="items",
+        column="ball_changed_at",
+        definition="ball_changed_at TEXT NOT NULL DEFAULT ''",
+    )
+    _ensure_column(
+        conn,
+        table="items",
+        column="dev_updated",
+        definition="dev_updated INTEGER NOT NULL DEFAULT 0",
+    )
+    _ensure_column(
+        conn,
+        table="items",
+        column="prod_updated",
+        definition="prod_updated INTEGER NOT NULL DEFAULT 0",
+    )
+    _ensure_column(
+        conn,
+        table="items",
+        column="docs_updated",
+        definition="docs_updated INTEGER NOT NULL DEFAULT 0",
+    )
+    _ensure_column(
+        conn,
+        table="items",
+        column="announced",
+        definition="announced INTEGER NOT NULL DEFAULT 0",
+    )
+    _ensure_column(
+        conn,
+        table="item_state_changes",
+        column="kind",
+        definition="kind TEXT NOT NULL DEFAULT 'state-change'",
+    )
+    _ensure_column(
+        conn,
         table="dependencies",
         column="automatic_chain",
         definition="automatic_chain INTEGER NOT NULL DEFAULT 0",
@@ -66,6 +109,11 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         conn,
         AUTOMATIC_CHAIN_MIGRATION_ID,
         graph.backfill_automatic_sibling_chains,
+    )
+    _run_once(
+        conn,
+        PHASE_BALL_SPLIT_MIGRATION_ID,
+        _migrate_phase_ball_split,
     )
 
 
@@ -124,6 +172,62 @@ def _run_once(
         )
     else:
         conn.execute("INSERT INTO schema_migrations (id) VALUES (?)", (migration_id,))
+
+
+def _migrate_phase_ball_split(conn: sqlite3.Connection) -> None:
+    """Upgrade legacy phase/external-block rows to phase plus ball columns."""
+    item_columns = _columns(conn, "items")
+    if "blocked_external" in item_columns:
+        conn.executescript(
+            """
+            UPDATE items
+            SET ball = 'agent'
+            WHERE blocked_external = 0 AND state = 'implement';
+
+            UPDATE items
+            SET ball = 'person'
+            WHERE blocked_external = 0 AND state = 'feedback';
+
+            UPDATE items
+            SET ball = 'person'
+            WHERE blocked_external = 1;
+            """
+        )
+
+    conn.execute(
+        """
+        UPDATE items
+        SET state = 'released'
+        WHERE state IN ('feedback', 'respond')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE item_state_changes
+        SET from_state = 'released'
+        WHERE from_state IN ('feedback', 'respond')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE item_state_changes
+        SET to_state = 'released'
+        WHERE to_state IN ('feedback', 'respond')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE items
+        SET ball_changed_at = COALESCE(
+            NULLIF(state_changed_at, ''),
+            STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')
+        )
+        WHERE ball_changed_at IS NULL OR ball_changed_at = ''
+        """
+    )
+
+    if "blocked_external" in item_columns:
+        conn.execute("ALTER TABLE items DROP COLUMN blocked_external")
 
 
 def apply_migrations(db_path: Path | str | None = None) -> None:

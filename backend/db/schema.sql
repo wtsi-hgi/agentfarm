@@ -16,11 +16,15 @@ CREATE TABLE IF NOT EXISTS items (
   parent_id       TEXT REFERENCES items(id) ON DELETE CASCADE,
   sort_order      REAL NOT NULL,          -- order among siblings
   state           TEXT NOT NULL DEFAULT 'not-started',
+  ball            TEXT NOT NULL DEFAULT 'you',
   mode            TEXT NOT NULL DEFAULT 'prompt-agent',
   effort          TEXT NOT NULL DEFAULT 'medium',
-  blocked_external      INTEGER NOT NULL DEFAULT 0,
   blocked_note          TEXT,
   blocked_followup_date TEXT,             -- ISO date or NULL
+  dev_updated     INTEGER NOT NULL DEFAULT 0,
+  prod_updated    INTEGER NOT NULL DEFAULT 0,
+  docs_updated    INTEGER NOT NULL DEFAULT 0,
+  announced       INTEGER NOT NULL DEFAULT 0,
   description     TEXT NOT NULL DEFAULT '',
   repo_url        TEXT,
   usage           TEXT NOT NULL DEFAULT '',
@@ -29,6 +33,7 @@ CREATE TABLE IF NOT EXISTS items (
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL,
   state_changed_at TEXT NOT NULL,
+  ball_changed_at TEXT NOT NULL DEFAULT '',
   completed_at    TEXT                    -- set when state done/abandoned
 );
 
@@ -87,6 +92,7 @@ CREATE TABLE IF NOT EXISTS item_state_changes (
   actor       TEXT NOT NULL,
   from_state  TEXT NOT NULL,
   to_state    TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'state-change',
   created_at  TEXT NOT NULL
 );
 

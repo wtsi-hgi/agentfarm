@@ -144,8 +144,9 @@ async def test_changes_since_marker_changed_field_includes_only_later_changed_it
     body = response.json()
     assert [item["id"] for item in body] == [x["id"]]
     assert y["id"] not in {item["id"] for item in body}
-    assert isinstance(body[0]["blocked_external"], bool)
-    assert body[0]["blocked_external"] is False
+    assert "blocked_external" not in body[0]
+    assert body[0]["ball"] == "you"
+    assert body[0]["dev_updated"] is False
 
 
 @pytest.mark.anyio

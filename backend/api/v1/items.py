@@ -41,7 +41,8 @@ router = APIRouter()
 # and the read-back stay in sync.
 _ITEM_COLUMNS = (
     "id, title, slug, parent_id, sort_order, state, mode, effort, "
-    "blocked_external, blocked_note, blocked_followup_date, "
+    "ball, blocked_note, blocked_followup_date, "
+    "ball_changed_at, dev_updated, prod_updated, docs_updated, announced, "
     "description, repo_url, usage, "
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
@@ -52,11 +53,13 @@ _ACTIVITY_COLUMNS = "id, item_id, actor, from_state, to_state, created_at"
 def _row_to_item(row: sqlite3.Row) -> ItemOut:
     """Build an :class:`ItemOut` from a persisted ``items`` row.
 
-    The stored ``blocked_external`` integer (0/1) is mapped to a Python bool so
-    the response is a JSON boolean; the remaining columns map straight across.
+    Stored integer booleans are mapped to Python bools so the response is JSON
+    boolean-shaped; the remaining columns map straight across.
     """
     data = dict(row)
-    data["blocked_external"] = bool(data["blocked_external"])
+    for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
+        if field in data:
+            data[field] = bool(data[field])
     if data["parent_id"] is not None:
         data["repo_url"] = None
         data["usage"] = ""
@@ -201,7 +204,9 @@ async def create_item(
         INSERT INTO items ({_ITEM_COLUMNS})
         VALUES (
             :id, :title, :slug, :parent_id, :sort_order, :state, :mode, :effort,
-            :blocked_external, :blocked_note, :blocked_followup_date,
+            :ball, :blocked_note, :blocked_followup_date,
+            :ball_changed_at, :dev_updated, :prod_updated, :docs_updated,
+            :announced,
             :description, :repo_url, :usage,
             :created_by, :updated_by, :created_at, :updated_at,
             :state_changed_at, :completed_at
@@ -216,10 +221,15 @@ async def create_item(
             "state": payload.state.value,
             "mode": payload.mode.value,
             "effort": payload.effort.value,
+            "ball": payload.ball.value,
+            "ball_changed_at": timestamp,
             # Defaults that are not part of the create contract yet.
-            "blocked_external": 0,
             "blocked_note": None,
             "blocked_followup_date": None,
+            "dev_updated": 0,
+            "prod_updated": 0,
+            "docs_updated": 0,
+            "announced": 0,
             "description": "",
             "repo_url": None,
             "usage": "",
@@ -543,7 +553,7 @@ async def update_item(
     _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> ItemOut:
-    """Edit any subset of an item's fields (A2).
+    """Edit any subset of an item's fields (A2/A3).
 
     Applies ONLY the fields the client actually sent (``exclude_unset``), so an
     omitted field is left unchanged while an explicit ``null`` for a nullable
@@ -611,13 +621,13 @@ async def update_item(
             )
             activity = (old_state, new_state, change_timestamp)
 
-    if "blocked_external" in provided:
-        # Stored as integer 0/1 (schema), exposed as a JSON bool on read-back.
-        updates["blocked_external"] = 1 if provided["blocked_external"] else 0
     if "blocked_note" in provided:
         updates["blocked_note"] = provided["blocked_note"]
     if "blocked_followup_date" in provided:
         updates["blocked_followup_date"] = provided["blocked_followup_date"]
+    for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
+        if field in provided:
+            updates[field] = 1 if provided[field] else 0
     if "description" in provided:
         updates["description"] = provided["description"] or ""
     if "repo_url" in provided:
