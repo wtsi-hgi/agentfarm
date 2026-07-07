@@ -1362,13 +1362,11 @@ describe('Outliner live newly added filter exemptions', () => {
     })
   })
 
-  it('hides root done checkboxes while preserving non-root checkboxes', async () => {
+  it('hides container done checkboxes while preserving leaf checkboxes', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
 
     expect(queryItemCheckbox(container, 'root')).toBeNull()
-    expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
-      HTMLInputElement
-    )
+    expect(queryItemCheckbox(container, 'section')).toBeNull()
     expect(getItemCheckbox(container, 'leaf')).toBeInstanceOf(HTMLInputElement)
   })
 
@@ -1418,7 +1416,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
-  it('keeps the section done checkbox active while the state selector is hidden', async () => {
+  it('keeps container checkboxes hidden while leaf checkboxes stay active', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -1447,20 +1445,13 @@ describe('Outliner live newly added filter exemptions', () => {
     )
 
     expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+    expect(queryItemCheckbox(container, 'section')).toBeNull()
 
-    await clickCheckbox(getItemCheckbox(container, 'section'))
+    await clickCheckbox(getItemCheckbox(container, 'leaf'))
 
-    expect(actionMocks.patchItem).toHaveBeenCalledWith('section', {
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('leaf', {
       state: 'done',
     })
-    expect(getItemCheckbox(container, 'section').checked).toBe(true)
-
-    await clickCheckbox(getItemCheckbox(container, 'section'))
-
-    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('section', {
-      state: 'review',
-    })
-    expect(getItemCheckbox(container, 'section').checked).toBe(false)
     expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
   })
 
@@ -1697,7 +1688,7 @@ describe('Outliner live newly added filter exemptions', () => {
         item_id: 'done-row',
         kind: 'state-change',
         actor: 'alice',
-        from_state: 'review',
+        from_state: 'spec',
         to_state: 'done',
         created_at: '2026-06-29T00:10:00.000000Z',
       },
@@ -1724,11 +1715,62 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
     expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
-      state: 'review',
+      state: 'spec',
     })
     expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
     expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
-      'review'
+      'spec'
+    )
+  })
+
+  it('ignores interleaved ball-change activity when restoring a done row', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'done-row',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:10:00.000000Z',
+      },
+      {
+        id: 'activity-2',
+        item_id: 'done-row',
+        kind: 'ball-change',
+        actor: 'alice',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:11:00.000000Z',
+      },
+    ])
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'root',
+            title: 'Root',
+            actionable: false,
+          }),
+          item({
+            id: 'done-row',
+            title: 'Done row',
+            parent_id: 'root',
+            state: 'done',
+          }),
+        ],
+      })
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'done-row'))
+
+    expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
+      state: 'spec',
+    })
+    expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
+    expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
+      'spec'
     )
   })
 

@@ -12,10 +12,15 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { DateInput } from '@/components/ui/date-input'
 import { Input } from '@/components/ui/input'
-import type { Mode, State, TreeItem } from '@/lib/contracts'
+import type { Ball, Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
-import { STATE_OPTIONS } from '@/lib/state-metadata'
+import {
+  BALL_LABELS,
+  STATE_OPTIONS,
+  ballHandoffKey,
+} from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type DisplayReadiness = Extract<
@@ -61,6 +66,11 @@ const PROMPT_RESPONSE_AVAILABLE_ICON = (
 const DELETE_ICON = <Trash2 className="size-3.5" aria-hidden="true" />
 
 type ReadinessChipStatus = Exclude<TreeItem['status'], 'rollup'>
+
+export type HandoffPatch = Pick<
+  TreeItem,
+  'blocked_note' | 'blocked_followup_date'
+>
 
 const READINESS_CHIP_LABELS = {
   ready: 'Ready',
@@ -113,6 +123,8 @@ type OutlinerRowProps = {
   onKeyboardReorder: (item: TreeItem, direction: 'up' | 'down') => Promise<void>
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
+  onChangeBall: (item: TreeItem, ball: Ball) => Promise<void>
+  onSaveHandoff: (item: TreeItem, patch: HandoffPatch) => Promise<void>
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
   draftResetRequest?: { requestId: number; text: string } | null
@@ -134,17 +146,25 @@ export function OutlinerRow({
   onKeyboardReorder,
   onChangeState,
   onChangeDone,
+  onChangeBall,
+  onSaveHandoff,
   onOpenNotes,
   onOpenPromptTimeline,
   draftResetRequest,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
+  const [handoffNote, setHandoffNote] = React.useState(item.blocked_note ?? '')
+  const [handoffDate, setHandoffDate] = React.useState(
+    item.blocked_followup_date ?? ''
+  )
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const pendingRef = React.useRef(false)
   const previousItemTitle = React.useRef(item.title)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
+  const handoffEditorId = React.useId()
+  const handoffNoteId = React.useId()
 
   React.useEffect(() => {
     if (previousItemTitle.current === item.title) {
@@ -160,6 +180,17 @@ export function OutlinerRow({
     }
     setDraft(draftResetText)
   }, [draftResetRequestId, draftResetText])
+
+  React.useEffect(() => {
+    if (item.ball !== 'person') {
+      setHandoffNote('')
+      setHandoffDate('')
+      return
+    }
+
+    setHandoffNote(item.blocked_note ?? '')
+    setHandoffDate(item.blocked_followup_date ?? '')
+  }, [item.id, item.ball, item.blocked_note, item.blocked_followup_date])
 
   function currentDraftText() {
     return draft
@@ -253,6 +284,36 @@ export function OutlinerRow({
     }
   }
 
+  function handleBallKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (event.altKey || event.ctrlKey || event.metaKey) {
+      return
+    }
+
+    const ball = ballHandoffKey(event.key)
+    if (!ball) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    if (ball === item.ball) {
+      return
+    }
+
+    void run(() => onChangeBall(item, ball))
+  }
+
+  function handleHandoffSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+    void run(() =>
+      onSaveHandoff(item, {
+        blocked_note: handoffNote.trim() === '' ? null : handoffNote,
+        blocked_followup_date: handoffDate === '' ? null : handoffDate,
+      })
+    )
+  }
+
   const checkedDone = item.state === 'done'
   const displayDone = displayReadiness === 'done'
   const readinessStatus = chipStatus(item, hasChildren, displayReadiness)
@@ -262,8 +323,10 @@ export function OutlinerRow({
     item.status === 'ready' && item.resume && readinessStatus === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
-  const showDoneCheckbox = item.parent_id !== null
+  const isLeaf = !hasChildren
+  const showDoneCheckbox = item.parent_id !== null && isLeaf
   const showAddSibling = item.parent_id !== null
+  const showHandoffEditor = isLeaf && item.ball === 'person'
 
   return (
     <div
@@ -361,7 +424,78 @@ export function OutlinerRow({
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-1">
-        {!hasChildren ? (
+        {isLeaf ? (
+          <div className="relative shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                'h-8 shrink-0 px-2 font-mono text-xs',
+                displayDone && 'bg-muted text-muted-foreground'
+              )}
+              aria-label={`Ball: ${BALL_LABELS[item.ball]}`}
+              aria-keyshortcuts="A Y"
+              aria-controls={showHandoffEditor ? handoffEditorId : undefined}
+              aria-expanded={showHandoffEditor}
+              title={`Ball: ${BALL_LABELS[item.ball]}`}
+              disabled={pending}
+              onKeyDown={handleBallKeyDown}
+            >
+              ~{item.ball}
+            </Button>
+            {showHandoffEditor ? (
+              <form
+                id={handoffEditorId}
+                role="dialog"
+                aria-label="Person hand-off editor"
+                className="bg-popover text-popover-foreground border-border absolute top-9 right-0 z-30 grid w-72 gap-3 rounded-md border p-3 text-sm shadow-lg"
+                onClick={(event) => event.stopPropagation()}
+                onSubmit={handleHandoffSubmit}
+              >
+                <div className="grid gap-1.5">
+                  <label
+                    className="text-foreground text-xs leading-none font-medium"
+                    htmlFor={handoffNoteId}
+                  >
+                    Hand-off note
+                  </label>
+                  <textarea
+                    id={handoffNoteId}
+                    aria-label="Hand-off note"
+                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-18 w-full resize-y rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={pending}
+                    onChange={(event) =>
+                      setHandoffNote(event.currentTarget.value)
+                    }
+                    placeholder="Who or what is needed"
+                    value={handoffNote}
+                  />
+                </div>
+                <DateInput
+                  aria-label="Follow-up date"
+                  className="gap-1.5"
+                  disabled={pending}
+                  inputClassName="h-9 text-sm"
+                  label="Follow-up date"
+                  onChange={setHandoffDate}
+                  value={handoffDate}
+                />
+                <div className="flex justify-end">
+                  <Button
+                    type="submit"
+                    size="sm"
+                    aria-label="Save hand-off"
+                    disabled={pending}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+          </div>
+        ) : null}
+        {isLeaf ? (
           <select
             aria-label="Item state"
             className={cn(

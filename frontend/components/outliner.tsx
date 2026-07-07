@@ -25,6 +25,7 @@ import {
   MODE_COLOUR_MAP,
   OutlinerRow,
   type DisplayReadiness,
+  type HandoffPatch,
 } from '@/components/outliner-row'
 import {
   ProductSwitcher,
@@ -1403,12 +1404,14 @@ function patchAffectsPriorityMembership(patch: {
 function previousDoneStateFromActivity(
   activity: readonly ItemActivity[]
 ): State | null {
-  for (let index = activity.length - 1; index >= 0; index -= 1) {
-    const entry = activity[index]
-    if (entry?.kind !== 'state-change') {
-      continue
-    }
-    if (entry?.to_state !== 'done') {
+  const stateChanges = activity.filter(
+    (entry): entry is Extract<ItemActivity, { kind: 'state-change' }> =>
+      entry.kind === 'state-change'
+  )
+
+  for (let index = stateChanges.length - 1; index >= 0; index -= 1) {
+    const entry = stateChanges[index]
+    if (entry.to_state !== 'done') {
       continue
     }
 
@@ -1421,10 +1424,7 @@ function previousDoneStateFromActivity(
       previousIndex >= 0;
       previousIndex -= 1
     ) {
-      const previousEntry = activity[previousIndex]
-      if (!previousEntry || previousEntry.kind !== 'state-change') {
-        continue
-      }
+      const previousEntry = stateChanges[previousIndex]
       if (isRestorableDoneState(previousEntry.to_state)) {
         return previousEntry.to_state
       }
@@ -3087,6 +3087,23 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
+  async function changeItemBall(item: TreeItem, ball: Ball) {
+    if (ball === item.ball) {
+      return
+    }
+
+    await mutationActions.patchItem(item.id, { ball })
+    setDetailRefreshKey((current) => current + 1)
+    requestItemFocus(item.id)
+    setSelectedItemId(item.id)
+  }
+
+  async function saveItemHandoff(item: TreeItem, patch: HandoffPatch) {
+    await mutationActions.patchItem(item.id, patch)
+    setDetailRefreshKey((current) => current + 1)
+    setSelectedItemId(item.id)
+  }
+
   function rememberPreviousDoneState(itemId: string, state: State) {
     setPreviousDoneStateById((current) => {
       if (current.get(itemId) === state) {
@@ -3775,6 +3792,8 @@ export function Outliner({
             onKeyboardReorder={reorderFromDragHandleKeyboard}
             onChangeState={changeItemState}
             onChangeDone={changeItemDone}
+            onChangeBall={changeItemBall}
+            onSaveHandoff={saveItemHandoff}
             onOpenNotes={openNotes}
             onOpenPromptTimeline={openPromptTimeline}
             draftResetRequest={rowDraftResetRequest}

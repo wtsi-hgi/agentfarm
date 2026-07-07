@@ -1,12 +1,44 @@
+// @vitest-environment jsdom
+
 import * as React from 'react'
+import { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MODE_COLOUR_MAP } from '@/components/outliner-row'
+import { MODE_COLOUR_MAP, OutlinerRow } from '@/components/outliner-row'
 import { Outliner, visibleOutlinerRows } from '@/components/outliner'
 import { MODES } from '@/components/view-controls'
-import type { Marker, TreeItem } from '@/lib/contracts'
+import type { Ball, Marker, TreeItem } from '@/lib/contracts'
+
+const actionMocks = vi.hoisted(() => ({
+  addDependency: vi.fn(),
+  createComment: vi.fn(),
+  createItem: vi.fn(),
+  createMarker: vi.fn(),
+  createNote: vi.fn(),
+  createPromptResponseEntry: vi.fn(),
+  deleteComment: vi.fn(),
+  deleteDependency: vi.fn(),
+  deleteItem: vi.fn(),
+  editComment: vi.fn(),
+  editNote: vi.fn(),
+  fetchChanges: vi.fn(),
+  fetchComments: vi.fn(),
+  fetchItemActivity: vi.fn(),
+  fetchMarkers: vi.fn(),
+  fetchNotes: vi.fn(),
+  fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
+  indentItem: vi.fn(),
+  moveItem: vi.fn(),
+  outdentItem: vi.fn(),
+  patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
+}))
+
+vi.mock('@/app/actions', () => actionMocks)
 
 const baseItem = {
   slug: 'item',
@@ -72,6 +104,104 @@ function renderedDocument(element: React.ReactElement) {
   return new JSDOM(renderToStaticMarkup(element)).window.document
 }
 
+let roots: Root[] = []
+
+type HandoffPatch = {
+  blocked_note: string | null
+  blocked_followup_date: string | null
+}
+
+async function flushReact() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+async function renderClient(element: React.ReactElement) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  await act(async () => {
+    root.render(element)
+  })
+  await flushReact()
+
+  return container
+}
+
+async function renderClientWithRerender(element: React.ReactElement) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  async function rerender(nextElement: React.ReactElement) {
+    await act(async () => {
+      root.render(nextElement)
+    })
+    await flushReact()
+  }
+
+  await rerender(element)
+
+  return { container, rerender }
+}
+
+async function keyDown(element: HTMLElement, key: string) {
+  await act(async () => {
+    element.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function click(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true })
+    )
+  })
+  await flushReact()
+}
+
+async function clickCheckbox(checkbox: HTMLInputElement) {
+  await act(async () => {
+    checkbox.click()
+  })
+  await flushReact()
+}
+
+async function changeField(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  value: string
+) {
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype
+  const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(element, value)
+    element.dispatchEvent(
+      new Event('input', { bubbles: true, cancelable: true })
+    )
+  })
+  await flushReact()
+}
+
 function itemActionButton(
   document: Document,
   itemId: string,
@@ -82,6 +212,76 @@ function itemActionButton(
   )
   if (!(button instanceof document.defaultView!.HTMLButtonElement)) {
     throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
+  }
+  return button
+}
+
+function itemBallControl(document: Document, itemId: string) {
+  return document.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label^="Ball:"]`
+  )
+}
+
+function itemDoneCheckbox(document: Document, itemId: string) {
+  const checkbox = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[type="checkbox"][aria-label="Mark item done"]`
+  )
+  return checkbox instanceof document.defaultView!.HTMLInputElement
+    ? checkbox
+    : null
+}
+
+function itemStateSelect(document: Document, itemId: string) {
+  const select = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] select[aria-label="Item state"]`
+  )
+  return select instanceof document.defaultView!.HTMLSelectElement
+    ? select
+    : null
+}
+
+function mountedItemDoneCheckbox(container: ParentNode, itemId: string) {
+  const checkbox = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[type="checkbox"][aria-label="Mark item done"]`
+  )
+  if (!(checkbox instanceof HTMLInputElement)) {
+    throw new Error(`Missing done checkbox for ${itemId}`)
+  }
+  return checkbox
+}
+
+function mountedBallControl(container: ParentNode, itemId: string) {
+  const control = container.querySelector(`button[aria-label^="Ball:"]`)
+  if (!(control instanceof HTMLButtonElement)) {
+    throw new Error(`Missing Ball control for ${itemId}`)
+  }
+  return control
+}
+
+function handoffEditor(container: ParentNode) {
+  return container.querySelector('[aria-label="Person hand-off editor"]')
+}
+
+function handoffNoteField(container: ParentNode) {
+  const field = container.querySelector('textarea[aria-label="Hand-off note"]')
+  if (!(field instanceof HTMLTextAreaElement)) {
+    throw new Error('Missing hand-off note field')
+  }
+  return field
+}
+
+function handoffDateField(container: ParentNode) {
+  const field = container.querySelector('input[aria-label="Follow-up date"]')
+  if (!(field instanceof HTMLInputElement)) {
+    throw new Error('Missing follow-up date field')
+  }
+  return field
+}
+
+function handoffSaveButton(container: ParentNode) {
+  const button = container.querySelector('button[aria-label="Save hand-off"]')
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error('Missing hand-off save button')
   }
   return button
 }
@@ -137,7 +337,127 @@ function renderedRootSectionIds(document: Document) {
   ).map((section) => section.dataset.outlinerRootSectionId)
 }
 
+function rowCallbacks(
+  onChangeBall: (item: TreeItem, ball: Ball) => Promise<void> = async () => {},
+  onSaveHandoff: (
+    item: TreeItem,
+    patch: HandoffPatch
+  ) => Promise<void> = async () => {}
+) {
+  return {
+    onToggle: vi.fn(),
+    onSelect: vi.fn(),
+    onSubmitText: vi.fn(async () => undefined),
+    onCreateSibling: vi.fn(async () => undefined),
+    onKeyboardCommand: vi.fn(async () => undefined),
+    onDelete: vi.fn(async () => undefined),
+    onKeyboardReorder: vi.fn(async () => undefined),
+    onChangeState: vi.fn(async () => undefined),
+    onChangeDone: vi.fn(async () => undefined),
+    onChangeBall,
+    onSaveHandoff,
+    onOpenNotes: vi.fn(),
+    onOpenPromptTimeline: vi.fn(),
+  }
+}
+
+function renderOutlinerRow(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
+  } = {}
+) {
+  return renderClient(
+    React.createElement(OutlinerRow, {
+      item: rowItem,
+      depth: 0,
+      hasChildren: options.hasChildren ?? false,
+      collapsed: false,
+      displayReadiness: 'ready',
+      ...rowCallbacks(options.onChangeBall, options.onSaveHandoff),
+    })
+  )
+}
+
+function outlinerRowElement(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
+  } = {}
+) {
+  return React.createElement(OutlinerRow, {
+    item: rowItem,
+    depth: 0,
+    hasChildren: options.hasChildren ?? false,
+    collapsed: false,
+    displayReadiness: 'ready',
+    ...rowCallbacks(options.onChangeBall, options.onSaveHandoff),
+  })
+}
+
+function renderedOutlinerRowDocument(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
+  } = {}
+) {
+  return renderedDocument(
+    React.createElement(
+      'div',
+      { 'data-outliner-item-id': rowItem.id },
+      outlinerRowElement(rowItem, options)
+    )
+  )
+}
+
 describe('Outliner', () => {
+  beforeEach(() => {
+    ;(
+      globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean
+      }
+    ).IS_REACT_ACT_ENVIRONMENT = true
+    Element.prototype.scrollIntoView = vi.fn()
+    actionMocks.addDependency.mockResolvedValue({})
+    actionMocks.createComment.mockResolvedValue({})
+    actionMocks.createItem.mockResolvedValue({})
+    actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createNote.mockResolvedValue({})
+    actionMocks.createPromptResponseEntry.mockResolvedValue({})
+    actionMocks.deleteComment.mockResolvedValue({})
+    actionMocks.deleteDependency.mockResolvedValue({})
+    actionMocks.deleteItem.mockResolvedValue({})
+    actionMocks.editComment.mockResolvedValue({})
+    actionMocks.editNote.mockResolvedValue({})
+    actionMocks.fetchChanges.mockResolvedValue([])
+    actionMocks.fetchComments.mockResolvedValue([])
+    actionMocks.fetchItemActivity.mockResolvedValue([])
+    actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchNotes.mockResolvedValue([])
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
+    actionMocks.fetchScratchpad.mockResolvedValue({})
+    actionMocks.indentItem.mockResolvedValue({})
+    actionMocks.moveItem.mockResolvedValue({})
+    actionMocks.outdentItem.mockResolvedValue({})
+    actionMocks.patchItem.mockResolvedValue({})
+    actionMocks.updateScratchpad.mockResolvedValue({})
+  })
+
+  afterEach(() => {
+    for (const root of roots) {
+      act(() => root.unmount())
+    }
+    roots = []
+    document.body.replaceChildren()
+    vi.clearAllMocks()
+  })
+
   it('defines one distinct colour token for every mode', () => {
     expect(Object.keys(MODE_COLOUR_MAP).sort()).toEqual([...MODES].sort())
     expect(Object.values(MODE_COLOUR_MAP)).toHaveLength(5)
@@ -146,6 +466,279 @@ describe('Outliner', () => {
     for (const mode of MODES) {
       expect(MODE_COLOUR_MAP[mode]).toBeDefined()
     }
+  })
+
+  it('renders no done checkbox or Phase select for container rows', () => {
+    const document = renderedOutlinerRowDocument(
+      item({
+        id: 'container',
+        title: 'Container',
+        parent_id: 'root',
+        actionable: false,
+      }),
+      { hasChildren: true }
+    )
+
+    expect(itemDoneCheckbox(document, 'container') !== null).toBe(false)
+    expect(itemStateSelect(document, 'container') !== null).toBe(false)
+  })
+
+  it('keeps the done checkbox and Phase select on leaf rows', () => {
+    const document = renderedOutlinerRowDocument(
+      item({
+        id: 'leaf',
+        title: 'Leaf work',
+        parent_id: 'container',
+        state: 'review',
+      })
+    )
+
+    expect(itemDoneCheckbox(document, 'leaf')).toBeTruthy()
+    expect(itemStateSelect(document, 'leaf')?.value).toBe('review')
+  })
+
+  it('patches a leaf done checkbox to done and restores the prior Phase when unchecked', async () => {
+    const originalLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      parent_id: 'container',
+      state: 'review',
+    })
+    let savedLeaf = originalLeaf
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        completed_at:
+          patch.state === 'done' ? '2026-06-30T01:00:00.000000Z' : null,
+        state_changed_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Container',
+            actionable: false,
+          }),
+          originalLeaf,
+        ],
+        markers: [],
+      })
+    )
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(1, 'leaf', {
+      state: 'done',
+    })
+    expect(mountedItemDoneCheckbox(container, 'leaf').checked).toBe(true)
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'leaf', {
+      state: 'review',
+    })
+  })
+
+  it('shows a keyboard-focusable Ball control whose name includes the current Ball on leaves', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'agent-leaf',
+            title: 'Agent hand-off',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const control = itemBallControl(document, 'agent-leaf')
+
+    expect(control).toBeTruthy()
+    expect(control?.getAttribute('aria-label')).toContain('Agent')
+    expect(control?.textContent).toContain('~agent')
+  })
+
+  it('calls onChangeBall for one-key hand-off from the focused Ball control', async () => {
+    const onChangeBall = vi.fn(async () => undefined)
+    const ownerLeaf = item({
+      id: 'owner-leaf',
+      title: 'Owner hand-off',
+      ball: 'you',
+    })
+    const ownerContainer = await renderOutlinerRow(ownerLeaf, { onChangeBall })
+    const ownerControl = mountedBallControl(ownerContainer, 'owner-leaf')
+
+    ownerControl.focus()
+    expect(document.activeElement).toBe(ownerControl)
+    await keyDown(ownerControl, 'a')
+
+    const agentLeaf = item({
+      id: 'agent-leaf',
+      title: 'Agent hand-off',
+      ball: 'agent',
+      status: 'monitoring',
+      actionable: false,
+    })
+    const agentContainer = await renderOutlinerRow(agentLeaf, { onChangeBall })
+    const agentControl = mountedBallControl(agentContainer, 'agent-leaf')
+
+    agentControl.focus()
+    expect(document.activeElement).toBe(agentControl)
+    await keyDown(agentControl, 'y')
+
+    expect(onChangeBall).toHaveBeenCalledTimes(2)
+    expect(onChangeBall).toHaveBeenNthCalledWith(1, ownerLeaf, 'agent')
+    expect(onChangeBall).toHaveBeenNthCalledWith(2, agentLeaf, 'you')
+  })
+
+  it('does not show a Ball control for container rows', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Container',
+          }),
+          item({
+            id: 'child',
+            title: 'Child',
+            parent_id: 'container',
+          }),
+        ],
+      })
+    )
+
+    expect(itemBallControl(document, 'container')).toBeNull()
+    expect(itemBallControl(document, 'child')).toBeTruthy()
+  })
+
+  it('shows the hand-off editor only while the Ball belongs to a person', async () => {
+    const baseHandoff = item({
+      id: 'handoff',
+      title: 'Ask partner',
+      ball: 'you',
+    })
+    const { container, rerender } = await renderClientWithRerender(
+      outlinerRowElement(baseHandoff)
+    )
+
+    expect(handoffEditor(container)).toBeNull()
+
+    await rerender(
+      outlinerRowElement({
+        ...baseHandoff,
+        ball: 'person',
+        status: 'waiting',
+        actionable: false,
+      })
+    )
+
+    expect(handoffEditor(container)).toBeTruthy()
+
+    await rerender(
+      outlinerRowElement({
+        ...baseHandoff,
+        ball: 'agent',
+        status: 'monitoring',
+        actionable: false,
+      })
+    )
+
+    expect(handoffEditor(container)).toBeNull()
+  })
+
+  it('saves the hand-off note and follow-up date together', async () => {
+    const onSaveHandoff = vi.fn(async () => undefined)
+    const rowItem = item({
+      id: 'handoff',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+    })
+    const container = await renderOutlinerRow(rowItem, { onSaveHandoff })
+
+    await changeField(handoffNoteField(container), 'ask Sam')
+    await changeField(handoffDateField(container), '2026-07-10')
+    await click(handoffSaveButton(container))
+
+    expect(onSaveHandoff).toHaveBeenCalledTimes(1)
+    expect(onSaveHandoff).toHaveBeenCalledWith(rowItem, {
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+  })
+
+  it('patches the item hand-off fields from the Outliner save action', async () => {
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'handoff',
+            title: 'Ask partner',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+        ],
+        markers: [],
+      })
+    )
+
+    await changeField(handoffNoteField(container), 'ask Sam')
+    await changeField(handoffDateField(container), '2026-07-10')
+    await click(handoffSaveButton(container))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff', {
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+  })
+
+  it('opens an empty hand-off editor after backend-cleared fields are handed to a person again', async () => {
+    const rowItem = item({
+      id: 'handoff',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+    const { container, rerender } = await renderClientWithRerender(
+      outlinerRowElement(rowItem)
+    )
+
+    expect(handoffNoteField(container).value).toBe('ask Sam')
+    expect(handoffDateField(container).value).toBe('2026-07-10')
+
+    await rerender(
+      outlinerRowElement({
+        ...rowItem,
+        ball: 'you',
+        status: 'ready',
+        actionable: true,
+        blocked_note: null,
+        blocked_followup_date: null,
+      })
+    )
+    await rerender(
+      outlinerRowElement({
+        ...rowItem,
+        blocked_note: null,
+        blocked_followup_date: null,
+      })
+    )
+
+    expect(handoffNoteField(container).value).toBe('')
+    expect(handoffDateField(container).value).toBe('')
   })
 
   it('keeps a root product section background stable when neighbours and order change', () => {

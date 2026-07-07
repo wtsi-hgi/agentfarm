@@ -28,8 +28,8 @@ no control on containers) that calls `onChangeBall`; add
 acceptance tests from J2 (tests in `tests/outliner.test.ts`,
 `tests/state-metadata.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.2: J4 - Accessible date-input primitive [parallel with J2, K2, K3]
 
@@ -40,8 +40,8 @@ field (label/aria, ISO `yyyy-mm-dd` value, empty allowed) for reuse by the
 hand-off editor (J3). Covering all 3 acceptance tests from J4 (tests in
 `tests/date-input.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.3: K2 - Ship-milestone checkboxes (leaf) and rollup (container) [parallel with J2, J4, K3]
 
@@ -53,8 +53,8 @@ section with four checkboxes bound to `patchItem` (never sending
 Covering all 3 acceptance tests from K2 (tests in
 `tests/outliner-comments-live.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.4: K3 - Un-done restore heuristic ignores ball-change entries [parallel with J2, J4, K2]
 
@@ -66,8 +66,8 @@ Phase, and have the un-done flow PATCH only `state` (the backend forces
 `ball='you'`). Covering all 3 acceptance tests from K3 (tests in
 `tests/outliner-newitem-live.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Batch 2 (parallel, after batch 1 is reviewed)
 
@@ -82,8 +82,8 @@ them; each `person` hand-off starts empty. Covering all 3 acceptance tests
 from J3 (tests in `tests/outliner.test.ts`). Builds on 7.1 (Ball control)
 and 7.2 (date-input primitive).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 7.6: K4 - Detail-panel timeline renders both activity kinds [parallel with J3]
 
@@ -95,8 +95,8 @@ as `PHASE_LABELS[from] -> PHASE_LABELS[to]` and `ball-change` entries as
 the returned order. Covering all 3 acceptance tests from K4 (tests in
 `tests/outliner-comments-live.test.ts`). Builds on 7.3 (same file).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
@@ -114,5 +114,5 @@ while leaves keep both and un-checking a done leaf restores a prior Phase
 `tests/outliner.test.ts`). Same file as 7.1/7.5; implement after batch 2 is
 reviewed.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

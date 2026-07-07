@@ -9,6 +9,8 @@ type PatchPayload = {
   effort?: Effort
   state?: State
   ball?: Ball
+  blocked_note?: string | null
+  blocked_followup_date?: string | null
 }
 
 type DependencyPayload =

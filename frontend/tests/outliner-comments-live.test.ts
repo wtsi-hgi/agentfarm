@@ -211,6 +211,14 @@ function getDetailsPanel(container: ParentNode) {
   return panel
 }
 
+function getSection(container: ParentNode, ariaLabel: string) {
+  const section = container.querySelector(`section[aria-label="${ariaLabel}"]`)
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`Missing ${ariaLabel} section`)
+  }
+  return section
+}
+
 function getTextOffset(container: HTMLElement, text: string) {
   const offset = container.textContent?.indexOf(text) ?? -1
   if (offset < 0) {
@@ -772,6 +780,128 @@ describe('Outliner comment target lifecycle', () => {
       body: 'Ready for review',
     })
     expect(newCommentInput.value).toBe('')
+  })
+
+  it('shows leaf ship milestone checkboxes from item booleans', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            dev_updated: true,
+            prod_updated: false,
+            docs_updated: true,
+            announced: false,
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+
+    expect(getInput(shipSection, 'Dev updated').checked).toBe(true)
+    expect(getInput(shipSection, 'Prod updated').checked).toBe(false)
+    expect(getInput(shipSection, 'Docs updated').checked).toBe(true)
+    expect(getInput(shipSection, 'Announced').checked).toBe(false)
+  })
+
+  it('patches only the toggled ship milestone from the leaf detail panel', async () => {
+    actionMocks.patchItem.mockResolvedValue(
+      item({
+        id: 'root',
+        title: 'Root project',
+        docs_updated: true,
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            docs_updated: false,
+          }),
+        ],
+      })
+    )
+
+    const docsCheckbox = getInput(
+      getSection(getDetailsPanel(container), 'Ship milestones'),
+      'Docs updated'
+    )
+
+    expect(docsCheckbox.checked).toBe(false)
+
+    await click(docsCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      docs_updated: true,
+    })
+    expect(actionMocks.patchItem.mock.calls[0][1]).not.toHaveProperty('state')
+    expect(actionMocks.patchItem.mock.calls[0][1]).not.toHaveProperty('ball')
+    expect(docsCheckbox.checked).toBe(true)
+  })
+
+  it('shows container ship rollup without editable milestone checkboxes', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            status: 'rollup',
+            rollup: {
+              phase: 'review',
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 1,
+                blocked: 0,
+                done: 2,
+                dropped: 1,
+              },
+              ship: {
+                dev_updated: 3,
+                prod_updated: 2,
+                docs_updated: 2,
+                announced: 1,
+                shipped: 2,
+                total: 5,
+              },
+            },
+          }),
+          item({
+            id: 'child',
+            title: 'Child task',
+            parent_id: 'root',
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+
+    expect(shipSection.textContent).toContain('2/5 shipped')
+    expect(shipSection.textContent).toContain('Dev 3')
+    expect(shipSection.textContent).toContain('Prod 2')
+    expect(shipSection.textContent).toContain('Docs 2')
+    expect(shipSection.textContent).toContain('Announced 1')
+    expect(shipSection.querySelectorAll('input[type="checkbox"]')).toHaveLength(
+      0
+    )
+    expect(getOptionalInput(shipSection, 'Dev updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Prod updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Docs updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Announced')).toBeNull()
   })
 
   it('orders root Details with Repository before Description and aligns field actions with labels', async () => {
@@ -1349,6 +1479,114 @@ describe('Outliner comment target lifecycle', () => {
 
     expect(container.textContent).toContain('Looks ready')
     expect(container.textContent).toContain('2026-06-29 00:05 UTC')
+  })
+
+  it('shows timestamped phase changes in the right-side activity area', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:10:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(activitySection.textContent).toContain('Spec -> Done')
+    expect(activitySection.textContent).toContain('alice')
+    expect(activitySection.textContent).toContain('2026-06-29 00:10 UTC')
+  })
+
+  it('shows timestamped ball changes in the right-side activity area', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'ball-change',
+        actor: 'bob',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:15:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(activitySection.textContent).toContain('You -> Agent')
+    expect(activitySection.textContent).toContain('bob')
+    expect(activitySection.textContent).toContain('2026-06-29 00:15 UTC')
+  })
+
+  it('shows mixed timeline entries in the returned order', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'ball-change',
+        actor: 'bob',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:15:00.000000Z',
+      },
+      {
+        id: 'activity-2',
+        item_id: 'root',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:20:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(getTextOffset(activitySection, 'You -> Agent')).toBeLessThan(
+      getTextOffset(activitySection, 'Spec -> Done')
+    )
   })
 
   it('refreshes and shows timestamped state changes after a UI state update', async () => {

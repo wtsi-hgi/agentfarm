@@ -6,6 +6,7 @@ import {
   MANAGER_STATUS_LABELS,
   PHASE_LABELS,
   PHASE_OPTIONS,
+  ballHandoffKey,
   compareFollowUp,
   compareMonitoring,
   isResume,
@@ -180,6 +181,15 @@ describe('state metadata', () => {
       'agent',
       'person',
     ])
+  })
+
+  it('maps one-key Ball hand-off shortcuts', () => {
+    expect(ballHandoffKey('a')).toBe('agent')
+    expect(ballHandoffKey('A')).toBe('agent')
+    expect(ballHandoffKey('y')).toBe('you')
+    expect(ballHandoffKey('Y')).toBe('you')
+    expect(ballHandoffKey('p')).toBeNull()
+    expect(ballHandoffKey('Escape')).toBeNull()
   })
 
   it('labels every L1 workflow status for manager-facing summaries', () => {

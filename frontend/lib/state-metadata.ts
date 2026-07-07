@@ -47,6 +47,17 @@ export const BALL_OPTIONS = [
   { value: 'person', label: BALL_LABELS.person },
 ] satisfies readonly { value: Ball; label: string }[]
 
+export function ballHandoffKey(key: string): Ball | null {
+  const normalized = key.toLowerCase()
+  if (normalized === 'a') {
+    return 'agent'
+  }
+  if (normalized === 'y') {
+    return 'you'
+  }
+  return null
+}
+
 export const MANAGER_STATUS_LABELS = {
   ready: 'On owner',
   monitoring: 'In flight (agent)',
