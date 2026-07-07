@@ -12,8 +12,10 @@ type ItemSummary = {
 
 type ProductFixture = {
   ready: ItemSummary
+  readyGroup: ItemSummary
   root: ItemSummary
   waiting: ItemSummary
+  waitingGroup: ItemSummary
 }
 
 const screenshotDir = path.resolve(__dirname, '..', '..', '.tmp', 'agent')
@@ -33,23 +35,39 @@ async function seedProduct(
   const root = await createItem(request, sessionToken, `${titlePrefix} ${name}`)
   cleanupItemIds.push(root.id)
 
+  const readyGroup = await createItem(
+    request,
+    sessionToken,
+    `${titlePrefix} ${name} ready group`,
+    { parent_id: root.id }
+  )
+  cleanupItemIds.push(readyGroup.id)
+
   const ready = await createItem(
     request,
     sessionToken,
     `${titlePrefix} ${name} ready`,
-    { parent_id: root.id }
+    { parent_id: readyGroup.id }
   )
   cleanupItemIds.push(ready.id)
+
+  const waitingGroup = await createItem(
+    request,
+    sessionToken,
+    `${titlePrefix} ${name} follow up group`,
+    { parent_id: root.id }
+  )
+  cleanupItemIds.push(waitingGroup.id)
 
   const waiting = await createItem(
     request,
     sessionToken,
     `${titlePrefix} ${name} follow up`,
-    { parent_id: root.id, state: 'released', ball: 'person' }
+    { parent_id: waitingGroup.id, state: 'released', ball: 'person' }
   )
   cleanupItemIds.push(waiting.id)
 
-  return { ready, root, waiting }
+  return { ready, readyGroup, root, waiting, waitingGroup }
 }
 
 async function visibleFixtureTitles(
@@ -127,7 +145,13 @@ test.describe('product dropdown filter reproduction', () => {
           treeTitles,
           `Tree view after selecting ${beta.root.title} still rendered: ${treeTitles.join(' > ')}`
         )
-        .toEqual([beta.root.title, beta.ready.title, beta.waiting.title])
+        .toEqual([
+          beta.root.title,
+          beta.readyGroup.title,
+          beta.ready.title,
+          beta.waitingGroup.title,
+          beta.waiting.title,
+        ])
 
       await page.getByRole('button', { name: 'Show up next work' }).click()
       await captureScreenshot(
@@ -142,7 +166,7 @@ test.describe('product dropdown filter reproduction', () => {
           upNextTitles,
           `Up Next after selecting ${beta.root.title} still rendered: ${upNextTitles.join(' > ')}`
         )
-        .toEqual([beta.root.title, beta.ready.title])
+        .toEqual([beta.root.title, beta.readyGroup.title, beta.ready.title])
 
       await page.getByRole('button', { name: 'Show follow up work' }).click()
       await captureScreenshot(
@@ -157,7 +181,7 @@ test.describe('product dropdown filter reproduction', () => {
           followUpTitles,
           `Follow Up after selecting ${beta.root.title} still rendered: ${followUpTitles.join(' > ')}`
         )
-        .toEqual([beta.root.title, beta.waiting.title])
+        .toEqual([beta.root.title, beta.waitingGroup.title, beta.waiting.title])
 
       const clearProductFilter = page.getByRole('button', {
         name: /clear product filter|show all products/i,
@@ -183,10 +207,14 @@ test.describe('product dropdown filter reproduction', () => {
         )
         .toEqual([
           alpha.root.title,
+          alpha.readyGroup.title,
           alpha.ready.title,
+          alpha.waitingGroup.title,
           alpha.waiting.title,
           beta.root.title,
+          beta.readyGroup.title,
           beta.ready.title,
+          beta.waitingGroup.title,
           beta.waiting.title,
         ])
 
