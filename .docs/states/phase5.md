@@ -28,8 +28,8 @@ the obsolete `EXTERNAL_WAITING_STATES`, `isExternalWaitingItem`,
 `itemReadiness`, `ItemReadiness`. Covering all 5 acceptance tests from G1
 (tests in `tests/state-metadata.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 #### Item 5.2: J1 - Ball inline token [parallel with G1]
 
@@ -43,8 +43,8 @@ and changed. Existing `@mode`/`!effort`/`::state`/`>needs:` behaviour
 unchanged. Covering all 5 acceptance tests from J1 (tests in
 `tests/outliner-parse.test.ts`, `tests/outliner-actions.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 For parallel batch items, use separate subagents per item.
 Launch review subagents using the `nextjs-fastapi-reviewer` skill
@@ -62,5 +62,5 @@ keep visual muting for terminal/monitoring/waiting rows. Covering all 4
 acceptance tests from G2 (tests in `tests/outliner.test.ts`). Builds on
 G1 (5.1); implement after batch 1 is reviewed.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

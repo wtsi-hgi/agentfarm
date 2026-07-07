@@ -1,7 +1,9 @@
 import {
+  ballSchema,
   effortSchema,
   modeSchema,
   stateSchema,
+  type Ball,
   type Effort,
   type Mode,
   type State,
@@ -12,6 +14,7 @@ export type ParsedRow = {
   mode?: Mode
   effort?: Effort
   state?: State
+  ball?: Ball
   needs: string[]
 }
 
@@ -62,6 +65,16 @@ export function parseRow(text: string): ParseResult {
       continue
     }
 
+    if (lowerToken.startsWith('~')) {
+      const value = lowerToken.slice(1)
+      const parsed = ballSchema.safeParse(value)
+      if (!parsed.success) {
+        return enumError('ball', value)
+      }
+      row.ball = parsed.data
+      continue
+    }
+
     if (lowerToken.startsWith('>needs:')) {
       const slug = token.slice('>needs:'.length)
       if (!slug) {
@@ -80,7 +93,7 @@ export function parseRow(text: string): ParseResult {
 }
 
 function enumError(
-  field: 'mode' | 'effort' | 'state',
+  field: 'mode' | 'effort' | 'state' | 'ball',
   value: string
 ): ParseResult {
   return { ok: false, error: `Unknown ${field} token: ${value}` }

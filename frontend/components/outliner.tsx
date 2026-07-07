@@ -21,7 +21,7 @@ import type { DestructiveConfirmationDialogProps } from '@/components/destructiv
 import type { ItemDialogBreadcrumb } from '@/components/item-dialog-heading'
 import type { ItemNotesDialogProps } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
-import { OutlinerRow } from '@/components/outliner-row'
+import { OutlinerRow, type DisplayReadiness } from '@/components/outliner-row'
 import {
   ProductSwitcher,
   focusAndScrollOutlinerItem,
@@ -57,11 +57,6 @@ import {
   type RowMutationActions,
   type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
-import {
-  type ItemReadiness,
-  isExternalWaitingItem,
-  itemReadiness,
-} from '@/lib/state-metadata'
 import { DEFAULT_SCRATCHPAD } from '@/lib/scratchpad'
 import { cn } from '@/lib/utils'
 
@@ -70,7 +65,7 @@ export type VisibleOutlinerRow = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
-  displayReadiness: ItemReadiness
+  displayReadiness: DisplayReadiness
   filteredOutNewlyAdded: boolean
 }
 
@@ -438,6 +433,14 @@ function makePriorityRanks(
   return new Map(priorityItems.map((item) => [item.id, item.rank]))
 }
 
+function isTerminalStatus(status: ItemStatus): boolean {
+  return status === 'done' || status === 'dropped'
+}
+
+function isFollowUpStatus(status: ItemStatus): boolean {
+  return status === 'monitoring' || status === 'waiting'
+}
+
 type ProjectionStateOptions = {
   hasChildren?: boolean
 }
@@ -449,7 +452,9 @@ function isDoneForProjection(
   return (
     item.complete ||
     item.state === 'done' ||
-    (!options.hasChildren && item.state === 'abandoned')
+    item.status === 'done' ||
+    (!options.hasChildren &&
+      (item.state === 'abandoned' || item.status === 'dropped'))
   )
 }
 
@@ -558,7 +563,7 @@ function isPriorityEligibleItem(item: TreeItem, hasChildren = false): boolean {
   return (
     item.actionable &&
     !isDoneForProjection(item, { hasChildren }) &&
-    !isExternalWaitingItem(item, { ignoreState: hasChildren })
+    (hasChildren || item.status === 'ready')
   )
 }
 
@@ -573,7 +578,8 @@ function isUpNextItem(
 function isFollowUpItem(item: TreeItem, hasChildren: boolean): boolean {
   return (
     !isDoneForProjection(item, { hasChildren }) &&
-    isExternalWaitingItem(item, { ignoreState: hasChildren })
+    !hasChildren &&
+    isFollowUpStatus(item.status)
   )
 }
 
@@ -1866,15 +1872,25 @@ export function visibleOutlinerRows(
     {
       collapsed: boolean
       directlyVisible: boolean
-      displayReadiness: ItemReadiness
+      displayReadiness: DisplayReadiness
       filteredOutNewlyAdded: boolean
       hasChildren: boolean
     }
   >()
-  const displayReadinessCache = new Map<string, ItemReadiness>()
+  const displayReadinessCache = new Map<string, DisplayReadiness>()
   const visibleDescendantCache = new Map<string, boolean>()
 
-  function displayReadiness(item: TreeItem): ItemReadiness {
+  function leafDisplayReadiness(item: TreeItem): DisplayReadiness {
+    if (isDoneForProjection(item) || isTerminalStatus(item.status)) {
+      return 'done'
+    }
+    return item.status === 'ready' ||
+      (item.actionable && !isFollowUpStatus(item.status))
+      ? 'ready'
+      : 'waiting'
+  }
+
+  function displayReadiness(item: TreeItem): DisplayReadiness {
     const cached = displayReadinessCache.get(item.id)
     if (cached) {
       return cached
@@ -1882,12 +1898,12 @@ export function visibleOutlinerRows(
 
     const childItems = children.get(item.id) ?? []
     if (childItems.length === 0) {
-      const readiness = itemReadiness(item)
+      const readiness = leafDisplayReadiness(item)
       displayReadinessCache.set(item.id, readiness)
       return readiness
     }
 
-    let readiness: ItemReadiness = 'done'
+    let readiness: DisplayReadiness = 'done'
     for (const child of childItems) {
       const childReadiness = displayReadiness(child)
       if (childReadiness === 'ready') {

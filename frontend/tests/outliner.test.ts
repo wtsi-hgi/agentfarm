@@ -86,6 +86,22 @@ function itemActionButton(
   return button
 }
 
+function itemReadinessChip(document: Document, itemId: string) {
+  const chip = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
+  )
+  if (!(chip instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing item readiness chip for ${itemId}`)
+  }
+  return chip
+}
+
+function itemResumeAffordance(document: Document, itemId: string) {
+  return document.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
+}
+
 function rootSectionBackground(document: Document, rootId: string) {
   const section = document.querySelector(
     `[data-outliner-root-section-id="${rootId}"]`
@@ -349,6 +365,105 @@ describe('Outliner', () => {
     )
     expect(activeTimeline.getAttribute('data-available')).toBe('true')
     expect(plainTimeline.getAttribute('data-available')).toBe('false')
+  })
+
+  it('shows a Ready chip without a resume affordance for fresh ready work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [item({ id: 'ready', title: 'Fresh ready work' })],
+      })
+    )
+
+    const chip = itemReadinessChip(document, 'ready')
+
+    expect(chip.textContent).toBe('Ready')
+    expect(itemResumeAffordance(document, 'ready')).toBeNull()
+  })
+
+  it('shows the resume affordance for ready work that can resume', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'resume',
+            title: 'Resume ready work',
+            resume: true,
+          }),
+        ],
+      })
+    )
+
+    const chip = itemReadinessChip(document, 'resume')
+
+    expect(chip.textContent).toBe('Ready')
+    expect(itemResumeAffordance(document, 'resume')).toBeTruthy()
+  })
+
+  it('shows monitoring, waiting, and blocked status labels in leaf chips', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'monitoring',
+            title: 'Agent work',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+          item({
+            id: 'waiting',
+            title: 'Waiting work',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+            sort_order: 2,
+          }),
+          item({
+            id: 'blocked',
+            title: 'Blocked by dependency',
+            status: 'blocked',
+            actionable: false,
+            sort_order: 3,
+          }),
+        ],
+      })
+    )
+
+    expect(itemReadinessChip(document, 'monitoring').textContent).toBe(
+      'Monitoring'
+    )
+    expect(itemReadinessChip(document, 'waiting').textContent).toBe('Waiting')
+    expect(itemReadinessChip(document, 'blocked').textContent).toBe('Blocked')
+  })
+
+  it('shows dropped and done terminal status labels in leaf chips', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'dropped',
+            title: 'Dropped work',
+            status: 'dropped',
+            state: 'abandoned',
+            actionable: false,
+            complete: true,
+          }),
+          item({
+            id: 'done',
+            title: 'Done work',
+            status: 'done',
+            state: 'done',
+            actionable: false,
+            complete: true,
+            completed_at: '2026-06-30T01:00:00.000000Z',
+            sort_order: 2,
+          }),
+        ],
+      })
+    )
+
+    expect(itemReadinessChip(document, 'dropped').textContent).toBe('Dropped')
+    expect(itemReadinessChip(document, 'done').textContent).toBe('Done')
   })
 
   it('displays an explicit sibling section dependency before its waiting section', () => {

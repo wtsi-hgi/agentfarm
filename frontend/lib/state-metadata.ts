@@ -1,6 +1,13 @@
-import type { ItemStatus, State, TreeItem } from '@/lib/contracts'
+import type {
+  Ball,
+  ItemStatus as ContractItemStatus,
+  State,
+  TreeItem,
+} from '@/lib/contracts'
 
-export const STATE_LABELS = {
+export type ItemStatus = ContractItemStatus
+
+export const PHASE_LABELS = {
   'not-started': 'Not started',
   defining: 'Defining',
   spec: 'Spec',
@@ -12,55 +19,70 @@ export const STATE_LABELS = {
   abandoned: 'Abandoned',
 } satisfies Record<State, string>
 
-export const STATE_OPTIONS = [
-  { value: 'not-started', label: STATE_LABELS['not-started'] },
-  { value: 'defining', label: STATE_LABELS.defining },
-  { value: 'spec', label: STATE_LABELS.spec },
-  { value: 'implement', label: STATE_LABELS.implement },
-  { value: 'review', label: STATE_LABELS.review },
-  { value: 'merged', label: STATE_LABELS.merged },
-  { value: 'released', label: STATE_LABELS.released },
-  { value: 'done', label: STATE_LABELS.done },
-  { value: 'abandoned', label: STATE_LABELS.abandoned },
+export const PHASE_OPTIONS = [
+  { value: 'not-started', label: PHASE_LABELS['not-started'] },
+  { value: 'defining', label: PHASE_LABELS.defining },
+  { value: 'spec', label: PHASE_LABELS.spec },
+  { value: 'implement', label: PHASE_LABELS.implement },
+  { value: 'review', label: PHASE_LABELS.review },
+  { value: 'merged', label: PHASE_LABELS.merged },
+  { value: 'released', label: PHASE_LABELS.released },
+  { value: 'done', label: PHASE_LABELS.done },
+  { value: 'abandoned', label: PHASE_LABELS.abandoned },
 ] satisfies readonly { value: State; label: string }[]
 
-export const EXTERNAL_WAITING_STATUSES = new Set<ItemStatus>([
-  'monitoring',
-  'waiting',
-])
+export const STATE_LABELS = PHASE_LABELS
 
-export type ItemReadiness = 'done' | 'ready' | 'waiting'
+export const STATE_OPTIONS = PHASE_OPTIONS
 
-type WorkflowStateOptions = {
-  ignoreState?: boolean
-}
+export const BALL_LABELS = {
+  you: 'You',
+  agent: 'Agent',
+  person: 'Person',
+} satisfies Record<Ball, string>
 
-export function isExternalWaitingStatus(status: ItemStatus): boolean {
-  return EXTERNAL_WAITING_STATUSES.has(status)
-}
+export const BALL_OPTIONS = [
+  { value: 'you', label: BALL_LABELS.you },
+  { value: 'agent', label: BALL_LABELS.agent },
+  { value: 'person', label: BALL_LABELS.person },
+] satisfies readonly { value: Ball; label: string }[]
 
-export function isExternalWaitingItem(
-  item: Pick<TreeItem, 'status'>,
-  options: WorkflowStateOptions = {}
+export const MANAGER_STATUS_LABELS = {
+  ready: 'On owner',
+  monitoring: 'In flight (agent)',
+  waiting: 'Waiting on others',
+  blocked: 'Blocked (other work)',
+  done: 'Done',
+  dropped: 'Dropped',
+} satisfies Record<Exclude<ItemStatus, 'rollup'>, string>
+
+export function isResume(
+  item: Pick<TreeItem, 'state' | 'has_notes' | 'has_prompt_response_entries'>
 ): boolean {
-  return !options.ignoreState && isExternalWaitingStatus(item.status)
+  return (
+    item.state !== 'not-started' ||
+    item.has_notes ||
+    item.has_prompt_response_entries
+  )
 }
 
-export function itemReadiness(
-  item: Pick<TreeItem, 'actionable' | 'complete' | 'state' | 'status'>,
-  options: WorkflowStateOptions = {}
-): ItemReadiness {
+export function statusAfterBallChange(
+  current: ItemStatus,
+  ball: Ball
+): ItemStatus {
   if (
-    item.state === 'done' ||
-    item.state === 'abandoned' ||
-    item.status === 'done' ||
-    item.status === 'dropped' ||
-    item.complete
+    current === 'blocked' ||
+    current === 'done' ||
+    current === 'dropped' ||
+    current === 'rollup'
   ) {
-    return 'done'
+    return current
   }
-  return item.status === 'ready' ||
-    (item.actionable && !isExternalWaitingItem(item, options))
-    ? 'ready'
-    : 'waiting'
+  if (ball === 'agent') {
+    return 'monitoring'
+  }
+  if (ball === 'person') {
+    return 'waiting'
+  }
+  return 'ready'
 }

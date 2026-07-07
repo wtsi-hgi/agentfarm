@@ -626,7 +626,7 @@ function getItemRowSurface(container: ParentNode, itemId: string) {
   return surface
 }
 
-function getItemReadinessIndicator(container: ParentNode, itemId: string) {
+function getReadinessIndicator(container: ParentNode, itemId: string) {
   const indicator = container.querySelector(
     `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
   )
@@ -992,9 +992,9 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
       'review'
     )
-    expect(
-      getItemReadinessIndicator(container, 'feedback-row').textContent
-    ).toBe('Ready')
+    expect(getReadinessIndicator(container, 'feedback-row').textContent).toBe(
+      'Ready'
+    )
   })
 
   it('orders a locally changed ready item after server-ranked ready work', async () => {
@@ -1256,7 +1256,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
-  it('shows Feedback and Implement as Waiting while Respond stays ready for action', async () => {
+  it('shows Feedback as Waiting, Implement as Monitoring, and Respond as ready for action', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -1284,15 +1284,15 @@ describe('Outliner live newly added filter exemptions', () => {
       })
     )
 
-    expect(
-      getItemReadinessIndicator(container, 'feedback-row').textContent
-    ).toBe('Waiting')
-    expect(
-      getItemReadinessIndicator(container, 'implement-row').textContent
-    ).toBe('Waiting')
-    expect(
-      getItemReadinessIndicator(container, 'respond-row').textContent
-    ).toBe('Ready')
+    expect(getReadinessIndicator(container, 'feedback-row').textContent).toBe(
+      'Waiting'
+    )
+    expect(getReadinessIndicator(container, 'implement-row').textContent).toBe(
+      'Monitoring'
+    )
+    expect(getReadinessIndicator(container, 'respond-row').textContent).toBe(
+      'Ready'
+    )
   })
 
   it('shows each section readiness as the most actionable descendant readiness', async () => {
@@ -1342,7 +1342,7 @@ describe('Outliner live newly added filter exemptions', () => {
     const sectionReadiness = Object.fromEntries(
       ['top-section', 'waiting-branch', 'ready-branch'].map((itemId) => [
         itemId,
-        getItemReadinessIndicator(container, itemId).textContent,
+        getReadinessIndicator(container, itemId).textContent,
       ])
     )
 

@@ -15,12 +15,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
-import {
-  STATE_OPTIONS,
-  type ItemReadiness,
-  isExternalWaitingItem,
-} from '@/lib/state-metadata'
+import { STATE_OPTIONS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
+
+export type DisplayReadiness = Extract<
+  TreeItem['status'],
+  'done' | 'ready' | 'waiting'
+>
 
 export const MODE_COLOUR_MAP = {
   'prompt-agent': 'border-l-cyan-500',
@@ -59,8 +60,37 @@ const PROMPT_RESPONSE_AVAILABLE_ICON = (
 )
 const DELETE_ICON = <Trash2 className="size-3.5" aria-hidden="true" />
 
+type ReadinessChipStatus = Exclude<TreeItem['status'], 'rollup'>
+
+const READINESS_CHIP_LABELS = {
+  ready: 'Ready',
+  monitoring: 'Monitoring',
+  waiting: 'Waiting',
+  blocked: 'Blocked',
+  done: 'Done',
+  dropped: 'Dropped',
+} satisfies Record<ReadinessChipStatus, string>
+
 function selectedState(value: string): State | null {
   return STATE_OPTIONS.find((option) => option.value === value)?.value ?? null
+}
+
+function isFollowUpStatus(status: TreeItem['status']): boolean {
+  return status === 'monitoring' || status === 'waiting'
+}
+
+function isTerminalStatus(status: TreeItem['status']): boolean {
+  return status === 'done' || status === 'dropped'
+}
+
+function chipStatus(
+  item: TreeItem,
+  hasChildren: boolean,
+  displayReadiness: DisplayReadiness
+): ReadinessChipStatus {
+  return hasChildren || item.status === 'rollup'
+    ? displayReadiness
+    : item.status
 }
 
 type OutlinerRowProps = {
@@ -68,7 +98,7 @@ type OutlinerRowProps = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
-  displayReadiness: ItemReadiness
+  displayReadiness: DisplayReadiness
   selected?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
@@ -225,7 +255,11 @@ export function OutlinerRow({
 
   const checkedDone = item.state === 'done'
   const displayDone = displayReadiness === 'done'
-  const displayReady = displayReadiness === 'ready'
+  const readinessStatus = chipStatus(item, hasChildren, displayReadiness)
+  const displayReady = readinessStatus === 'ready'
+  const readinessLabel = READINESS_CHIP_LABELS[readinessStatus]
+  const showResumeAffordance =
+    item.status === 'ready' && item.resume && readinessStatus === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
   const showDoneCheckbox = item.parent_id !== null
@@ -238,7 +272,7 @@ export function OutlinerRow({
         MODE_COLOUR_MAP[item.mode],
         selected && 'ring-ring/30 ring-1 ring-inset',
         displayDone && 'text-muted-foreground',
-        isExternalWaitingItem(item, { ignoreState: hasChildren }) &&
+        (isTerminalStatus(item.status) || isFollowUpStatus(item.status)) &&
           'text-muted-foreground'
       )}
       style={{ paddingLeft: `${depth * 1.25}rem` }}
@@ -406,12 +440,19 @@ export function OutlinerRow({
         <span
           aria-label="Item readiness"
           className={cn(
-            'border-border text-muted-foreground rounded-sm border px-2 py-0.5 text-xs',
+            'border-border text-muted-foreground inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-xs',
             displayReady && 'text-foreground',
             displayDone && 'bg-muted'
           )}
         >
-          {displayDone ? 'Done' : displayReady ? 'Ready' : 'Waiting'}
+          <span>{readinessLabel}</span>
+          {showResumeAffordance ? (
+            <span
+              aria-label="Resume ready item"
+              className="bg-foreground size-1.5 rounded-full"
+              title="Resume"
+            />
+          ) : null}
         </span>
       </div>
     </div>

@@ -30,7 +30,8 @@ import {
   spawnItem,
   updateScratchpad,
 } from '@/app/actions'
-import type { Item } from '@/lib/contracts'
+import type { Item, TreeItem } from '@/lib/contracts'
+import { submitRowText } from '@/lib/outliner-mutations'
 
 const cacheMocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
@@ -84,6 +85,22 @@ function item(overrides: Partial<Item> = {}) {
   }
 }
 
+function treeItem(overrides: Partial<TreeItem> = {}): TreeItem {
+  return {
+    ...baseItem,
+    needs: [],
+    needs_edges: [],
+    status: 'ready',
+    resume: false,
+    rollup: null,
+    actionable: true,
+    complete: false,
+    has_notes: false,
+    has_prompt_response_entries: false,
+    ...overrides,
+  }
+}
+
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -124,6 +141,25 @@ describe('outliner mutation Server Actions', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('submits parsed Ball tokens only when the Ball changes', async () => {
+    const current = treeItem({ id: 'current', title: 'Fix bug', ball: 'you' })
+    const actions = {
+      patchItem: vi.fn(async () => undefined),
+      createDependency: vi.fn(async () => undefined),
+      deleteDependency: vi.fn(async () => undefined),
+    }
+
+    await submitRowText(current, 'Fix bug ~agent', actions)
+    await submitRowText(current, 'Fix bug ~you', actions)
+
+    expect(actions.patchItem).toHaveBeenCalledTimes(1)
+    expect(actions.patchItem).toHaveBeenCalledWith('current', {
+      ball: 'agent',
+    })
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
   })
 
   it('calls item mutation endpoints and revalidates only route-refreshing changes', async () => {
