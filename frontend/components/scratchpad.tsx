@@ -199,11 +199,12 @@ export function Scratchpad({
     if (!panel) {
       return
     }
+    const panelElement = panel
 
     function updateReservedSpace() {
       root.style.setProperty(
         reservedSpaceProperty,
-        `${Math.ceil(panel.getBoundingClientRect().height)}px`
+        `${Math.ceil(panelElement.getBoundingClientRect().height)}px`
       )
     }
 

@@ -44,9 +44,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -55,9 +59,13 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
@@ -71,11 +79,13 @@ type EntryInput = {
 
 let roots: Root[] = []
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 function entry(overrides: Partial<PromptResponseEntry>): PromptResponseEntry {

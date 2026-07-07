@@ -110,7 +110,10 @@ export async function backendJson<T>(
   }
 
   const response = (await (requestInit.dispatcher
-    ? undiciFetch(url, requestInit)
+    ? undiciFetch(
+        url,
+        requestInit as unknown as Parameters<typeof undiciFetch>[1]
+      )
     : fetch(url, requestInit))) as Response
 
   const contentType = response.headers.get('content-type') ?? ''

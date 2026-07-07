@@ -25,5 +25,5 @@ four ship booleans); add `status`/`resume`/`rollup` to `treeItemSchema`
 add `ball` and the four ship booleans). Covering all 5 acceptance tests
 from F1 (tests in `tests/contracts.test.ts`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

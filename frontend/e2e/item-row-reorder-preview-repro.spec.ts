@@ -105,6 +105,7 @@ async function fixtureRows(
               bottom: box.bottom,
               id,
               opacity: window.getComputedStyle(element).opacity,
+              slug: id,
               title: input.value,
               top: box.top,
             },
@@ -211,6 +212,7 @@ async function itemRowGeometry(
       id: element.dataset.outlinerItemId ?? itemId,
       inputLeft: inputBox.left,
       rowTop: rowBox.top,
+      slug: element.dataset.outlinerItemId ?? itemId,
       title: input.value,
     }
   })

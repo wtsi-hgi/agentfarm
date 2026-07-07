@@ -15,9 +15,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -26,20 +30,26 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
   has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 function marker(overrides: Partial<Marker> & Pick<Marker, 'id' | 'at'>) {
@@ -459,7 +469,9 @@ describe('Outliner', () => {
         title: 'Waiting on feedback',
         parent_id: 'section',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -468,20 +480,23 @@ describe('Outliner', () => {
         parent_id: 'section',
         sort_order: 3,
         state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
         actionable: false,
       }),
       item({
         id: 'respond',
         title: 'Respond to feedback',
         sort_order: 2,
-        state: 'respond',
+        state: 'released',
       }),
       item({
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 3,
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
     ]
 
@@ -509,7 +524,9 @@ describe('Outliner', () => {
         id: 'feedback',
         title: 'Waiting on feedback',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -517,26 +534,31 @@ describe('Outliner', () => {
         title: 'Agent is implementing',
         sort_order: 3,
         state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
         actionable: false,
       }),
       item({
         id: 'respond',
         title: 'Respond to feedback',
         sort_order: 4,
-        state: 'respond',
+        state: 'released',
       }),
       item({
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 5,
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
       item({
         id: 'done-feedback',
         title: 'Completed feedback',
         sort_order: 6,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'done',
         actionable: false,
         complete: true,
         completed_at: '2026-06-30T01:00:00.000000Z',
@@ -581,7 +603,9 @@ describe('Outliner', () => {
         title: 'Waiting on feedback',
         parent_id: 'section',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -640,7 +664,9 @@ describe('Outliner', () => {
         title: 'Alpha waiting',
         parent_id: 'alpha-root',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -660,7 +686,9 @@ describe('Outliner', () => {
         title: 'Beta waiting',
         parent_id: 'beta-root',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
     ]
@@ -1087,7 +1115,8 @@ describe('Outliner', () => {
         id: 'parent',
         title: 'Blocked project',
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
       item({
         id: 'child',
@@ -1145,7 +1174,8 @@ describe('Outliner', () => {
         id: 'blocked-parent',
         title: 'Blocked parent',
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
       item({
         id: 'blocked-child',

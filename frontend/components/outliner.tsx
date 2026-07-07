@@ -36,6 +36,7 @@ import type {
   Dependency,
   Item,
   ItemActivity,
+  ItemStatus,
   Marker,
   PriorityItem,
   Scratchpad as ScratchpadState,
@@ -531,6 +532,28 @@ function isCompleteState(state: State): boolean {
   return state === 'done' || state === 'abandoned'
 }
 
+function statusFromLeafItem(
+  item: Pick<Item, 'ball' | 'state'>,
+  blocked = false
+): ItemStatus {
+  if (item.state === 'done') {
+    return 'done'
+  }
+  if (item.state === 'abandoned') {
+    return 'dropped'
+  }
+  if (blocked) {
+    return 'blocked'
+  }
+  if (item.ball === 'agent') {
+    return 'monitoring'
+  }
+  if (item.ball === 'person') {
+    return 'waiting'
+  }
+  return 'ready'
+}
+
 function isPriorityEligibleItem(item: TreeItem, hasChildren = false): boolean {
   return (
     item.actionable &&
@@ -588,10 +611,10 @@ function treeItemFromSavedItem(savedItem: Item): TreeItem {
     ...savedItem,
     needs: [],
     needs_edges: [],
-    actionable:
-      !complete &&
-      !isExternalWaitingItem(savedItem) &&
-      !savedItem.blocked_external,
+    status: statusFromLeafItem(savedItem),
+    resume: savedItem.state !== 'not-started',
+    rollup: null,
+    actionable: !complete && savedItem.ball === 'you',
     complete,
     has_notes: false,
     has_prompt_response_entries: false,
@@ -870,13 +893,18 @@ function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
 
   return items.map((item) => {
     const itemComplete = complete(item.id)
-    const actionable =
-      isLeaf(item.id) &&
+    const leaf = isLeaf(item.id)
+    const blocked =
+      leaf &&
       !itemComplete &&
-      !isExternalWaitingItem(item) &&
-      dependencyTargetIds(item).every((targetId) => complete(targetId))
+      dependencyTargetIds(item).some((targetId) => !complete(targetId))
+    const status: ItemStatus = leaf
+      ? statusFromLeafItem(item, blocked)
+      : 'rollup'
+    const actionable = leaf && status === 'ready'
     return {
       ...item,
+      status,
       actionable,
       complete: itemComplete,
     }
@@ -893,11 +921,14 @@ function mergeSavedItem(
   return recomputeLocalWorkFlags(
     items.map((item) => {
       if (item.id === savedItem.id) {
+        const isContainer = item.status === 'rollup' || item.rollup !== null
         return {
           ...item,
           ...merged,
           needs: item.needs,
           needs_edges: item.needs_edges,
+          status: isContainer ? 'rollup' : merged.status,
+          rollup: isContainer ? item.rollup : merged.rollup,
           has_notes: item.has_notes,
           has_prompt_response_entries: item.has_prompt_response_entries,
         }
@@ -1065,9 +1096,9 @@ type LocalPriorityEntry = {
 }
 
 function localUserActionTier(
-  item: Pick<TreeItem, 'state'> | undefined
+  _item: Pick<TreeItem, 'state'> | undefined
 ): number {
-  return item?.state === 'respond' ? 1 : 0
+  return 0
 }
 
 function compareLocalPriorityEntries(
@@ -1144,15 +1175,15 @@ function localPriorityItems(
 
 function patchAffectsPriorityMembership(patch: {
   state?: State
+  ball?: unknown
   mode?: unknown
   effort?: unknown
-  blocked_external?: unknown
 }): boolean {
   return (
     Object.hasOwn(patch, 'state') ||
+    Object.hasOwn(patch, 'ball') ||
     Object.hasOwn(patch, 'mode') ||
-    Object.hasOwn(patch, 'effort') ||
-    Object.hasOwn(patch, 'blocked_external')
+    Object.hasOwn(patch, 'effort')
   )
 }
 
@@ -1161,6 +1192,9 @@ function previousDoneStateFromActivity(
 ): State | null {
   for (let index = activity.length - 1; index >= 0; index -= 1) {
     const entry = activity[index]
+    if (entry?.kind !== 'state-change') {
+      continue
+    }
     if (entry?.to_state !== 'done') {
       continue
     }
@@ -1175,7 +1209,7 @@ function previousDoneStateFromActivity(
       previousIndex -= 1
     ) {
       const previousEntry = activity[previousIndex]
-      if (!previousEntry) {
+      if (!previousEntry || previousEntry.kind !== 'state-change') {
         continue
       }
       if (isRestorableDoneState(previousEntry.to_state)) {

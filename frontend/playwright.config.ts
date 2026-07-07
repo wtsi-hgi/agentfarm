@@ -29,8 +29,13 @@ process.env.PLAYWRIGHT_RUN_ID = runId
 
 export function buildWebServerEnv(
   overrides: Record<string, string>
-): NodeJS.ProcessEnv {
-  const { NO_COLOR: _noColor, ...baseEnv } = process.env
+): Record<string, string> {
+  const baseEnv = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] =>
+        entry[0] !== 'NO_COLOR' && entry[1] !== undefined
+    )
+  )
 
   return {
     ...baseEnv,

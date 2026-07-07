@@ -1,12 +1,11 @@
-import type { State, TreeItem } from '@/lib/contracts'
+import type { ItemStatus, State, TreeItem } from '@/lib/contracts'
 
 export const STATE_LABELS = {
   'not-started': 'Not started',
+  defining: 'Defining',
   spec: 'Spec',
   implement: 'Implement',
   review: 'Review',
-  feedback: 'Feedback',
-  respond: 'Respond',
   merged: 'Merged',
   released: 'Released',
   done: 'Done',
@@ -15,18 +14,20 @@ export const STATE_LABELS = {
 
 export const STATE_OPTIONS = [
   { value: 'not-started', label: STATE_LABELS['not-started'] },
+  { value: 'defining', label: STATE_LABELS.defining },
   { value: 'spec', label: STATE_LABELS.spec },
   { value: 'implement', label: STATE_LABELS.implement },
   { value: 'review', label: STATE_LABELS.review },
-  { value: 'feedback', label: STATE_LABELS.feedback },
-  { value: 'respond', label: STATE_LABELS.respond },
   { value: 'merged', label: STATE_LABELS.merged },
   { value: 'released', label: STATE_LABELS.released },
   { value: 'done', label: STATE_LABELS.done },
   { value: 'abandoned', label: STATE_LABELS.abandoned },
 ] satisfies readonly { value: State; label: string }[]
 
-export const EXTERNAL_WAITING_STATES = new Set<State>(['feedback', 'implement'])
+export const EXTERNAL_WAITING_STATUSES = new Set<ItemStatus>([
+  'monitoring',
+  'waiting',
+])
 
 export type ItemReadiness = 'done' | 'ready' | 'waiting'
 
@@ -34,31 +35,32 @@ type WorkflowStateOptions = {
   ignoreState?: boolean
 }
 
-export function isExternalWaitingState(state: State): boolean {
-  return EXTERNAL_WAITING_STATES.has(state)
+export function isExternalWaitingStatus(status: ItemStatus): boolean {
+  return EXTERNAL_WAITING_STATUSES.has(status)
 }
 
 export function isExternalWaitingItem(
-  item: Pick<TreeItem, 'blocked_external' | 'state'>,
+  item: Pick<TreeItem, 'status'>,
   options: WorkflowStateOptions = {}
 ): boolean {
-  return (
-    item.blocked_external ||
-    (!options.ignoreState && isExternalWaitingState(item.state))
-  )
+  return !options.ignoreState && isExternalWaitingStatus(item.status)
 }
 
 export function itemReadiness(
-  item: Pick<
-    TreeItem,
-    'actionable' | 'blocked_external' | 'complete' | 'state'
-  >,
+  item: Pick<TreeItem, 'actionable' | 'complete' | 'state' | 'status'>,
   options: WorkflowStateOptions = {}
 ): ItemReadiness {
-  if (item.state === 'done' || item.complete) {
+  if (
+    item.state === 'done' ||
+    item.state === 'abandoned' ||
+    item.status === 'done' ||
+    item.status === 'dropped' ||
+    item.complete
+  ) {
     return 'done'
   }
-  return item.actionable && !isExternalWaitingItem(item, options)
+  return item.status === 'ready' ||
+    (item.actionable && !isExternalWaitingItem(item, options))
     ? 'ready'
     : 'waiting'
 }

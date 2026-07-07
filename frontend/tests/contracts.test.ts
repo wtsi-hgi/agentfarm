@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ballSchema,
   commentListSchema,
   commentSchema,
   deletedResponseSchema,
@@ -12,6 +13,7 @@ import {
   itemActivitySchema,
   itemSchema,
   loginResponseSchema,
+  markerChangeItemsSchema,
   markerListSchema,
   markerSchema,
   messageResponseSchema,
@@ -22,11 +24,11 @@ import {
   promptResponseEntryListSchema,
   promptResponseEntrySchema,
   promptResponseKindSchema,
-  markerChangeItemsSchema,
   runListSchema,
   runSchema,
   scratchpadSchema,
   stateSchema,
+  treeItemSchema,
   treeSchema,
   whoamiSchema,
 } from '@/lib/contracts'
@@ -88,11 +90,15 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     parent_id: null,
     sort_order: 1,
     state: 'not-started',
+    ball: 'you',
     mode: 'prompt-agent',
     effort: 'medium',
-    blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    dev_updated: false,
+    prod_updated: false,
+    docs_updated: false,
+    announced: false,
     description: '',
     repo_url: null,
     usage: '',
@@ -101,41 +107,56 @@ describe('itemSchema (mirrors backend ItemOut)', () => {
     created_at: '2026-06-29T00:00:00.000000Z',
     updated_at: '2026-06-29T00:00:00.000000Z',
     state_changed_at: '2026-06-29T00:00:00.000000Z',
+    ball_changed_at: '2026-06-29T00:00:00.000000Z',
     completed_at: null,
   }
 
-  it('parses a valid ItemOut-shaped payload', () => {
+  it('parses a backend ItemOut payload with Ball and ship fields', () => {
     expect(itemSchema.parse(validItem)).toEqual(validItem)
   })
 
-  it('parses Feedback and Respond states in shared item payloads', () => {
+  it('accepts the new phase enum and rejects removed states', () => {
     expect(stateSchema.options).toEqual([
       'not-started',
+      'defining',
       'spec',
       'implement',
       'review',
-      'feedback',
-      'respond',
       'merged',
       'released',
       'done',
       'abandoned',
     ])
-    expect(itemSchema.parse({ ...validItem, state: 'feedback' }).state).toBe(
-      'feedback'
-    )
-    expect(itemSchema.parse({ ...validItem, state: 'respond' }).state).toBe(
-      'respond'
-    )
+    expect(stateSchema.parse('defining')).toBe('defining')
+    expect(stateSchema.safeParse('feedback').success).toBe(false)
+    expect(stateSchema.safeParse('respond').success).toBe(false)
+  })
+
+  it('parses Ball ownership values and rejects unsupported values', () => {
+    expect(ballSchema.options).toEqual(['you', 'agent', 'person'])
+    expect(ballSchema.parse('you')).toBe('you')
+    expect(ballSchema.parse('agent')).toBe('agent')
+    expect(ballSchema.parse('person')).toBe('person')
+    expect(ballSchema.safeParse('bogus').success).toBe(false)
+  })
+
+  it('rejects legacy blocked_external on strict item payloads', () => {
+    expect(
+      itemSchema.safeParse({ ...validItem, blocked_external: false }).success
+    ).toBe(false)
   })
 
   it('parses populated nullable fields', () => {
     const blocked = {
       ...validItem,
       parent_id: '22222222-2222-4222-8222-222222222222',
-      blocked_external: true,
+      ball: 'person',
       blocked_note: 'awaiting infra',
       blocked_followup_date: '2026-07-10',
+      dev_updated: true,
+      prod_updated: true,
+      docs_updated: true,
+      announced: true,
       description: 'Blocked on staging capacity',
       repo_url: 'https://github.com/example/agentfarm',
       usage: '```bash\nmake test\n```',
@@ -172,11 +193,15 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     parent_id: '22222222-2222-4222-8222-222222222222',
     sort_order: 1,
     state: 'not-started',
+    ball: 'you',
     mode: 'prompt-agent',
     effort: 'quick',
-    blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    dev_updated: false,
+    prod_updated: false,
+    docs_updated: false,
+    announced: false,
     description: '',
     repo_url: null,
     usage: '',
@@ -185,6 +210,7 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     created_at: '2026-06-29T00:00:00.000000Z',
     updated_at: '2026-06-29T00:00:00.000000Z',
     state_changed_at: '2026-06-29T00:00:00.000000Z',
+    ball_changed_at: '2026-06-29T00:00:00.000000Z',
     completed_at: null,
     rank: 1,
   }
@@ -195,12 +221,10 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
     ])
   })
 
-  it('parses new state values on priority item-shaped payloads', () => {
-    const respond = { ...validPriorityItem, state: 'respond' }
-    const feedback = { ...validPriorityItem, state: 'feedback' }
+  it('parses defining on priority item-shaped payloads', () => {
+    const defining = { ...validPriorityItem, state: 'defining' }
 
-    expect(priorityResponseSchema.parse([respond])).toEqual([respond])
-    expect(priorityResponseSchema.parse([feedback])).toEqual([feedback])
+    expect(priorityResponseSchema.parse([defining])).toEqual([defining])
   })
 
   it('rejects a leaked numeric score field', () => {
@@ -212,6 +236,26 @@ describe('priorityResponseSchema (mirrors backend PriorityItemOut[])', () => {
 })
 
 describe('treeSchema (mirrors backend TreeItemOut[])', () => {
+  const validRollup = {
+    status_counts: {
+      ready: 2,
+      monitoring: 1,
+      waiting: 0,
+      blocked: 0,
+      done: 1,
+      dropped: 0,
+    },
+    ship: {
+      dev_updated: 2,
+      prod_updated: 1,
+      docs_updated: 1,
+      announced: 0,
+      shipped: 0,
+      total: 4,
+    },
+    phase: 'defining',
+  }
+
   const validTreeItem = {
     id: '11111111-1111-4111-8111-111111111111',
     title: 'A',
@@ -219,11 +263,15 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     parent_id: null,
     sort_order: 1,
     state: 'not-started',
+    ball: 'you',
     mode: 'prompt-agent',
     effort: 'medium',
-    blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    dev_updated: false,
+    prod_updated: false,
+    docs_updated: false,
+    announced: false,
     description: '',
     repo_url: 'https://github.com/example/a',
     usage: '## Usage\n\n```bash\nmake test\n```',
@@ -232,9 +280,13 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
     created_at: '2026-06-29T00:00:00.000000Z',
     updated_at: '2026-06-29T00:00:00.000000Z',
     state_changed_at: '2026-06-29T00:00:00.000000Z',
+    ball_changed_at: '2026-06-29T00:00:00.000000Z',
     completed_at: null,
     needs: ['build-api'],
     needs_edges: [{ id: 'dep-1', slug: 'build-api' }],
+    status: 'ready',
+    resume: false,
+    rollup: null,
     actionable: true,
     complete: false,
     has_notes: false,
@@ -243,6 +295,33 @@ describe('treeSchema (mirrors backend TreeItemOut[])', () => {
 
   it('parses tree items with needs, edge ids, work flags, and content flags', () => {
     expect(treeSchema.parse([validTreeItem])).toEqual([validTreeItem])
+  })
+
+  it('requires status, resume, and rollup on tree items', () => {
+    const { status: _status, ...withoutStatus } = validTreeItem
+    const { resume: _resume, ...withoutResume } = validTreeItem
+    const { rollup: _rollup, ...withoutRollup } = validTreeItem
+
+    expect(treeItemSchema.safeParse(withoutStatus).success).toBe(false)
+    expect(treeItemSchema.safeParse(withoutResume).success).toBe(false)
+    expect(treeItemSchema.safeParse(withoutRollup).success).toBe(false)
+  })
+
+  it('parses container rollup objects and leaf null rollups', () => {
+    const container = {
+      ...validTreeItem,
+      id: '22222222-2222-4222-8222-222222222222',
+      title: 'Container',
+      slug: 'container',
+      status: 'rollup',
+      resume: true,
+      rollup: validRollup,
+      actionable: false,
+    }
+    const leaf = { ...validTreeItem, rollup: null }
+
+    expect(treeItemSchema.parse(container)).toEqual(container)
+    expect(treeItemSchema.parse(leaf)).toEqual(leaf)
   })
 
   it('rejects tree items missing actionable', () => {
@@ -445,21 +524,23 @@ describe('item activity contracts', () => {
     created_at: '2026-06-29T00:05:00.000000Z',
   }
 
-  it('parses state-change activity payloads and lists', () => {
+  const ballChange = {
+    id: 'activity-2',
+    item_id: 'item-1',
+    kind: 'ball-change',
+    actor: 'alice',
+    from_ball: 'you',
+    to_ball: 'agent',
+    created_at: '2026-06-29T00:06:00.000000Z',
+  }
+
+  it('parses state-change and ball-change activity payloads and lists', () => {
     expect(itemActivitySchema.parse(stateChange)).toEqual(stateChange)
-    expect(itemActivityListSchema.parse([stateChange])).toEqual([stateChange])
-  })
-
-  it('parses Feedback to Respond state-change activity', () => {
-    const feedbackLoopChange = {
-      ...stateChange,
-      from_state: 'feedback',
-      to_state: 'respond',
-    }
-
-    expect(itemActivitySchema.parse(feedbackLoopChange)).toEqual(
-      feedbackLoopChange
-    )
+    expect(itemActivitySchema.parse(ballChange)).toEqual(ballChange)
+    expect(itemActivityListSchema.parse([stateChange, ballChange])).toEqual([
+      stateChange,
+      ballChange,
+    ])
   })
 
   it('rejects activity with an out-of-set destination state', () => {
@@ -468,6 +549,16 @@ describe('item activity contracts', () => {
         ...stateChange,
         to_state: 'bogus',
       }).success
+    ).toBe(false)
+  })
+
+  it('rejects activity entries whose fields do not match their kind', () => {
+    expect(
+      itemActivitySchema.safeParse({ ...stateChange, from_ball: 'you' }).success
+    ).toBe(false)
+    expect(
+      itemActivitySchema.safeParse({ ...ballChange, from_state: 'spec' })
+        .success
     ).toBe(false)
   })
 })
@@ -493,11 +584,15 @@ describe('marker contracts', () => {
       parent_id: null,
       sort_order: 1,
       state: 'not-started',
+      ball: 'you',
       mode: 'prompt-agent',
       effort: 'medium',
-      blocked_external: false,
       blocked_note: null,
       blocked_followup_date: null,
+      dev_updated: false,
+      prod_updated: false,
+      docs_updated: false,
+      announced: false,
       description: '',
       repo_url: null,
       usage: '',
@@ -506,6 +601,7 @@ describe('marker contracts', () => {
       created_at: '2026-06-29T00:00:00.000000Z',
       updated_at: '2026-06-29T01:00:00.000000Z',
       state_changed_at: '2026-06-29T00:00:00.000000Z',
+      ball_changed_at: '2026-06-29T00:00:00.000000Z',
       completed_at: null,
     }
 
@@ -521,11 +617,15 @@ describe('home payload contract', () => {
     parent_id: null,
     sort_order: 1,
     state: 'not-started',
+    ball: 'you',
     mode: 'prompt-agent',
     effort: 'medium',
-    blocked_external: false,
     blocked_note: null,
     blocked_followup_date: null,
+    dev_updated: false,
+    prod_updated: false,
+    docs_updated: false,
+    announced: false,
     description: '',
     repo_url: null,
     usage: '',
@@ -534,6 +634,7 @@ describe('home payload contract', () => {
     created_at: '2026-06-29T00:00:00.000000Z',
     updated_at: '2026-06-29T00:00:00.000000Z',
     state_changed_at: '2026-06-29T00:00:00.000000Z',
+    ball_changed_at: '2026-06-29T00:00:00.000000Z',
     completed_at: null,
   }
   const payload = {
@@ -544,6 +645,9 @@ describe('home payload contract', () => {
         ...item,
         needs: [],
         needs_edges: [],
+        status: 'ready',
+        resume: false,
+        rollup: null,
         actionable: true,
         complete: false,
         has_notes: false,

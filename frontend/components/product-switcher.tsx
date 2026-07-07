@@ -113,7 +113,7 @@ export function focusAndScrollOutlinerItem(
     titleTarget &&
     typeof (titleTarget as { select?: unknown }).select === 'function'
   ) {
-    ;(titleTarget as { select: () => void }).select()
+    ;(titleTarget as unknown as { select: () => void }).select()
   }
   target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   return true

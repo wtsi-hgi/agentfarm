@@ -44,6 +44,9 @@ describe('parseRow', () => {
     const result = parseRow('X @bogus')
 
     expect(result.ok).toBe(false)
+    if (result.ok) {
+      throw new Error('Expected parse failure')
+    }
     expect(result.error).toContain('bogus')
   })
 

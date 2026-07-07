@@ -29,6 +29,7 @@ import {
   runSchema,
   scratchpadSchema,
   treeSchema,
+  type Ball,
   type Effort,
   type MarkerChangeField,
   type Mode,
@@ -60,11 +61,15 @@ export type CreateItemInput = {
 export type PatchItemInput = {
   title?: string
   state?: State
+  ball?: Ball
   mode?: Mode
   effort?: Effort
-  blocked_external?: boolean
   blocked_note?: string | null
   blocked_followup_date?: string | null
+  dev_updated?: boolean
+  prod_updated?: boolean
+  docs_updated?: boolean
+  announced?: boolean
   description?: string | null
   repo_url?: string | null
   usage?: string | null

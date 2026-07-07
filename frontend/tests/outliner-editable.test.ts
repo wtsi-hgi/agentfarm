@@ -22,9 +22,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -33,20 +37,26 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
   has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 function mutationActions() {
@@ -54,7 +64,13 @@ function mutationActions() {
     patchItem: vi.fn(async () => undefined),
     createDependency: vi.fn(async () => undefined),
     deleteDependency: vi.fn(async () => undefined),
-    createItem: vi.fn(async () => ({ id: 'created' })),
+    createItem: vi.fn(
+      async (_input: {
+        after_id?: string | null
+        parent_id?: string | null
+        title: string
+      }) => ({ id: 'created' })
+    ),
     indentItem: vi.fn(async () => undefined),
     outdentItem: vi.fn(async () => undefined),
     deleteItem: vi.fn(async () => undefined),

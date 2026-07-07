@@ -59,6 +59,8 @@ type PendingDependencyRemoval = {
   itemTitle: string
 }
 
+type StateChangeActivity = Extract<ItemActivity, { kind: 'state-change' }>
+
 const MarkdownContent = dynamic<MarkdownContentProps>(() =>
   import('@/components/markdown-content').then(
     (module) => module.MarkdownContent
@@ -131,7 +133,13 @@ function formatTimestamp(timestamp: string) {
   return `${match[1]} ${match[2]}:${match[3]} UTC`
 }
 
-function stateChangeLabel(activity: ItemActivity) {
+function isStateChangeActivity(
+  activity: ItemActivity
+): activity is StateChangeActivity {
+  return activity.kind === 'state-change'
+}
+
+function stateChangeLabel(activity: StateChangeActivity) {
   return `${STATE_LABELS[activity.from_state]} -> ${
     STATE_LABELS[activity.to_state]
   }`
@@ -627,6 +635,7 @@ export function CommentsPanel({
   }
 
   const loading = loadingComments || loadingActivity
+  const stateActivity = activity.filter(isStateChangeActivity)
 
   function renderDetailControlButton({
     label,
@@ -993,7 +1002,7 @@ export function CommentsPanel({
             <Clock3 className="size-4" aria-hidden="true" />
             Activity
           </div>
-          {activity.map((entry) => (
+          {stateActivity.map((entry) => (
             <div
               key={entry.id}
               className="border-border bg-muted/20 rounded-md border p-2"
@@ -1009,7 +1018,7 @@ export function CommentsPanel({
               </div>
             </div>
           ))}
-          {activity.length === 0 && !loadingActivity ? (
+          {stateActivity.length === 0 && !loadingActivity ? (
             <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
               No activity
             </div>

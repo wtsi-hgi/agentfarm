@@ -25,7 +25,7 @@ describe('backend client TLS dispatch', () => {
     mockedUndiciFetch.mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         headers: { 'content-type': 'application/json' },
-      }) as Awaited<ReturnType<typeof undiciFetch>>
+      }) as unknown as Awaited<ReturnType<typeof undiciFetch>>
     )
 
     const { backendJson, createBackendDispatcher } =
@@ -100,7 +100,7 @@ describe('backend client TLS dispatch', () => {
     mockedUndiciFetch.mockResolvedValue(
       new Response(JSON.stringify({ status: 'ok' }), {
         headers: { 'content-type': 'application/json' },
-      }) as Awaited<ReturnType<typeof undiciFetch>>
+      }) as unknown as Awaited<ReturnType<typeof undiciFetch>>
     )
 
     const { backendJson } = await import('@/lib/backend-client')
