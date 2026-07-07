@@ -3377,7 +3377,7 @@ export function Outliner({
           }}
           className={cn(
             'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
-            focusedItemId === item.id && 'bg-accent/60',
+            focusedItemId === item.id && 'ring-ring/30 ring-1 ring-inset',
             dragPreview?.draggedItemId === item.id
               ? 'ring-primary/40 bg-primary/10 opacity-90 shadow-sm ring-2 ring-inset'
               : draggingItemId === item.id && 'opacity-60',
@@ -3415,7 +3415,7 @@ export function Outliner({
           />
           {filteredOutNewlyAdded ? (
             <div
-              className="text-muted-foreground bg-muted/40 px-2 py-1 text-xs"
+              className="border-border/50 text-muted-foreground border-t px-2 py-1 text-xs"
               style={{
                 paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
               }}

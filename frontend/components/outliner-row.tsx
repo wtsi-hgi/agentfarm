@@ -236,7 +236,7 @@ export function OutlinerRow({
       className={cn(
         'grid min-h-11 grid-cols-[auto_auto_auto_1fr_auto] items-center gap-1.5 border-l-4 py-1.5 pr-2',
         MODE_COLOUR_MAP[item.mode],
-        selected && 'bg-accent/50',
+        selected && 'ring-ring/30 ring-1 ring-inset',
         displayDone && 'text-muted-foreground',
         isExternalWaitingItem(item, { ignoreState: hasChildren }) &&
           'text-muted-foreground'
