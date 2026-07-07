@@ -13,6 +13,7 @@ type ItemSummary = {
 type CreateItemInput = {
   title: string
   parent_id?: string | null
+  ball?: string
   state?: string
 }
 
@@ -44,7 +45,8 @@ test.describe('section state menu reproduction', () => {
     try {
       section = await createBackendItem(request, sessionToken, {
         title: `${titlePrefix} section`,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
       })
       const child = await createBackendItem(request, sessionToken, {
         title: `${titlePrefix} child`,
@@ -89,7 +91,7 @@ test.describe('section state menu reproduction', () => {
 
       await expect(sectionRow).toBeVisible()
       await expect(sectionStateMenu).toBeVisible()
-      await expect(sectionStateMenu).toHaveValue('feedback')
+      await expect(sectionStateMenu).toHaveValue('released')
     } finally {
       if (section) {
         await deleteBackendItem(request, sessionToken, section.id)

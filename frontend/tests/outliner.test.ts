@@ -250,6 +250,22 @@ function mountedItemDoneCheckbox(container: ParentNode, itemId: string) {
   return checkbox
 }
 
+function mountedItemTextField(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item text field for ${itemId}`)
+  }
+  return input
+}
+
+function mountedItemResumeAffordance(container: ParentNode, itemId: string) {
+  return container.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
+}
+
 function mountedBallControl(container: ParentNode, itemId: string) {
   const control = container.querySelector(`button[aria-label^="Ball:"]`)
   if (!(control instanceof HTMLButtonElement)) {
@@ -540,6 +556,48 @@ describe('Outliner', () => {
     expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'leaf', {
       state: 'review',
     })
+  })
+
+  it('keeps the resume affordance when a saved not-started item still has content', async () => {
+    let savedLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      has_notes: true,
+      resume: true,
+    })
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        updated_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [savedLeaf],
+        markers: [],
+      })
+    )
+
+    expect(mountedItemResumeAffordance(container, 'leaf')).toBeInstanceOf(
+      HTMLElement
+    )
+
+    const titleField = mountedItemTextField(container, 'leaf')
+    await changeField(titleField, 'Renamed leaf work')
+    await keyDown(titleField, 'Enter')
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('leaf', {
+      title: 'Renamed leaf work',
+    })
+    expect(mountedItemTextField(container, 'leaf').value).toBe(
+      'Renamed leaf work'
+    )
+    expect(mountedItemResumeAffordance(container, 'leaf')).toBeInstanceOf(
+      HTMLElement
+    )
   })
 
   it('shows a keyboard-focusable Ball control whose name includes the current Ball on leaves', () => {

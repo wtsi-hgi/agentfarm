@@ -147,6 +147,12 @@ function getItemButton(
   return button
 }
 
+function resumeAffordance(container: ParentNode, itemId: string) {
+  return container.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
+}
+
 function getButton(container: ParentNode, ariaLabel: string) {
   const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
   if (!(button instanceof HTMLButtonElement)) {
@@ -509,6 +515,7 @@ describe('Outliner prompt/response timeline overlay', () => {
       'No prompt/response entries available'
     )
     expect(timelineButton.title).toBe('Prompt/response timeline')
+    expect(resumeAffordance(container, 'root')).toBeNull()
 
     await click(timelineButton)
 
@@ -536,6 +543,7 @@ describe('Outliner prompt/response timeline overlay', () => {
     expect(
       getItemButton(container, 'root', 'Open prompt/response timeline').title
     ).toBe('Prompt/response entries available')
+    expect(resumeAffordance(container, 'root')).toBeInstanceOf(HTMLElement)
     expect(dialog.textContent).toContain('Please inspect the failure.')
     expect(dialog.textContent).toContain('2026-06-30 10:00 UTC')
 

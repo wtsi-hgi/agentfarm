@@ -91,9 +91,9 @@ async function changeState(
   request: APIRequestContext,
   sessionToken: string,
   itemId: string,
-  state: string
+  patch: { state: string; ball?: string }
 ) {
-  await patchJson(request, sessionToken, `/api/v1/items/${itemId}`, { state })
+  await patchJson(request, sessionToken, `/api/v1/items/${itemId}`, patch)
 }
 
 async function seedActivityHeavyItem(
@@ -125,23 +125,23 @@ async function seedActivityHeavyItem(
     )
   }
 
-  for (const state of [
-    'spec',
-    'implement',
-    'review',
-    'feedback',
-    'respond',
-    'spec',
-    'implement',
-    'review',
-    'feedback',
-    'respond',
-    'spec',
-    'implement',
-    'review',
-    'respond',
+  for (const patch of [
+    { state: 'spec' },
+    { state: 'implement' },
+    { state: 'review' },
+    { state: 'released', ball: 'person' },
+    { state: 'released', ball: 'you' },
+    { state: 'spec' },
+    { state: 'implement' },
+    { state: 'review' },
+    { state: 'released', ball: 'person' },
+    { state: 'released', ball: 'you' },
+    { state: 'spec' },
+    { state: 'implement' },
+    { state: 'review' },
+    { state: 'released', ball: 'you' },
   ]) {
-    await changeState(request, sessionToken, heavyItem.id, state)
+    await changeState(request, sessionToken, heavyItem.id, patch)
   }
 
   await createMarker(

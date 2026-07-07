@@ -77,6 +77,7 @@ export async function createItem(
   sessionToken: string,
   title: string,
   options: {
+    ball?: string
     parent_id?: string | null
     state?: string
   } = {}

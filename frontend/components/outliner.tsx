@@ -69,6 +69,7 @@ import {
   PHASE_LABELS,
   compareFollowUp,
   compareMonitoring,
+  isResume,
   statusAfterBallChange,
 } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
@@ -818,7 +819,11 @@ function treeItemFromSavedItem(savedItem: Item): TreeItem {
     needs: [],
     needs_edges: [],
     status: statusFromLeafItem(savedItem),
-    resume: savedItem.state !== 'not-started',
+    resume: isResume({
+      state: savedItem.state,
+      has_notes: false,
+      has_prompt_response_entries: false,
+    }),
     rollup: null,
     actionable: !complete && savedItem.ball === 'you',
     complete,
@@ -1151,6 +1156,8 @@ function mergeSavedItem(
           hasBallPatch && !isContainer
             ? statusAfterBallChange(item.status, optimisticPatch.ball)
             : merged.status
+        const hasNotes = item.has_notes
+        const hasPromptResponseEntries = item.has_prompt_response_entries
         return {
           ...item,
           ...merged,
@@ -1158,8 +1165,13 @@ function mergeSavedItem(
           needs_edges: item.needs_edges,
           status: isContainer ? 'rollup' : status,
           rollup: isContainer ? item.rollup : merged.rollup,
-          has_notes: item.has_notes,
-          has_prompt_response_entries: item.has_prompt_response_entries,
+          has_notes: hasNotes,
+          has_prompt_response_entries: hasPromptResponseEntries,
+          resume: isResume({
+            state: merged.state,
+            has_notes: hasNotes,
+            has_prompt_response_entries: hasPromptResponseEntries,
+          }),
         }
       }
       if (!oldSlug || oldSlug === savedItem.slug) {
@@ -1204,10 +1216,14 @@ function markItemContentAvailability(
     }
 
     changed = true
-    return {
+    const nextItem = {
       ...item,
       has_notes: hasNotes,
       has_prompt_response_entries: hasPromptResponseEntries,
+    }
+    return {
+      ...nextItem,
+      resume: isResume(nextItem),
     }
   })
 

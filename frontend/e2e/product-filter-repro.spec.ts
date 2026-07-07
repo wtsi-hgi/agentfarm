@@ -45,7 +45,7 @@ async function seedProduct(
     request,
     sessionToken,
     `${titlePrefix} ${name} follow up`,
-    { parent_id: root.id, state: 'feedback' }
+    { parent_id: root.id, state: 'released', ball: 'person' }
   )
   cleanupItemIds.push(waiting.id)
 

@@ -31,6 +31,7 @@ type CreateItemInput = {
   title: string
   parent_id?: string | null
   after_id?: string | null
+  ball?: string
   state?: string
 }
 
@@ -112,7 +113,8 @@ test.describe('filtered hierarchy reproduction', () => {
         title: `${titlePrefix} waiting child`,
         parent_id: section.id,
         after_id: readyChild.id,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
       })
 
       await gotoPath(page, '/')
