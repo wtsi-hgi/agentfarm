@@ -20,18 +20,20 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_identity, require_owner
 from db.connection import get_db, get_write_db
-from models.enums import State, is_complete
+from models.enums import Ball, State, is_complete
 from services import graph, leverage, tree
 from services.clock import now
 from services.identity import current_actor
 
 from ..schemas import (
+    BallChangeActivityOut,
     DeletedResponse,
     ItemActivityOut,
     ItemCreate,
     ItemOut,
     ItemUpdate,
     MoveRequest,
+    StateChangeActivityOut,
     TreeItemOut,
 )
 
@@ -47,7 +49,7 @@ _ITEM_COLUMNS = (
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
 )
-_ACTIVITY_COLUMNS = "id, item_id, actor, from_state, to_state, created_at"
+_ACTIVITY_COLUMNS = "id, item_id, kind, actor, from_state, to_state, created_at"
 
 
 def _row_to_item(row: sqlite3.Row) -> ItemOut:
@@ -67,8 +69,13 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
 
 
 def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
-    """Build an :class:`ItemActivityOut` from a persisted state-change row."""
-    return ItemActivityOut(kind="state-change", **dict(row))
+    """Build an activity response from a persisted state or Ball change row."""
+    data = dict(row)
+    if data["kind"] == "ball-change":
+        data["from_ball"] = data.pop("from_state")
+        data["to_ball"] = data.pop("to_state")
+        return BallChangeActivityOut(**data)
+    return StateChangeActivityOut(**data)
 
 
 def _explicit_needs_edges_by_item(
@@ -532,7 +539,7 @@ async def list_item_activity(
     _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[ItemActivityOut]:
-    """List timestamped state-change activity for the item detail panel."""
+    """List timestamped state and Ball activity for the item detail panel."""
     if not _item_exists(conn, item_id):
         raise HTTPException(status_code=404, detail="item not found")
 
@@ -571,12 +578,21 @@ async def update_item(
     * A ``state`` change stamps ``state_changed_at = now`` and sets
       ``completed_at`` to ``now`` for ``done``/``abandoned`` or clears it
       otherwise.
+    * A ``ball`` change stamps ``ball_changed_at = now`` and records
+      ``ball-change`` activity; sending the stored Ball value is a no-op for
+      that axis.
+    * Setting ``ball`` to ``you`` or ``agent`` clears hand-off context
+      (``blocked_note`` / ``blocked_followup_date``) in the same write.
+    * Re-opening a terminal item without an explicit ``ball`` forces
+      ``ball`` to ``you`` through the same Ball-change path.
 
     Identity, parent, ``sort_order``, edges, and comments are never touched
     here, so a rename or re-categorisation is lossless.
     """
     existing = conn.execute(
-        "SELECT id, state, parent_id FROM items WHERE id = ?", (item_id,)
+        "SELECT id, state, ball, parent_id, blocked_note, blocked_followup_date "
+        "FROM items WHERE id = ?",
+        (item_id,),
     ).fetchone()
     if existing is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -588,6 +604,8 @@ async def update_item(
     # Columns to write, built from the provided fields plus derived side effects.
     updates: dict[str, object] = {}
     activity: tuple[State, State, str] | None = None
+    ball_activity: tuple[Ball, Ball, str] | None = None
+    clear_handoff_context = False
     timestamp: str | None = None
 
     def mutation_timestamp() -> str:
@@ -622,11 +640,36 @@ async def update_item(
                 change_timestamp if is_complete(new_state) else None
             )
             activity = (old_state, new_state, change_timestamp)
+            if (
+                is_complete(old_state)
+                and not is_complete(new_state)
+                and "ball" not in provided
+            ):
+                provided["ball"] = Ball.you
+
+    if "ball" in provided:
+        new_ball: Ball = provided["ball"]
+        old_ball = Ball(existing["ball"])
+        if new_ball != old_ball:
+            change_timestamp = mutation_timestamp()
+            updates["ball"] = new_ball.value
+            updates["ball_changed_at"] = change_timestamp
+            ball_activity = (old_ball, new_ball, change_timestamp)
+        clear_handoff_context = new_ball in {Ball.you, Ball.agent} and (
+            new_ball != old_ball
+            or "blocked_note" in provided
+            or "blocked_followup_date" in provided
+            or existing["blocked_note"] is not None
+            or existing["blocked_followup_date"] is not None
+        )
 
     if "blocked_note" in provided:
         updates["blocked_note"] = provided["blocked_note"]
     if "blocked_followup_date" in provided:
         updates["blocked_followup_date"] = provided["blocked_followup_date"]
+    if clear_handoff_context:
+        updates["blocked_note"] = None
+        updates["blocked_followup_date"] = None
     for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
         if field in provided:
             updates[field] = 1 if provided[field] else 0
@@ -648,7 +691,8 @@ async def update_item(
     if updates:
         # Any change updates the audit columns with one shared instant.
         updates["updated_at"] = mutation_timestamp()
-        updates["updated_by"] = current_actor()
+        actor = current_actor()
+        updates["updated_by"] = actor
 
         assignments = ", ".join(f"{column} = :{column}" for column in updates)
         conn.execute(
@@ -660,14 +704,32 @@ async def update_item(
             conn.execute(
                 f"""
                 INSERT INTO item_state_changes ({_ACTIVITY_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid.uuid4()),
                     item_id,
-                    current_actor(),
+                    "state-change",
+                    actor,
                     old_state.value,
                     new_state.value,
+                    change_timestamp,
+                ),
+            )
+        if ball_activity is not None:
+            old_ball, new_ball, change_timestamp = ball_activity
+            conn.execute(
+                f"""
+                INSERT INTO item_state_changes ({_ACTIVITY_COLUMNS})
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    item_id,
+                    "ball-change",
+                    actor,
+                    old_ball.value,
+                    new_ball.value,
                     change_timestamp,
                 ),
             )

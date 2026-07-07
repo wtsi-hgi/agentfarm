@@ -24,8 +24,8 @@ In `update_item` (`api/v1/items.py`), a changed `ball` sets `ball`, stamps
 a no-op. Phase-change recording stays unchanged. Covering all 4 acceptance
 tests from C1 (tests in `tests/test_items.py`).
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.2: C2 - Hand-off note/date auto-clear when Ball leaves `person`
 
@@ -37,8 +37,8 @@ regardless of the payload; setting `ball=person` does not clear them.
 Covering all 4 acceptance tests from C2 (tests in `tests/test_items.py`).
 Builds on 3.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.3: C3 - Terminal transitions preserve Ball; re-open forces Ball `you`
 
@@ -50,8 +50,8 @@ change FROM terminal TO non-terminal with no explicit `ball` forces
 explicit `ball` in the same payload wins. Covering all 4 acceptance tests
 from C3 (tests in `tests/test_items.py`). Builds on 3.1, 3.2.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.4: C4 - `ItemUpdate` field surface
 
@@ -64,8 +64,8 @@ accept `ball`, the four ship booleans, and (as before)
 Covering all 3 acceptance tests from C4 (tests in `tests/test_items.py`).
 Builds on 3.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed
 
 ### Item 3.5: D1 - Activity endpoint returns state-change and ball-change entries
 
@@ -78,5 +78,5 @@ Make `GET /items/{id}/activity` (`api/v1/items.py`) read
 `api/schemas.py`; unknown id -> 404. Covering all 3 acceptance tests from
 D1 (tests in `tests/test_items.py`). Builds on 3.1.
 
-- [ ] implemented
-- [ ] reviewed
+- [x] implemented
+- [x] reviewed

@@ -116,6 +116,10 @@ async def _activity(client: AsyncClient, item_id: str):
     return await client.get(f"/api/v1/items/{item_id}/activity")
 
 
+async def _priority(client: AsyncClient):
+    return await client.get("/api/v1/priority")
+
+
 async def _create_note(client: AsyncClient, item_id: str, body: str):
     return await client.post(f"/api/v1/items/{item_id}/notes", json={"body": body})
 
@@ -586,6 +590,7 @@ async def test_patch_legacy_blocked_external_is_ignored(fresh_db) -> None:
         item_id = created.json()["id"]
 
         response = await _patch(client, item_id, {"blocked_external": True})
+        tree = await _tree(client)
 
     assert response.status_code == 200
     body = response.json()
@@ -593,6 +598,84 @@ async def test_patch_legacy_blocked_external_is_ignored(fresh_db) -> None:
     assert body["ball"] == "you"
     assert body["updated_at"] == created.json()["updated_at"]
     assert _item_row(fresh_db, item_id)["ball"] == "you"
+
+    assert tree.status_code == 200
+    tree_item = _tree_item(tree.json(), item_id)
+    assert "blocked_external" not in tree_item
+    assert tree_item["ball"] == "you"
+
+
+@pytest.mark.anyio
+async def test_patch_empty_payload_is_noop(fresh_db) -> None:
+    """C4 test 2: an empty PATCH is accepted and leaves the item unchanged."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Nothing to change"})
+        item_id = created.json()["id"]
+        before = created.json()
+
+        response = await _patch(client, item_id, {})
+
+    assert response.status_code == 200
+    assert response.json() == before
+    assert _item_row(fresh_db, item_id)["updated_at"] == before["updated_at"]
+
+
+@pytest.mark.anyio
+async def test_patch_non_root_rejects_repo_fields_but_accepts_ball_and_ship_fields(
+    fresh_db,
+) -> None:
+    """C4 test 3: only repo details are root-only; Ball/ship fields are not."""
+    async with _client() as client:
+        root = await _create(client, {"title": "Product"})
+        child = await _create(
+            client,
+            {"title": "Leaf", "parent_id": root.json()["id"]},
+        )
+        child_id = child.json()["id"]
+
+        ball_and_ship = await _patch(
+            client,
+            child_id,
+            {
+                "ball": "agent",
+                "dev_updated": True,
+                "prod_updated": True,
+                "docs_updated": True,
+                "announced": True,
+            },
+        )
+        rejected_child_repo = await _patch(
+            client,
+            child_id,
+            {"repo_url": "https://github.com/example/task"},
+        )
+        rejected_child_usage = await _patch(
+            client,
+            child_id,
+            {"usage": "```bash\npytest\n```"},
+        )
+
+    assert ball_and_ship.status_code == 200
+    body = ball_and_ship.json()
+    assert body["ball"] == "agent"
+    assert body["dev_updated"] is True
+    assert body["prod_updated"] is True
+    assert body["docs_updated"] is True
+    assert body["announced"] is True
+
+    row = _item_row(fresh_db, child_id)
+    assert row["ball"] == "agent"
+    assert row["dev_updated"] == 1
+    assert row["prod_updated"] == 1
+    assert row["docs_updated"] == 1
+    assert row["announced"] == 1
+
+    assert rejected_child_repo.status_code == 422
+    assert rejected_child_repo.json() == {
+        "detail": "repo_url only applies to root items"
+    }
+    assert rejected_child_usage.status_code == 422
+    assert rejected_child_usage.json() == {"detail": "usage only applies to root items"}
 
 
 @pytest.mark.anyio
@@ -699,6 +782,555 @@ async def test_state_changes_are_listed_as_timestamped_activity(fresh_db) -> Non
             "created_at": t2,
         }
     ]
+
+
+@pytest.mark.anyio
+async def test_patch_changed_ball_stamps_and_records_activity(
+    fresh_db,
+    monkeypatch,
+) -> None:
+    """C1 test 1: changing Ball stamps the hand-off and records activity."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+
+    monkeypatch.setattr(config.settings, "owner", "handoff-owner")
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Ship handoff"})
+        item_id = created.json()["id"]
+        before = created.json()
+
+        clock.set_clock(lambda: t2)
+        changed = await _patch(client, item_id, {"ball": "agent"})
+        activity = await _activity(client, item_id)
+
+    assert changed.status_code == 200
+    body = changed.json()
+    assert body["ball"] == "agent"
+    assert body["ball_changed_at"] == t2
+    assert body["updated_at"] == t2
+    assert body["updated_by"] == "handoff-owner"
+    assert body["state_changed_at"] == before["state_changed_at"] == t1
+    assert body["ball_changed_at"] > before["ball_changed_at"]
+    assert body["updated_at"] > before["updated_at"]
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert activity_body == [
+        {
+            "id": activity_body[0]["id"],
+            "item_id": item_id,
+            "kind": "ball-change",
+            "actor": activity_body[0]["actor"],
+            "from_ball": "you",
+            "to_ball": "agent",
+            "created_at": t2,
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_patch_equal_ball_is_noop_for_ball_timestamp_and_activity(
+    fresh_db,
+) -> None:
+    """C1 test 2: sending the stored Ball value does not add Ball activity."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Keep owner ball"})
+        item_id = created.json()["id"]
+        before = created.json()
+
+        clock.set_clock(lambda: t2)
+        unchanged = await _patch(client, item_id, {"ball": "you"})
+        activity = await _activity(client, item_id)
+
+    assert unchanged.status_code == 200
+    body = unchanged.json()
+    assert body["ball"] == "you"
+    assert body["ball_changed_at"] == before["ball_changed_at"] == t1
+    assert body["updated_at"] == before["updated_at"] == t1
+    assert activity.status_code == 200
+    assert activity.json() == []
+
+
+@pytest.mark.anyio
+async def test_ball_handoff_bumps_updated_at_for_priority_when_returned(
+    fresh_db,
+) -> None:
+    """C1 test 3: a returned hand-off outranks equal peers by updated_at."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        handoff = await _create(client, {"title": "Returned handoff"})
+        peer = await _create(client, {"title": "Equal peer"})
+        handoff_id = handoff.json()["id"]
+        peer_id = peer.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        to_agent = await _patch(client, handoff_id, {"ball": "agent"})
+
+        clock.set_clock(lambda: t3)
+        to_you = await _patch(client, handoff_id, {"ball": "you"})
+        priority = await _priority(client)
+
+    assert to_agent.status_code == 200
+    assert to_agent.json()["ball"] == "agent"
+    assert to_agent.json()["updated_at"] == t2
+    assert to_you.status_code == 200
+    assert to_you.json()["ball"] == "you"
+    assert to_you.json()["updated_at"] == t3
+    assert priority.status_code == 200
+    assert [entry["id"] for entry in priority.json()] == [handoff_id, peer_id]
+
+
+@pytest.mark.anyio
+async def test_patch_state_only_does_not_stamp_ball_or_add_ball_activity(
+    fresh_db,
+) -> None:
+    """C1 test 4: Phase-only PATCH keeps Ball timestamp/activity untouched."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Spec phase only"})
+        item_id = created.json()["id"]
+        before = created.json()
+
+        clock.set_clock(lambda: t2)
+        changed = await _patch(client, item_id, {"state": "spec"})
+        activity = await _activity(client, item_id)
+
+    assert changed.status_code == 200
+    body = changed.json()
+    assert body["state"] == "spec"
+    assert body["state_changed_at"] == t2
+    assert body["ball"] == before["ball"] == "you"
+    assert body["ball_changed_at"] == before["ball_changed_at"] == t1
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert [entry["kind"] for entry in activity_body] == ["state-change"]
+    assert activity_body[0]["from_state"] == "not-started"
+    assert activity_body[0]["to_state"] == "spec"
+
+
+@pytest.mark.anyio
+async def test_activity_lists_state_and_ball_changes_in_timeline_order(
+    fresh_db,
+) -> None:
+    """D1 tests 1 and 2: activity returns typed Phase/Ball entries."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Mixed activity"})
+        item_id = created.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        state_changed = await _patch(client, item_id, {"state": "spec"})
+
+        clock.set_clock(lambda: t3)
+        ball_changed = await _patch(client, item_id, {"ball": "agent"})
+        activity = await _activity(client, item_id)
+
+    assert state_changed.status_code == 200
+    assert ball_changed.status_code == 200
+    assert activity.status_code == 200
+    body = activity.json()
+
+    assert body == [
+        {
+            "id": body[0]["id"],
+            "item_id": item_id,
+            "kind": "state-change",
+            "actor": body[0]["actor"],
+            "from_state": "not-started",
+            "to_state": "spec",
+            "created_at": t2,
+        },
+        {
+            "id": body[1]["id"],
+            "item_id": item_id,
+            "kind": "ball-change",
+            "actor": body[1]["actor"],
+            "from_ball": "you",
+            "to_ball": "agent",
+            "created_at": t3,
+        },
+    ]
+    for entry in body:
+        uuid.UUID(entry["id"])
+        assert entry["item_id"] == item_id
+        assert entry["actor"]
+        assert entry["created_at"] in {t2, t3}
+
+
+@pytest.mark.anyio
+async def test_activity_unknown_item_returns_404(fresh_db) -> None:
+    """D1 test 3: an unknown item id has no activity feed."""
+    del fresh_db
+
+    async with _client() as client:
+        response = await _activity(client, str(uuid.uuid4()))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "item not found"}
+
+
+@pytest.mark.anyio
+async def test_patch_ball_to_you_clears_handoff_context(fresh_db) -> None:
+    """C2 test 1: handing back to owner clears stale person hand-off context."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ask Sam", "ball": "person"})
+        item_id = created.json()["id"]
+        noted = await _patch(
+            client,
+            item_id,
+            {
+                "blocked_note": "ask Sam",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+        response = await _patch(client, item_id, {"ball": "you"})
+
+    assert noted.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ball"] == "you"
+    assert body["blocked_note"] is None
+    assert body["blocked_followup_date"] is None
+
+    row = _item_row(fresh_db, item_id)
+    assert row["ball"] == "you"
+    assert row["blocked_note"] is None
+    assert row["blocked_followup_date"] is None
+
+
+@pytest.mark.anyio
+async def test_patch_ball_to_agent_clears_handoff_context_even_with_payload_values(
+    fresh_db,
+) -> None:
+    """C2 test 2: handing to agent clears context even when payload sends it."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ask Lee", "ball": "person"})
+        item_id = created.json()["id"]
+        noted = await _patch(
+            client,
+            item_id,
+            {
+                "blocked_note": "ask Lee",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+        response = await _patch(
+            client,
+            item_id,
+            {
+                "ball": "agent",
+                "blocked_note": "keep this stale note",
+                "blocked_followup_date": "2026-07-11",
+            },
+        )
+
+    assert noted.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ball"] == "agent"
+    assert body["blocked_note"] is None
+    assert body["blocked_followup_date"] is None
+
+    row = _item_row(fresh_db, item_id)
+    assert row["ball"] == "agent"
+    assert row["blocked_note"] is None
+    assert row["blocked_followup_date"] is None
+
+
+@pytest.mark.anyio
+async def test_patch_ball_to_person_stores_handoff_context(fresh_db) -> None:
+    """C2 test 3: handing to a person stores note and follow-up together."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ask Priya"})
+        item_id = created.json()["id"]
+
+        response = await _patch(
+            client,
+            item_id,
+            {
+                "ball": "person",
+                "blocked_note": "ask Sam",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ball"] == "person"
+    assert body["blocked_note"] == "ask Sam"
+    assert body["blocked_followup_date"] == "2026-07-10"
+
+    row = _item_row(fresh_db, item_id)
+    assert row["ball"] == "person"
+    assert row["blocked_note"] == "ask Sam"
+    assert row["blocked_followup_date"] == "2026-07-10"
+
+
+@pytest.mark.anyio
+async def test_patch_equal_person_ball_leaves_handoff_context_intact(
+    fresh_db,
+) -> None:
+    """C2 test 4: equal-value person hand-off leaves existing context untouched."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Keep person", "ball": "person"})
+        item_id = created.json()["id"]
+        noted = await _patch(
+            client,
+            item_id,
+            {
+                "blocked_note": "ask Sam",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+        response = await _patch(client, item_id, {"ball": "person"})
+
+    assert noted.status_code == 200
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ball"] == "person"
+    assert body["blocked_note"] == "ask Sam"
+    assert body["blocked_followup_date"] == "2026-07-10"
+
+    row = _item_row(fresh_db, item_id)
+    assert row["ball"] == "person"
+    assert row["blocked_note"] == "ask Sam"
+    assert row["blocked_followup_date"] == "2026-07-10"
+
+
+@pytest.mark.anyio
+async def test_patch_terminal_state_preserves_person_ball_and_context(
+    fresh_db,
+) -> None:
+    """C3 test 1: closing does not rewrite Ball or hand-off context."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(
+            client, {"title": "Close while waiting", "ball": "person"}
+        )
+        item_id = created.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        noted = await _patch(
+            client,
+            item_id,
+            {
+                "blocked_note": "ask Sam",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+        clock.set_clock(lambda: t3)
+        closed = await _patch(client, item_id, {"state": "done"})
+        activity = await _activity(client, item_id)
+
+    assert noted.status_code == 200
+    assert closed.status_code == 200
+    body = closed.json()
+    assert body["state"] == "done"
+    assert body["ball"] == "person"
+    assert body["ball_changed_at"] == t1
+    assert body["blocked_note"] == "ask Sam"
+    assert body["blocked_followup_date"] == "2026-07-10"
+
+    row = _item_row(fresh_db, item_id)
+    assert row["state"] == "done"
+    assert row["ball"] == "person"
+    assert row["blocked_note"] == "ask Sam"
+    assert row["blocked_followup_date"] == "2026-07-10"
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert activity_body == [
+        {
+            "id": activity_body[0]["id"],
+            "item_id": item_id,
+            "kind": "state-change",
+            "actor": activity_body[0]["actor"],
+            "from_state": "not-started",
+            "to_state": "done",
+            "created_at": t3,
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_patch_reopen_from_terminal_defaults_ball_to_you(
+    fresh_db,
+) -> None:
+    """C3 test 2: reopening without Ball makes it the owner's move."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Reopen handoff", "ball": "person"})
+        item_id = created.json()["id"]
+        await _patch(
+            client,
+            item_id,
+            {
+                "blocked_note": "ask Sam",
+                "blocked_followup_date": "2026-07-10",
+            },
+        )
+
+        clock.set_clock(lambda: t2)
+        closed = await _patch(client, item_id, {"state": "done"})
+
+        clock.set_clock(lambda: t3)
+        reopened = await _patch(client, item_id, {"state": "review"})
+        activity = await _activity(client, item_id)
+
+    assert closed.status_code == 200
+    assert reopened.status_code == 200
+    body = reopened.json()
+    assert body["state"] == "review"
+    assert body["ball"] == "you"
+    assert body["ball_changed_at"] == t3
+    assert body["updated_at"] == t3
+    assert body["blocked_note"] is None
+    assert body["blocked_followup_date"] is None
+
+    row = _item_row(fresh_db, item_id)
+    assert row["state"] == "review"
+    assert row["ball"] == "you"
+    assert row["blocked_note"] is None
+    assert row["blocked_followup_date"] is None
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert len(activity_body) == 3
+    assert {
+        (entry["kind"], entry.get("from_state"), entry.get("to_state"))
+        for entry in activity_body
+        if entry["kind"] == "state-change"
+    } == {
+        ("state-change", "not-started", "done"),
+        ("state-change", "done", "review"),
+    }
+    ball_changes = [entry for entry in activity_body if entry["kind"] == "ball-change"]
+    assert ball_changes == [
+        {
+            "id": ball_changes[0]["id"],
+            "item_id": item_id,
+            "kind": "ball-change",
+            "actor": ball_changes[0]["actor"],
+            "from_ball": "person",
+            "to_ball": "you",
+            "created_at": t3,
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_patch_reopen_from_terminal_keeps_you_ball_without_activity(
+    fresh_db,
+) -> None:
+    """C3 test 3: reopening a you-owned terminal item adds no Ball activity."""
+    del fresh_db
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Reopen owned"})
+        item_id = created.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        closed = await _patch(client, item_id, {"state": "done"})
+
+        clock.set_clock(lambda: t3)
+        reopened = await _patch(client, item_id, {"state": "review"})
+        activity = await _activity(client, item_id)
+
+    assert closed.status_code == 200
+    assert reopened.status_code == 200
+    body = reopened.json()
+    assert body["state"] == "review"
+    assert body["ball"] == "you"
+    assert body["ball_changed_at"] == t1
+
+    assert activity.status_code == 200
+    activity_body = activity.json()
+    assert [entry["kind"] for entry in activity_body] == [
+        "state-change",
+        "state-change",
+    ]
+    assert [entry["from_state"] for entry in activity_body] == [
+        "not-started",
+        "done",
+    ]
+    assert [entry["to_state"] for entry in activity_body] == ["done", "review"]
+
+
+@pytest.mark.anyio
+async def test_patch_reopen_from_terminal_explicit_ball_wins(
+    fresh_db,
+) -> None:
+    """C3 test 4: explicit Ball in the reopen payload wins over defaulting."""
+    t1 = "2026-06-29T00:00:00.000000Z"
+    t2 = "2026-06-29T00:05:00.000000Z"
+    t3 = "2026-06-29T00:10:00.000000Z"
+
+    clock.set_clock(lambda: t1)
+    async with _client() as client:
+        created = await _create(client, {"title": "Reopen to agent", "ball": "person"})
+        item_id = created.json()["id"]
+
+        clock.set_clock(lambda: t2)
+        closed = await _patch(client, item_id, {"state": "done"})
+
+        clock.set_clock(lambda: t3)
+        reopened = await _patch(client, item_id, {"state": "review", "ball": "agent"})
+        activity = await _activity(client, item_id)
+
+    assert closed.status_code == 200
+    assert reopened.status_code == 200
+    body = reopened.json()
+    assert body["state"] == "review"
+    assert body["ball"] == "agent"
+    assert body["ball_changed_at"] == t3
+
+    row = _item_row(fresh_db, item_id)
+    assert row["state"] == "review"
+    assert row["ball"] == "agent"
+
+    assert activity.status_code == 200
+    assert [
+        (entry["from_ball"], entry["to_ball"])
+        for entry in activity.json()
+        if entry["kind"] == "ball-change"
+    ] == [("person", "agent")]
 
 
 @pytest.mark.anyio

@@ -1,6 +1,6 @@
 """Pydantic models used across the API layer."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, StrictBool, model_validator
 
@@ -87,6 +87,7 @@ class ItemUpdate(BaseModel):
 
     title: str | None = None
     state: State | None = None
+    ball: Ball | None = None
     mode: Mode | None = None
     effort: Effort | None = None
     blocked_note: str | None = None
@@ -253,16 +254,34 @@ class ScratchpadOut(BaseModel):
     updated_at: str | None
 
 
-class ItemActivityOut(BaseModel):
+class StateChangeActivityOut(BaseModel):
     """Response model for timestamped item activity in the detail panel."""
 
     id: str
     item_id: str
-    kind: Literal["state-change"]
+    kind: Literal["state-change"] = "state-change"
     actor: str
     from_state: State
     to_state: State
     created_at: str
+
+
+class BallChangeActivityOut(BaseModel):
+    """Response model for timestamped Ball hand-off activity."""
+
+    id: str
+    item_id: str
+    kind: Literal["ball-change"] = "ball-change"
+    actor: str
+    from_ball: Ball
+    to_ball: Ball
+    created_at: str
+
+
+ItemActivityOut = Annotated[
+    StateChangeActivityOut | BallChangeActivityOut,
+    Field(discriminator="kind"),
+]
 
 
 class RunOut(BaseModel):
