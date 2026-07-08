@@ -397,7 +397,7 @@ export function OutlinerRow({
               displayDone && 'bg-muted text-muted-foreground'
             )}
             aria-label={`Ball: ${BALL_LABELS[item.ball]}`}
-            aria-keyshortcuts="A Y"
+            aria-keyshortcuts="a y"
             title={`Ball: ${BALL_LABELS[item.ball]}`}
             disabled={pending}
             onKeyDown={handleBallKeyDown}

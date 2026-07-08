@@ -568,6 +568,7 @@ describe('Outliner', () => {
 
     expect(control).toBeTruthy()
     expect(control?.getAttribute('aria-label')).toContain('Agent')
+    expect(control?.getAttribute('aria-keyshortcuts')).toBe('a y')
     expect(control?.textContent).toContain('~agent')
   })
 
