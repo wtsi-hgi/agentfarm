@@ -463,7 +463,8 @@ describe('outliner mutation Server Actions', () => {
     const handoffNote = getTextarea(container, 'Hand-off note')
     await setTextareaValue(handoffNote, '  Needs Alice  ')
     await click(getButton(container, 'Save hand-off'))
-    await setTextareaValue(handoffNote, '   ')
+    await click(getButton(container, 'Edit hand-off'))
+    await setTextareaValue(getTextarea(container, 'Hand-off note'), '   ')
     await click(getButton(container, 'Save hand-off'))
 
     expect(patchBodies).toEqual([

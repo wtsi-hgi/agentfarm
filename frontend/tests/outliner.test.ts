@@ -106,11 +106,6 @@ function renderedDocument(element: React.ReactElement) {
 
 let roots: Root[] = []
 
-type HandoffPatch = {
-  blocked_note: string | null
-  blocked_followup_date: string | null
-}
-
 async function flushReact() {
   await act(async () => {
     await Promise.resolve()
@@ -131,24 +126,6 @@ async function renderClient(element: React.ReactElement) {
   await flushReact()
 
   return container
-}
-
-async function renderClientWithRerender(element: React.ReactElement) {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root = createRoot(container)
-  roots.push(root)
-
-  async function rerender(nextElement: React.ReactElement) {
-    await act(async () => {
-      root.render(nextElement)
-    })
-    await flushReact()
-  }
-
-  await rerender(element)
-
-  return { container, rerender }
 }
 
 async function keyDown(element: HTMLElement, key: string) {
@@ -274,34 +251,6 @@ function mountedBallControl(container: ParentNode, itemId: string) {
   return control
 }
 
-function handoffEditor(container: ParentNode) {
-  return container.querySelector('[aria-label="Person hand-off editor"]')
-}
-
-function handoffNoteField(container: ParentNode) {
-  const field = container.querySelector('textarea[aria-label="Hand-off note"]')
-  if (!(field instanceof HTMLTextAreaElement)) {
-    throw new Error('Missing hand-off note field')
-  }
-  return field
-}
-
-function handoffDateField(container: ParentNode) {
-  const field = container.querySelector('input[aria-label="Follow-up date"]')
-  if (!(field instanceof HTMLInputElement)) {
-    throw new Error('Missing follow-up date field')
-  }
-  return field
-}
-
-function handoffSaveButton(container: ParentNode) {
-  const button = container.querySelector('button[aria-label="Save hand-off"]')
-  if (!(button instanceof HTMLButtonElement)) {
-    throw new Error('Missing hand-off save button')
-  }
-  return button
-}
-
 function itemReadinessChip(document: Document, itemId: string) {
   const chip = document.querySelector(
     `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
@@ -362,11 +311,7 @@ function renderedRootSectionIds(document: Document) {
 }
 
 function rowCallbacks(
-  onChangeBall: (item: TreeItem, ball: Ball) => Promise<void> = async () => {},
-  onSaveHandoff: (
-    item: TreeItem,
-    patch: HandoffPatch
-  ) => Promise<void> = async () => {}
+  onChangeBall: (item: TreeItem, ball: Ball) => Promise<void> = async () => {}
 ) {
   return {
     onToggle: vi.fn(),
@@ -379,7 +324,6 @@ function rowCallbacks(
     onChangeState: vi.fn(async () => undefined),
     onChangeDone: vi.fn(async () => undefined),
     onChangeBall,
-    onSaveHandoff,
     onOpenNotes: vi.fn(),
     onOpenPromptTimeline: vi.fn(),
   }
@@ -390,7 +334,6 @@ function renderOutlinerRow(
   options: {
     hasChildren?: boolean
     onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
-    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
   } = {}
 ) {
   return renderClient(
@@ -400,7 +343,7 @@ function renderOutlinerRow(
       hasChildren: options.hasChildren ?? false,
       collapsed: false,
       displayReadiness: 'ready',
-      ...rowCallbacks(options.onChangeBall, options.onSaveHandoff),
+      ...rowCallbacks(options.onChangeBall),
     })
   )
 }
@@ -410,7 +353,6 @@ function outlinerRowElement(
   options: {
     hasChildren?: boolean
     onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
-    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
   } = {}
 ) {
   return React.createElement(OutlinerRow, {
@@ -419,7 +361,7 @@ function outlinerRowElement(
     hasChildren: options.hasChildren ?? false,
     collapsed: false,
     displayReadiness: 'ready',
-    ...rowCallbacks(options.onChangeBall, options.onSaveHandoff),
+    ...rowCallbacks(options.onChangeBall),
   })
 }
 
@@ -428,7 +370,6 @@ function renderedOutlinerRowDocument(
   options: {
     hasChildren?: boolean
     onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
-    onSaveHandoff?: (item: TreeItem, patch: HandoffPatch) => Promise<void>
   } = {}
 ) {
   return renderedDocument(
@@ -684,42 +625,7 @@ describe('Outliner', () => {
     expect(itemBallControl(document, 'child')).toBeTruthy()
   })
 
-  it('shows the hand-off editor only while the Ball belongs to a person', async () => {
-    const baseHandoff = item({
-      id: 'handoff',
-      title: 'Ask partner',
-      ball: 'you',
-    })
-    const { container, rerender } = await renderClientWithRerender(
-      outlinerRowElement(baseHandoff)
-    )
-
-    expect(handoffEditor(container)).toBeNull()
-
-    await rerender(
-      outlinerRowElement({
-        ...baseHandoff,
-        ball: 'person',
-        status: 'waiting',
-        actionable: false,
-      })
-    )
-
-    expect(handoffEditor(container)).toBeTruthy()
-
-    await rerender(
-      outlinerRowElement({
-        ...baseHandoff,
-        ball: 'agent',
-        status: 'monitoring',
-        actionable: false,
-      })
-    )
-
-    expect(handoffEditor(container)).toBeNull()
-  })
-
-  it('keeps inline hand-off editors out of dialog landmarks', () => {
+  it('keeps person hand-off rows compact without mounting row-level editors', () => {
     const document = renderedDocument(
       React.createElement(Outliner, {
         items: [
@@ -741,103 +647,19 @@ describe('Outliner', () => {
       })
     )
 
-    const editors = document.querySelectorAll(
-      '[aria-label="Person hand-off editor"]'
-    )
-
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
-    expect(editors).toHaveLength(2)
-    for (const editor of editors) {
-      expect(editor.getAttribute('role')).toBe('group')
+    for (const itemId of ['first-handoff', 'second-handoff']) {
+      const row = outlinerItem(document, itemId)
+      expect(
+        row.querySelector('[aria-label="Person hand-off editor"]')
+      ).toBeNull()
+      expect(
+        row.querySelector('textarea[aria-label="Hand-off note"]')
+      ).toBeNull()
+      expect(
+        itemBallControl(document, itemId)?.getAttribute('aria-expanded')
+      ).toBeNull()
     }
-  })
-
-  it('saves the hand-off note and follow-up date together', async () => {
-    const onSaveHandoff = vi.fn(async () => undefined)
-    const rowItem = item({
-      id: 'handoff',
-      title: 'Ask partner',
-      ball: 'person',
-      status: 'waiting',
-      actionable: false,
-    })
-    const container = await renderOutlinerRow(rowItem, { onSaveHandoff })
-
-    await changeField(handoffNoteField(container), 'ask Sam')
-    await changeField(handoffDateField(container), '2026-07-10')
-    await click(handoffSaveButton(container))
-
-    expect(onSaveHandoff).toHaveBeenCalledTimes(1)
-    expect(onSaveHandoff).toHaveBeenCalledWith(rowItem, {
-      blocked_note: 'ask Sam',
-      blocked_followup_date: '2026-07-10',
-    })
-  })
-
-  it('patches the item hand-off fields from the Outliner save action', async () => {
-    const container = await renderClient(
-      React.createElement(Outliner, {
-        items: [
-          item({
-            id: 'handoff',
-            title: 'Ask partner',
-            ball: 'person',
-            status: 'waiting',
-            actionable: false,
-          }),
-        ],
-        markers: [],
-      })
-    )
-
-    await changeField(handoffNoteField(container), 'ask Sam')
-    await changeField(handoffDateField(container), '2026-07-10')
-    await click(handoffSaveButton(container))
-
-    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
-    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff', {
-      blocked_note: 'ask Sam',
-      blocked_followup_date: '2026-07-10',
-    })
-  })
-
-  it('opens an empty hand-off editor after backend-cleared fields are handed to a person again', async () => {
-    const rowItem = item({
-      id: 'handoff',
-      title: 'Ask partner',
-      ball: 'person',
-      status: 'waiting',
-      actionable: false,
-      blocked_note: 'ask Sam',
-      blocked_followup_date: '2026-07-10',
-    })
-    const { container, rerender } = await renderClientWithRerender(
-      outlinerRowElement(rowItem)
-    )
-
-    expect(handoffNoteField(container).value).toBe('ask Sam')
-    expect(handoffDateField(container).value).toBe('2026-07-10')
-
-    await rerender(
-      outlinerRowElement({
-        ...rowItem,
-        ball: 'you',
-        status: 'ready',
-        actionable: true,
-        blocked_note: null,
-        blocked_followup_date: null,
-      })
-    )
-    await rerender(
-      outlinerRowElement({
-        ...rowItem,
-        blocked_note: null,
-        blocked_followup_date: null,
-      })
-    )
-
-    expect(handoffNoteField(container).value).toBe('')
-    expect(handoffDateField(container).value).toBe('')
   })
 
   it('keeps a root product section background stable when neighbours and order change', () => {

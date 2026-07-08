@@ -12,7 +12,6 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { DateInput } from '@/components/ui/date-input'
 import { Input } from '@/components/ui/input'
 import type { Ball, Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
@@ -64,20 +63,8 @@ const PROMPT_RESPONSE_AVAILABLE_ICON = (
   <MessagesSquare className="size-3.5" strokeWidth={2.75} aria-hidden="true" />
 )
 const DELETE_ICON = <Trash2 className="size-3.5" aria-hidden="true" />
-const HANDOFF_EDITOR_GAP = 4
-const HANDOFF_EDITOR_VIEWPORT_PADDING = 8
-
-type HandoffEditorPosition = {
-  left: number
-  top: number
-}
 
 type ReadinessChipStatus = Exclude<TreeItem['status'], 'rollup'>
-
-export type HandoffPatch = Pick<
-  TreeItem,
-  'blocked_note' | 'blocked_followup_date'
->
 
 const READINESS_CHIP_LABELS = {
   ready: 'Ready',
@@ -98,14 +85,6 @@ function isFollowUpStatus(status: TreeItem['status']): boolean {
 
 function isTerminalStatus(status: TreeItem['status']): boolean {
   return status === 'done' || status === 'dropped'
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (max < min) {
-    return min
-  }
-
-  return Math.min(Math.max(value, min), max)
 }
 
 function chipStatus(
@@ -139,7 +118,6 @@ type OutlinerRowProps = {
   onChangeState: (item: TreeItem, state: State) => Promise<void>
   onChangeDone: (item: TreeItem, checked: boolean) => Promise<void>
   onChangeBall: (item: TreeItem, ball: Ball) => Promise<void>
-  onSaveHandoff: (item: TreeItem, patch: HandoffPatch) => Promise<void>
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
   draftResetRequest?: { requestId: number; text: string } | null
@@ -162,30 +140,18 @@ export function OutlinerRow({
   onChangeState,
   onChangeDone,
   onChangeBall,
-  onSaveHandoff,
   onOpenNotes,
   onOpenPromptTimeline,
   draftResetRequest,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
-  const [handoffNote, setHandoffNote] = React.useState(item.blocked_note ?? '')
-  const [handoffDate, setHandoffDate] = React.useState(
-    item.blocked_followup_date ?? ''
-  )
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const pendingRef = React.useRef(false)
   const previousItemTitle = React.useRef(item.title)
-  const handoffTriggerRef = React.useRef<HTMLDivElement>(null)
-  const handoffEditorRef = React.useRef<HTMLFormElement>(null)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
-  const handoffEditorId = React.useId()
-  const handoffNoteId = React.useId()
-  const [handoffEditorPosition, setHandoffEditorPosition] =
-    React.useState<HandoffEditorPosition | null>(null)
   const isLeaf = !hasChildren
-  const showHandoffEditor = isLeaf && item.ball === 'person'
 
   React.useEffect(() => {
     if (previousItemTitle.current === item.title) {
@@ -201,100 +167,6 @@ export function OutlinerRow({
     }
     setDraft(draftResetText)
   }, [draftResetRequestId, draftResetText])
-
-  React.useEffect(() => {
-    if (item.ball !== 'person') {
-      setHandoffNote('')
-      setHandoffDate('')
-      return
-    }
-
-    setHandoffNote(item.blocked_note ?? '')
-    setHandoffDate(item.blocked_followup_date ?? '')
-  }, [item.id, item.ball, item.blocked_note, item.blocked_followup_date])
-
-  const updateHandoffEditorPosition = React.useCallback(() => {
-    const trigger = handoffTriggerRef.current
-    const editor = handoffEditorRef.current
-
-    if (!trigger || !editor) {
-      return
-    }
-
-    const triggerRect = trigger.getBoundingClientRect()
-    const editorRect = editor.getBoundingClientRect()
-    const width = editorRect.width
-    const height = editorRect.height
-    const maxLeft = window.innerWidth - width - HANDOFF_EDITOR_VIEWPORT_PADDING
-    const maxTop = window.innerHeight - height - HANDOFF_EDITOR_VIEWPORT_PADDING
-    const preferredLeft = triggerRect.right - width
-    const belowTop = triggerRect.bottom + HANDOFF_EDITOR_GAP
-    const aboveTop = triggerRect.top - height - HANDOFF_EDITOR_GAP
-    const top =
-      belowTop + height >
-        window.innerHeight - HANDOFF_EDITOR_VIEWPORT_PADDING &&
-      aboveTop >= HANDOFF_EDITOR_VIEWPORT_PADDING
-        ? aboveTop
-        : clamp(belowTop, HANDOFF_EDITOR_VIEWPORT_PADDING, maxTop)
-    const nextPosition = {
-      left: clamp(preferredLeft, HANDOFF_EDITOR_VIEWPORT_PADDING, maxLeft),
-      top,
-    }
-
-    setHandoffEditorPosition((current) =>
-      current?.left === nextPosition.left && current.top === nextPosition.top
-        ? current
-        : nextPosition
-    )
-  }, [])
-
-  React.useLayoutEffect(() => {
-    if (!showHandoffEditor) {
-      setHandoffEditorPosition(null)
-      return
-    }
-
-    updateHandoffEditorPosition()
-  }, [showHandoffEditor, updateHandoffEditorPosition])
-
-  React.useLayoutEffect(() => {
-    if (!showHandoffEditor) {
-      return
-    }
-
-    let frameId: number | null = null
-    const scheduleUpdate = () => {
-      if (frameId !== null) {
-        return
-      }
-
-      frameId = window.requestAnimationFrame(() => {
-        frameId = null
-        updateHandoffEditorPosition()
-      })
-    }
-
-    const observer =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(scheduleUpdate)
-    const editor = handoffEditorRef.current
-    if (editor) {
-      observer?.observe(editor)
-    }
-
-    window.addEventListener('resize', scheduleUpdate)
-    window.addEventListener('scroll', scheduleUpdate, true)
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId)
-      }
-      observer?.disconnect()
-      window.removeEventListener('resize', scheduleUpdate)
-      window.removeEventListener('scroll', scheduleUpdate, true)
-    }
-  }, [showHandoffEditor, updateHandoffEditorPosition])
 
   function currentDraftText() {
     return draft
@@ -407,18 +279,6 @@ export function OutlinerRow({
     void run(() => onChangeBall(item, ball))
   }
 
-  function handleHandoffSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    event.stopPropagation()
-    const trimmedNote = handoffNote.trim()
-    void run(() =>
-      onSaveHandoff(item, {
-        blocked_note: trimmedNote === '' ? null : trimmedNote,
-        blocked_followup_date: handoffDate === '' ? null : handoffDate,
-      })
-    )
-  }
-
   const checkedDone = item.state === 'done'
   const displayDone = displayReadiness === 'done'
   const readinessStatus = chipStatus(item, hasChildren, displayReadiness)
@@ -528,81 +388,22 @@ export function OutlinerRow({
 
       <div className="flex flex-wrap items-center justify-end gap-1">
         {isLeaf ? (
-          <div ref={handoffTriggerRef} className="relative shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className={cn(
-                'h-8 shrink-0 px-2 font-mono text-xs',
-                displayDone && 'bg-muted text-muted-foreground'
-              )}
-              aria-label={`Ball: ${BALL_LABELS[item.ball]}`}
-              aria-keyshortcuts="A Y"
-              aria-controls={showHandoffEditor ? handoffEditorId : undefined}
-              aria-expanded={showHandoffEditor}
-              title={`Ball: ${BALL_LABELS[item.ball]}`}
-              disabled={pending}
-              onKeyDown={handleBallKeyDown}
-            >
-              ~{item.ball}
-            </Button>
-            {showHandoffEditor ? (
-              <form
-                ref={handoffEditorRef}
-                id={handoffEditorId}
-                role="group"
-                aria-label="Person hand-off editor"
-                className="bg-popover text-popover-foreground border-border fixed z-50 grid w-72 gap-3 rounded-md border p-3 text-sm shadow-lg"
-                style={{
-                  left: handoffEditorPosition?.left ?? 0,
-                  top: handoffEditorPosition?.top ?? 0,
-                  visibility: handoffEditorPosition ? 'visible' : 'hidden',
-                }}
-                onClick={(event) => event.stopPropagation()}
-                onSubmit={handleHandoffSubmit}
-              >
-                <div className="grid gap-1.5">
-                  <label
-                    className="text-foreground text-xs leading-none font-medium"
-                    htmlFor={handoffNoteId}
-                  >
-                    Hand-off note
-                  </label>
-                  <textarea
-                    id={handoffNoteId}
-                    aria-label="Hand-off note"
-                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-[4.5rem] w-full resize-y rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={pending}
-                    onChange={(event) =>
-                      setHandoffNote(event.currentTarget.value)
-                    }
-                    placeholder="Who or what is needed"
-                    value={handoffNote}
-                  />
-                </div>
-                <DateInput
-                  aria-label="Follow-up date"
-                  className="gap-1.5"
-                  disabled={pending}
-                  inputClassName="h-9 text-sm"
-                  label="Follow-up date"
-                  onChange={setHandoffDate}
-                  value={handoffDate}
-                />
-                <div className="flex justify-end">
-                  <Button
-                    type="submit"
-                    size="sm"
-                    aria-label="Save hand-off"
-                    disabled={pending}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </form>
-            ) : null}
-          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(
+              'h-8 shrink-0 px-2 font-mono text-xs',
+              displayDone && 'bg-muted text-muted-foreground'
+            )}
+            aria-label={`Ball: ${BALL_LABELS[item.ball]}`}
+            aria-keyshortcuts="A Y"
+            title={`Ball: ${BALL_LABELS[item.ball]}`}
+            disabled={pending}
+            onKeyDown={handleBallKeyDown}
+          >
+            ~{item.ball}
+          </Button>
         ) : null}
         {isLeaf ? (
           <select

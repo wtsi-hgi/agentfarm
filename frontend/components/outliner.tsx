@@ -31,7 +31,6 @@ import {
   MODE_COLOUR_MAP,
   OutlinerRow,
   type DisplayReadiness,
-  type HandoffPatch,
 } from '@/components/outliner-row'
 import {
   ProductSwitcher,
@@ -3300,12 +3299,6 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
-  async function saveItemHandoff(item: TreeItem, patch: HandoffPatch) {
-    await mutationActions.patchItem(item.id, patch)
-    setDetailRefreshKey((current) => current + 1)
-    setSelectedItemId(item.id)
-  }
-
   function rememberPreviousDoneState(itemId: string, state: State) {
     setPreviousDoneStateById((current) => {
       if (current.get(itemId) === state) {
@@ -3997,7 +3990,6 @@ export function Outliner({
             onChangeState={changeItemState}
             onChangeDone={changeItemDone}
             onChangeBall={changeItemBall}
-            onSaveHandoff={saveItemHandoff}
             onOpenNotes={openNotes}
             onOpenPromptTimeline={openPromptTimeline}
             draftResetRequest={rowDraftResetRequest}

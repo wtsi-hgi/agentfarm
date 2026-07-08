@@ -782,6 +782,173 @@ describe('Outliner comment target lifecycle', () => {
     expect(newCommentInput.value).toBe('')
   })
 
+  it('shows compact hand-off controls in Details and can enter person hand-off', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'you',
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+          blocked_note:
+            patch.ball && patch.ball !== 'person'
+              ? null
+              : (patch.blocked_note ?? savedItem.blocked_note),
+          blocked_followup_date:
+            patch.ball && patch.ball !== 'person'
+              ? null
+              : (patch.blocked_followup_date ??
+                savedItem.blocked_followup_date),
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+
+    expect(handoffSection.textContent).toContain('With you')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+    expect(getOptionalInput(handoffSection, 'Follow-up date')).toBeNull()
+
+    await click(getButton(handoffSection, 'Hand off to person'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff-row', {
+      ball: 'person',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('Waiting on person')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('')
+  })
+
+  it('saves hand-off note and follow-up date from Details, then collapses to a summary', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    await changeTextarea(
+      getTextarea(handoffSection, 'Hand-off note'),
+      '  ask Sam  '
+    )
+    await changeInput(getInput(handoffSection, 'Follow-up date'), '2026-07-10')
+    await click(getButton(handoffSection, 'Save hand-off'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff-row', {
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+    expect(getOptionalInput(handoffSection, 'Follow-up date')).toBeNull()
+    expect(handoffSection.textContent).toContain('ask Sam')
+    expect(handoffSection.textContent).toContain('2026-07-10')
+
+    await click(getButton(handoffSection, 'Edit hand-off'))
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('ask Sam')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('2026-07-10')
+  })
+
+  it('can leave person hand-off from Details and return with cleared fields', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        const leavingPerson = patch.ball && patch.ball !== 'person'
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+          blocked_note: leavingPerson
+            ? null
+            : (patch.blocked_note ?? savedItem.blocked_note),
+          blocked_followup_date: leavingPerson
+            ? null
+            : (patch.blocked_followup_date ?? savedItem.blocked_followup_date),
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('Waiting on person')
+    expect(handoffSection.textContent).toContain('ask Sam')
+
+    await click(getButton(handoffSection, 'Take back hand-off'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'you',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('With you')
+    expect(handoffSection.textContent).not.toContain('ask Sam')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+
+    await click(getButton(handoffSection, 'Hand off to person'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'person',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('')
+
+    await click(getButton(handoffSection, 'Move hand-off to agent'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'agent',
+    })
+    expect(
+      getSection(getDetailsPanel(container), 'Hand-off').textContent
+    ).toContain('With agent')
+  })
+
   it('shows leaf ship milestone checkboxes from item booleans', async () => {
     const container = await render(
       React.createElement(Outliner, {

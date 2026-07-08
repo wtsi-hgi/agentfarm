@@ -3,6 +3,7 @@
 import * as React from 'react'
 import dynamic from 'next/dynamic'
 import {
+  Bot,
   Check,
   Clock3,
   GitBranch,
@@ -14,6 +15,8 @@ import {
   Send,
   Terminal,
   Trash2,
+  UserRound,
+  UserRoundCheck,
   X,
 } from 'lucide-react'
 
@@ -28,8 +31,15 @@ import {
 import type { DestructiveConfirmationDialogProps } from '@/components/destructive-confirmation-dialog'
 import type { MarkdownContentProps } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
+import { DateInput } from '@/components/ui/date-input'
 import { Input } from '@/components/ui/input'
-import type { Comment, Item, ItemActivity, TreeItem } from '@/lib/contracts'
+import type {
+  Ball,
+  Comment,
+  Item,
+  ItemActivity,
+  TreeItem,
+} from '@/lib/contracts'
 import { BALL_LABELS, PHASE_LABELS } from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
@@ -58,6 +68,13 @@ type ShipMilestoneKey =
   | 'docs_updated'
   | 'announced'
 type ShipMilestoneState = Record<ShipMilestoneKey, boolean>
+type HandoffSavingState = 'ball' | 'details' | null
+
+const HANDOFF_STATUS_LABELS = {
+  you: 'With you',
+  agent: 'With agent',
+  person: 'Waiting on person',
+} satisfies Record<Ball, string>
 
 type PendingDependencyRemoval = {
   dependencyId: string
@@ -221,6 +238,18 @@ export function CommentsPanel({
   const [descriptionDraft, setDescriptionDraft] = React.useState('')
   const [repoDraft, setRepoDraft] = React.useState('')
   const [usageDraft, setUsageDraft] = React.useState('')
+  const [handoffNoteDraft, setHandoffNoteDraft] = React.useState(
+    () => item?.blocked_note ?? ''
+  )
+  const [handoffDateDraft, setHandoffDateDraft] = React.useState(
+    () => item?.blocked_followup_date ?? ''
+  )
+  const [editingHandoff, setEditingHandoff] = React.useState(
+    () =>
+      item?.ball === 'person' &&
+      !item.blocked_note &&
+      !item.blocked_followup_date
+  )
   const [editingRepoUrl, setEditingRepoUrl] = React.useState(() =>
     Boolean(item && item.parent_id === null && !item.repo_url?.trim())
   )
@@ -250,6 +279,8 @@ export function CommentsPanel({
     React.useState<DetailField | null>(null)
   const [savingShipMilestone, setSavingShipMilestone] =
     React.useState<ShipMilestoneKey | null>(null)
+  const [savingHandoff, setSavingHandoff] =
+    React.useState<HandoffSavingState>(null)
   const [savingDependency, setSavingDependency] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -257,6 +288,18 @@ export function CommentsPanel({
   const isRootItem = item?.parent_id === null
   const isContainerItem = Boolean(
     item && (item.status === 'rollup' || item.rollup)
+  )
+  const hasChildItems = Boolean(
+    item && allItems.some((candidate) => candidate.parent_id === item.id)
+  )
+  const showHandoffSection = Boolean(item && !hasChildItems)
+  const isPersonHandoff = item?.ball === 'person'
+  const currentHandoffNote = isPersonHandoff ? (item.blocked_note ?? '') : ''
+  const currentHandoffDate = isPersonHandoff
+    ? (item.blocked_followup_date ?? '')
+    : ''
+  const hasSavedHandoffDetails = Boolean(
+    currentHandoffNote.trim() || currentHandoffDate
   )
   const currentItemId = React.useRef<string | null>(itemId)
   const previousDetailItemId = React.useRef<string | null | undefined>(
@@ -337,11 +380,23 @@ export function CommentsPanel({
     setEditingUsage(
       Boolean(hasSelectedItem && isRootItem && currentUsage.trim().length === 0)
     )
+    setHandoffNoteDraft(
+      item?.ball === 'person' ? (item.blocked_note ?? '') : ''
+    )
+    setHandoffDateDraft(
+      item?.ball === 'person' ? (item.blocked_followup_date ?? '') : ''
+    )
+    setEditingHandoff(
+      item?.ball === 'person' &&
+        !item.blocked_note &&
+        !item.blocked_followup_date
+    )
     setEditingDependencies(false)
     setDependencyTargetId('')
     setDependencyDropActive(false)
     setSavingDetailField(null)
     setSavingShipMilestone(null)
+    setSavingHandoff(null)
     setSavingDependency(false)
     setPendingDeleteComment(null)
     setPendingRemoveDependency(null)
@@ -353,6 +408,21 @@ export function CommentsPanel({
     isRootItem,
     item,
     itemId,
+  ])
+
+  React.useEffect(() => {
+    setHandoffNoteDraft(currentHandoffNote)
+    setHandoffDateDraft(currentHandoffDate)
+    if (!isPersonHandoff) {
+      setEditingHandoff(false)
+      return
+    }
+    setEditingHandoff(!hasSavedHandoffDetails)
+  }, [
+    currentHandoffDate,
+    currentHandoffNote,
+    hasSavedHandoffDetails,
+    isPersonHandoff,
   ])
 
   const loadComments = React.useCallback(async () => {
@@ -661,6 +731,76 @@ export function CommentsPanel({
     }
   }
 
+  async function updateHandoffBall(ball: Ball) {
+    if (!itemId || !item || ball === item.ball || savingHandoff) {
+      return
+    }
+
+    const requestedItemId = itemId
+    setSavingHandoff('ball')
+    setError(null)
+    try {
+      const savedItem = await patchItem(requestedItemId, { ball })
+      onItemPatched?.(savedItem)
+      if (currentItemId.current !== requestedItemId) {
+        return
+      }
+      if (ball === 'person') {
+        setHandoffNoteDraft(savedItem.blocked_note ?? '')
+        setHandoffDateDraft(savedItem.blocked_followup_date ?? '')
+        setEditingHandoff(
+          !savedItem.blocked_note && !savedItem.blocked_followup_date
+        )
+      } else {
+        setHandoffNoteDraft('')
+        setHandoffDateDraft('')
+        setEditingHandoff(false)
+      }
+    } catch (caught) {
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to save')
+      }
+    } finally {
+      if (currentItemId.current === requestedItemId) {
+        setSavingHandoff(null)
+      }
+    }
+  }
+
+  async function saveHandoffDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!itemId || !item || !isPersonHandoff || savingHandoff) {
+      return
+    }
+
+    const trimmedNote = handoffNoteDraft.trim()
+    const patch = {
+      blocked_note: trimmedNote === '' ? null : trimmedNote,
+      blocked_followup_date: handoffDateDraft === '' ? null : handoffDateDraft,
+    }
+    const requestedItemId = itemId
+    setSavingHandoff('details')
+    setError(null)
+    try {
+      const savedItem = await patchItem(requestedItemId, patch)
+      onItemPatched?.(savedItem)
+      if (currentItemId.current !== requestedItemId) {
+        return
+      }
+      setHandoffNoteDraft(savedItem.blocked_note ?? '')
+      setHandoffDateDraft(savedItem.blocked_followup_date ?? '')
+      setEditingHandoff(false)
+    } catch (caught) {
+      if (currentItemId.current === requestedItemId) {
+        setError(caught instanceof Error ? caught.message : 'Unable to save')
+      }
+    } finally {
+      if (currentItemId.current === requestedItemId) {
+        setSavingHandoff(null)
+      }
+    }
+  }
+
   async function updateShipMilestone(
     milestone: ShipMilestoneKey,
     checked: boolean
@@ -858,6 +998,209 @@ export function CommentsPanel({
     )
   }
 
+  function cancelHandoffEdit() {
+    setHandoffNoteDraft(currentHandoffNote)
+    setHandoffDateDraft(currentHandoffDate)
+    setEditingHandoff(false)
+  }
+
+  function renderHandoffBallControls() {
+    if (!item) {
+      return null
+    }
+
+    if (item.ball === 'person') {
+      return (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-label="Take back hand-off"
+            disabled={savingHandoff !== null}
+            onClick={() => void updateHandoffBall('you')}
+          >
+            <UserRoundCheck className="size-3.5" aria-hidden="true" />
+            You
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            aria-label="Move hand-off to agent"
+            disabled={savingHandoff !== null}
+            onClick={() => void updateHandoffBall('agent')}
+          >
+            <Bot className="size-3.5" aria-hidden="true" />
+            Agent
+          </Button>
+        </>
+      )
+    }
+
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        aria-label="Hand off to person"
+        disabled={savingHandoff !== null}
+        onClick={() => void updateHandoffBall('person')}
+      >
+        <UserRound className="size-3.5" aria-hidden="true" />
+        Person
+      </Button>
+    )
+  }
+
+  function renderHandoffDetails() {
+    if (!item || !isPersonHandoff) {
+      return null
+    }
+
+    if (editingHandoff) {
+      return (
+        <form
+          aria-label="Person hand-off editor"
+          className="mt-3 grid gap-2"
+          role="group"
+          onSubmit={saveHandoffDetails}
+        >
+          <div className="grid gap-1.5">
+            <label
+              className="text-foreground text-xs leading-none font-medium"
+              htmlFor="details-handoff-note"
+            >
+              Hand-off note
+            </label>
+            <textarea
+              id="details-handoff-note"
+              aria-label="Hand-off note"
+              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-20 w-full resize-y rounded-md border px-3 py-2 text-sm transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={savingHandoff !== null}
+              onChange={(event) =>
+                setHandoffNoteDraft(event.currentTarget.value)
+              }
+              placeholder="Who or what is needed"
+              value={handoffNoteDraft}
+            />
+          </div>
+          <DateInput
+            aria-label="Follow-up date"
+            className="gap-1.5"
+            disabled={savingHandoff !== null}
+            inputClassName="h-8 text-sm"
+            label="Follow-up date"
+            onChange={setHandoffDateDraft}
+            value={handoffDateDraft}
+          />
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-8"
+              aria-label="Cancel hand-off edits"
+              disabled={savingHandoff !== null}
+              onClick={cancelHandoffEdit}
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              aria-label="Save hand-off"
+              disabled={savingHandoff !== null}
+            >
+              <Save className="size-3.5" aria-hidden="true" />
+              Save
+            </Button>
+          </div>
+        </form>
+      )
+    }
+
+    return (
+      <div className="border-border/80 bg-background/60 mt-3 rounded-sm border px-2 py-1.5 text-sm">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-foreground whitespace-pre-wrap">
+              {currentHandoffNote.trim() || 'No hand-off note'}
+            </div>
+            {currentHandoffDate ? (
+              <div className="text-muted-foreground text-xs">
+                Follow up {currentHandoffDate}
+              </div>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-7 shrink-0"
+            aria-label="Edit hand-off"
+            disabled={savingHandoff !== null}
+            onClick={() => setEditingHandoff(true)}
+          >
+            <Pencil className="size-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderHandoffSection() {
+    if (!item || !showHandoffSection) {
+      return null
+    }
+
+    const statusIcon =
+      item.ball === 'agent' ? (
+        <Bot className="size-4 shrink-0" aria-hidden="true" />
+      ) : item.ball === 'person' ? (
+        <UserRound className="size-4 shrink-0" aria-hidden="true" />
+      ) : (
+        <UserRoundCheck className="size-4 shrink-0" aria-hidden="true" />
+      )
+    const statusHint =
+      item.ball === 'person'
+        ? 'Ball ~person: waiting on someone else'
+        : 'Use ~person for outside follow-up'
+
+    return (
+      <section className="space-y-2" aria-label="Hand-off">
+        <div className="flex min-h-8 items-center justify-between gap-2">
+          <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-xs font-medium">
+            <UserRound className="size-4 shrink-0" aria-hidden="true" />
+            <span className="truncate">Hand-off</span>
+          </div>
+          {savingHandoff ? (
+            <span className="text-muted-foreground text-xs">Saving</span>
+          ) : null}
+        </div>
+        <div className="border-border bg-muted/20 rounded-md border p-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              {statusIcon}
+              <div className="min-w-0">
+                <div className="text-foreground truncate text-sm font-medium">
+                  {HANDOFF_STATUS_LABELS[item.ball]}
+                </div>
+                <div className="text-muted-foreground truncate text-xs">
+                  {statusHint}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-1">
+              {renderHandoffBallControls()}
+            </div>
+          </div>
+          {renderHandoffDetails()}
+        </div>
+      </section>
+    )
+  }
+
   return (
     <aside
       className={cn(
@@ -1035,6 +1378,7 @@ export function CommentsPanel({
               </div>
             ) : null}
           </section>
+          {renderHandoffSection()}
           {item ? (
             <section className="space-y-2" aria-label="Ship milestones">
               <div className="flex min-h-8 items-center justify-between gap-2">

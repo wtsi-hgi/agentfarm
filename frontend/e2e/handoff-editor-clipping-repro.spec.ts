@@ -5,24 +5,18 @@ import { expect, test } from '@playwright/test'
 
 import { createItem, deleteBackendItems, gotoPath, signInAs } from './helpers'
 
-type EditorVisibilityEvidence = {
-  editorVisibleInViewport: boolean
+type DetailsEditorVisibilityEvidence = {
+  detailsRect: Box
   editorRect: Box
-  handoffNoteBottomHitElement: string | null
-  handoffNoteBottomHitTestWithinNote: boolean
+  noteBottomHitElement: string | null
+  noteBottomHitTestWithinNote: boolean
   noteRect: Box
-  rowBottomGapToSection: number
+  rowEditorCount: number
   rowRect: Box
   saveButtonHitElement: string | null
   saveButtonHitTestWithinButton: boolean
   saveButtonRect: Box
   screenshotPath: string
-  sectionOverflow: {
-    overflow: string
-    overflowX: string
-    overflowY: string
-  }
-  sectionRect: Box
   viewportHeight: number
 }
 
@@ -38,22 +32,22 @@ type Box = {
 const screenshotDir = path.resolve(__dirname, '..', '..', '.tmp', 'agent')
 const screenshotPath = path.join(
   screenshotDir,
-  'handoff-editor-section-bottom-visible.png'
+  'handoff-details-section-bottom-visible.png'
 )
 
 function toItemSelector(itemId: string): string {
   return `[data-outliner-item-id="${itemId}"]`
 }
 
-test.describe('person hand-off editor section clipping reproduction', () => {
-  test('keeps the hand-off note editor usable near the bottom of a product section', async ({
+test.describe('person hand-off Details editor placement', () => {
+  test('keeps the hand-off note editor usable in Details for a bottom row', async ({
     page,
     request,
   }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 1100 })
     const sessionToken = await signInAs(page)
     const cleanupItemIds: string[] = []
-    const titlePrefix = `Hand-off editor clipping ${Date.now()}`
+    const titlePrefix = `Hand-off Details placement ${Date.now()}`
 
     try {
       const root = await createItem(
@@ -77,15 +71,21 @@ test.describe('person hand-off editor section clipping reproduction', () => {
 
       const targetRow = page.locator(toItemSelector(handoffTarget.id))
       await expect(targetRow).toBeVisible()
-
+      await targetRow.click()
       await expect(
         targetRow.getByRole('button', { name: 'Ball: Person' })
       ).toBeVisible()
+      await expect(
+        targetRow.locator('[aria-label="Person hand-off editor"]')
+      ).toHaveCount(0)
 
-      const editor = targetRow.getByRole('group', {
-        name: 'Person hand-off editor',
-      })
+      const details = page.locator('aside[aria-label="Item details"]')
+      const handoffSection = details.locator('section[aria-label="Hand-off"]')
+      const editor = handoffSection.locator(
+        '[aria-label="Person hand-off editor"]'
+      )
       await expect(editor).toBeVisible()
+
       const handoffNote = editor.getByRole('textbox', {
         name: 'Hand-off note',
       })
@@ -97,12 +97,12 @@ test.describe('person hand-off editor section clipping reproduction', () => {
         fullPage: true,
         path: screenshotPath,
       })
-      await testInfo.attach('handoff-editor-section-bottom-visible', {
+      await testInfo.attach('handoff-details-section-bottom-visible', {
         contentType: 'image/png',
         path: screenshotPath,
       })
 
-      const evidence = await page.evaluate<EditorVisibilityEvidence>(
+      const evidence = await page.evaluate<DetailsEditorVisibilityEvidence>(
         (input) => {
           function boxFor(element: Element): Box {
             const rect = element.getBoundingClientRect()
@@ -119,10 +119,10 @@ test.describe('person hand-off editor section clipping reproduction', () => {
           const row = document.querySelector<HTMLElement>(
             `[data-outliner-item-id="${CSS.escape(input.itemId)}"]`
           )
-          const section = row?.closest<HTMLElement>(
-            '[data-outliner-root-section-id]'
+          const details = document.querySelector<HTMLElement>(
+            'aside[aria-label="Item details"]'
           )
-          const editor = row?.querySelector<HTMLElement>(
+          const editor = details?.querySelector<HTMLElement>(
             '[aria-label="Person hand-off editor"]'
           )
           const note = editor?.querySelector<HTMLElement>(
@@ -132,14 +132,14 @@ test.describe('person hand-off editor section clipping reproduction', () => {
             'button[aria-label="Save hand-off"]'
           )
 
-          if (!row || !section || !editor || !note || !saveButton) {
+          if (!row || !details || !editor || !note || !saveButton) {
             throw new Error(
-              'Expected row, section, editor, note, and save button'
+              'Expected row, Details editor, note, and save button'
             )
           }
 
           const rowRect = boxFor(row)
-          const sectionRect = boxFor(section)
+          const detailsRect = boxFor(details)
           const editorRect = boxFor(editor)
           const noteRect = boxFor(note)
           const saveButtonRect = boxFor(saveButton)
@@ -159,23 +159,18 @@ test.describe('person hand-off editor section clipping reproduction', () => {
             saveButtonCenter.x,
             saveButtonCenter.y
           )
-          const handoffNoteBottomHitTestWithinNote =
+          const noteBottomHitTestWithinNote =
             noteBottomHitElement !== null &&
             (noteBottomHitElement === note ||
               note.contains(noteBottomHitElement))
           const saveButtonHitTestWithinButton =
             hitElement !== null &&
             (hitElement === saveButton || saveButton.contains(hitElement))
-          const sectionStyle = getComputedStyle(section)
 
           return {
-            editorVisibleInViewport:
-              editorRect.top >= 0 &&
-              editorRect.left >= 0 &&
-              editorRect.bottom <= window.innerHeight &&
-              editorRect.right <= window.innerWidth,
+            detailsRect,
             editorRect,
-            handoffNoteBottomHitElement: noteBottomHitElement
+            noteBottomHitElement: noteBottomHitElement
               ? `${noteBottomHitElement.tagName.toLowerCase()}${
                   noteBottomHitElement.getAttribute('aria-label')
                     ? `[aria-label="${noteBottomHitElement.getAttribute(
@@ -184,9 +179,11 @@ test.describe('person hand-off editor section clipping reproduction', () => {
                     : ''
                 }`
               : null,
-            handoffNoteBottomHitTestWithinNote,
+            noteBottomHitTestWithinNote,
             noteRect,
-            rowBottomGapToSection: sectionRect.bottom - rowRect.bottom,
+            rowEditorCount: row.querySelectorAll(
+              '[aria-label="Person hand-off editor"]'
+            ).length,
             rowRect,
             saveButtonHitElement: hitElement
               ? `${hitElement.tagName.toLowerCase()}${
@@ -198,35 +195,29 @@ test.describe('person hand-off editor section clipping reproduction', () => {
             saveButtonHitTestWithinButton,
             saveButtonRect,
             screenshotPath: input.screenshotPath,
-            sectionOverflow: {
-              overflow: sectionStyle.overflow,
-              overflowX: sectionStyle.overflowX,
-              overflowY: sectionStyle.overflowY,
-            },
-            sectionRect,
             viewportHeight: window.innerHeight,
           }
         },
         { itemId: handoffTarget.id, screenshotPath }
       )
 
-      await testInfo.attach('handoff-editor-section-bottom-evidence', {
+      await testInfo.attach('handoff-details-section-bottom-evidence', {
         body: JSON.stringify(evidence, null, 2),
         contentType: 'application/json',
       })
 
       expect
         .soft(
-          evidence.editorVisibleInViewport,
-          `Hand-off editor should remain fully visible in the viewport. Evidence: ${JSON.stringify(
+          evidence.rowEditorCount,
+          `Rows should not mount hand-off editors. Evidence: ${JSON.stringify(
             evidence
           )}`
         )
-        .toBe(true)
+        .toBe(0)
       expect
         .soft(
-          evidence.handoffNoteBottomHitTestWithinNote,
-          `The bottom of the Hand-off note box should remain hit-testable. Evidence: ${JSON.stringify(
+          evidence.noteBottomHitTestWithinNote,
+          `The bottom of the Details Hand-off note box should remain hit-testable. Evidence: ${JSON.stringify(
             evidence
           )}`
         )
