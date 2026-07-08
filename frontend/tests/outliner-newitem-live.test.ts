@@ -7,9 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Outliner } from '@/components/outliner'
 import type {
+  Ball,
   ItemActivity,
+  ItemStatus,
   Marker,
   PriorityItem,
+  State,
   TreeItem,
 } from '@/lib/contracts'
 
@@ -50,9 +53,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -61,9 +68,13 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
@@ -84,18 +95,104 @@ type LiveOutlinerHarnessProps = {
   hideCreatedWithCallerFilter?: boolean
 }
 
-type LivePatch = Partial<Pick<TreeItem, 'effort' | 'mode' | 'state' | 'title'>>
+type LegacyState = State | 'feedback' | 'respond'
+
+type ItemOverrides = Omit<Partial<TreeItem>, 'state'> & {
+  blocked_external?: boolean
+  state?: LegacyState
+} & Pick<TreeItem, 'id' | 'title'>
+
+type LivePatch = Partial<
+  Omit<Pick<TreeItem, 'effort' | 'mode' | 'state' | 'title'>, 'state'> & {
+    state?: LegacyState
+  }
+>
 
 let roots: Root[] = []
 let publishCreatedItem: ((created: TreeItem) => void) | null = null
 let publishPatchedItem: ((itemId: string, patch: LivePatch) => void) | null =
   null
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function mappedState(state: LegacyState | undefined): State {
+  if (state === 'feedback' || state === 'respond') {
+    return 'released'
+  }
+  return state ?? baseItem.state
+}
+
+function mappedBall(
+  state: LegacyState | undefined,
+  blockedExternal: boolean,
+  ball: Ball | undefined
+): Ball {
+  if (ball) {
+    return ball
+  }
+  if (blockedExternal || state === 'feedback') {
+    return 'person'
+  }
+  if (state === 'implement') {
+    return 'agent'
+  }
+  return 'you'
+}
+
+function mappedStatus(
+  state: State,
+  ball: Ball,
+  status: ItemStatus | undefined
+): ItemStatus {
+  if (status) {
+    return status
+  }
+  if (state === 'done') {
+    return 'done'
+  }
+  if (state === 'abandoned') {
+    return 'dropped'
+  }
+  if (ball === 'agent') {
+    return 'monitoring'
+  }
+  if (ball === 'person') {
+    return 'waiting'
+  }
+  return 'ready'
+}
+
+function item(overrides: ItemOverrides): TreeItem {
+  const {
+    blocked_external: blockedExternal = false,
+    state: legacyState,
+    ball: overrideBall,
+    status: overrideStatus,
+    actionable: overrideActionable,
+    complete: overrideComplete,
+    ...rest
+  } = overrides
+  const state = mappedState(legacyState)
+  const ball = mappedBall(legacyState, blockedExternal, overrideBall)
+  const status = mappedStatus(state, ball, overrideStatus)
+  const complete =
+    overrideComplete ?? (status === 'done' || status === 'dropped')
+  const actionable = overrideActionable ?? status === 'ready'
+
   return {
     ...baseItem,
-    ...overrides,
-  }
+    ...rest,
+    state,
+    ball,
+    status,
+    actionable,
+    complete,
+  } as TreeItem
+}
+
+function patchedItem(existing: TreeItem, patch: LivePatch): TreeItem {
+  return item({
+    ...existing,
+    ...patch,
+  })
 }
 
 function LiveOutlinerHarness({
@@ -120,7 +217,7 @@ function LiveOutlinerHarness({
     publishPatchedItem = (itemId, patch) => {
       setItems((current) =>
         current.map((existing) =>
-          existing.id === itemId ? { ...existing, ...patch } : existing
+          existing.id === itemId ? patchedItem(existing, patch) : existing
         )
       )
     }
@@ -384,7 +481,7 @@ function RootSiblingPriorityProjectionHarness() {
     publishPatchedItem = (itemId, patch) => {
       setItems((current) =>
         current.map((existing) =>
-          existing.id === itemId ? { ...existing, ...patch } : existing
+          existing.id === itemId ? patchedItem(existing, patch) : existing
         )
       )
     }
@@ -529,7 +626,7 @@ function getItemRowSurface(container: ParentNode, itemId: string) {
   return surface
 }
 
-function getItemReadinessIndicator(container: ParentNode, itemId: string) {
+function getReadinessIndicator(container: ParentNode, itemId: string) {
   const indicator = container.querySelector(
     `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
   )
@@ -760,7 +857,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(input.disabled).toBe(false)
   })
 
-  it('shows up-next work and follow-up work in separate priority views', async () => {
+  it('shows up-next, follow-up, and monitoring work in separate priority views', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -834,10 +931,19 @@ describe('Outliner live newly added filter exemptions', () => {
       getButton(container, 'Show follow up work').getAttribute('aria-pressed')
     ).toBe('true')
     expect(getOutlinerItemIds(container)).toEqual([
-      'feedback-row',
-      'implement-row',
       'blocked-row',
+      'feedback-row',
     ])
+
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(
+      getButton(container, 'Show follow up work').getAttribute('aria-pressed')
+    ).toBe('false')
+    expect(
+      getButton(container, 'Show monitoring work').getAttribute('aria-pressed')
+    ).toBe('true')
+    expect(getOutlinerItemIds(container)).toEqual(['implement-row'])
 
     await click(getButton(container, 'Show tree view'))
 
@@ -850,13 +956,14 @@ describe('Outliner live newly added filter exemptions', () => {
     ])
   })
 
-  it('moves a waiting item changed to respond into up-next without a route refresh', async () => {
+  it('moves a waiting item changed to an owner phase into up-next without a route refresh', async () => {
     actionMocks.patchItem.mockImplementation(
       async (itemId: string, patch: LivePatch) =>
         item({
           id: itemId,
           title: 'Await user feedback',
           state: patch.state ?? 'feedback',
+          ball: patch.state ? 'you' : undefined,
           sort_order: 1,
         })
     )
@@ -880,11 +987,11 @@ describe('Outliner live newly added filter exemptions', () => {
 
     await changeSelect(
       getItemSelect(container, 'feedback-row', 'Item state'),
-      'respond'
+      'review'
     )
 
     expect(actionMocks.patchItem).toHaveBeenCalledWith('feedback-row', {
-      state: 'respond',
+      state: 'review',
     })
     expect(getOutlinerItemIds(container)).toEqual([])
 
@@ -892,20 +999,21 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(getOutlinerItemIds(container)).toEqual(['feedback-row'])
     expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
-      'respond'
+      'review'
     )
-    expect(
-      getItemReadinessIndicator(container, 'feedback-row').textContent
-    ).toBe('Ready')
+    expect(getReadinessIndicator(container, 'feedback-row').textContent).toBe(
+      'Ready'
+    )
   })
 
-  it('orders a locally changed respond item ahead of server-ranked ready work', async () => {
+  it('orders a locally changed ready item after server-ranked ready work', async () => {
     actionMocks.patchItem.mockImplementation(
       async (itemId: string, patch: LivePatch) =>
         item({
           id: itemId,
           title: 'Await user feedback',
           state: patch.state ?? 'feedback',
+          ball: patch.state ? 'you' : undefined,
           sort_order: 2,
         })
     )
@@ -936,16 +1044,16 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Show follow up work'))
     await changeSelect(
       getItemSelect(container, 'feedback-row', 'Item state'),
-      'respond'
+      'review'
     )
 
     expect(getOutlinerItemIds(container)).toEqual([])
 
     await click(getButton(container, 'Show up next work'))
 
-    expect(getOutlinerItemIds(container)).toEqual(['feedback-row', 'ready-row'])
+    expect(getOutlinerItemIds(container)).toEqual(['ready-row', 'feedback-row'])
     expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
-      'respond'
+      'review'
     )
   })
 
@@ -1114,7 +1222,7 @@ describe('Outliner live newly added filter exemptions', () => {
     expect(queryItemCheckbox(container, 'created-session-item')).toBeNull()
   })
 
-  it('exposes Feedback and Respond in the state selector', async () => {
+  it('exposes defining and omits legacy feedback and respond states', async () => {
     const container = await render(React.createElement(LiveOutlinerHarness))
 
     await submitFirstRoot(container)
@@ -1132,33 +1240,32 @@ describe('Outliner live newly added filter exemptions', () => {
       }))
     ).toEqual([
       { label: 'Not started', value: 'not-started' },
+      { label: 'Defining', value: 'defining' },
       { label: 'Spec', value: 'spec' },
       { label: 'Implement', value: 'implement' },
       { label: 'Review', value: 'review' },
-      { label: 'Feedback', value: 'feedback' },
-      { label: 'Respond', value: 'respond' },
       { label: 'Merged', value: 'merged' },
       { label: 'Released', value: 'released' },
       { label: 'Done', value: 'done' },
       { label: 'Abandoned', value: 'abandoned' },
     ])
 
-    await changeSelect(stateSelect, 'feedback')
+    await changeSelect(stateSelect, 'defining')
     expect(actionMocks.patchItem).toHaveBeenCalledWith('created-session-item', {
-      state: 'feedback',
+      state: 'defining',
     })
 
     await changeSelect(
       getItemSelect(container, 'created-session-item', 'Item state'),
-      'respond'
+      'released'
     )
     expect(actionMocks.patchItem).toHaveBeenLastCalledWith(
       'created-session-item',
-      { state: 'respond' }
+      { state: 'released' }
     )
   })
 
-  it('shows Feedback and Implement as Waiting while Respond stays ready for action', async () => {
+  it('shows Feedback as Waiting, Implement as Monitoring, and Respond as ready for action', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -1186,15 +1293,15 @@ describe('Outliner live newly added filter exemptions', () => {
       })
     )
 
-    expect(
-      getItemReadinessIndicator(container, 'feedback-row').textContent
-    ).toBe('Waiting')
-    expect(
-      getItemReadinessIndicator(container, 'implement-row').textContent
-    ).toBe('Waiting')
-    expect(
-      getItemReadinessIndicator(container, 'respond-row').textContent
-    ).toBe('Ready')
+    expect(getReadinessIndicator(container, 'feedback-row').textContent).toBe(
+      'Waiting'
+    )
+    expect(getReadinessIndicator(container, 'implement-row').textContent).toBe(
+      'Monitoring'
+    )
+    expect(getReadinessIndicator(container, 'respond-row').textContent).toBe(
+      'Ready'
+    )
   })
 
   it('shows each section readiness as the most actionable descendant readiness', async () => {
@@ -1244,7 +1351,7 @@ describe('Outliner live newly added filter exemptions', () => {
     const sectionReadiness = Object.fromEntries(
       ['top-section', 'waiting-branch', 'ready-branch'].map((itemId) => [
         itemId,
-        getItemReadinessIndicator(container, itemId).textContent,
+        getReadinessIndicator(container, itemId).textContent,
       ])
     )
 
@@ -1255,13 +1362,11 @@ describe('Outliner live newly added filter exemptions', () => {
     })
   })
 
-  it('hides root done checkboxes while preserving non-root checkboxes', async () => {
+  it('hides container done checkboxes while preserving leaf checkboxes', async () => {
     const container = await render(React.createElement(NestedRowsHarness))
 
     expect(queryItemCheckbox(container, 'root')).toBeNull()
-    expect(getItemCheckbox(container, 'section')).toBeInstanceOf(
-      HTMLInputElement
-    )
+    expect(queryItemCheckbox(container, 'section')).toBeNull()
     expect(getItemCheckbox(container, 'leaf')).toBeInstanceOf(HTMLInputElement)
   })
 
@@ -1307,11 +1412,11 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Remove child'))
 
     expect(getItemSelect(container, 'section', 'Item state').value).toBe(
-      'feedback'
+      'released'
     )
   })
 
-  it('keeps the section done checkbox active while the state selector is hidden', async () => {
+  it('keeps container checkboxes hidden while leaf checkboxes stay active', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -1340,20 +1445,13 @@ describe('Outliner live newly added filter exemptions', () => {
     )
 
     expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
+    expect(queryItemCheckbox(container, 'section')).toBeNull()
 
-    await clickCheckbox(getItemCheckbox(container, 'section'))
+    await clickCheckbox(getItemCheckbox(container, 'leaf'))
 
-    expect(actionMocks.patchItem).toHaveBeenCalledWith('section', {
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('leaf', {
       state: 'done',
     })
-    expect(getItemCheckbox(container, 'section').checked).toBe(true)
-
-    await clickCheckbox(getItemCheckbox(container, 'section'))
-
-    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('section', {
-      state: 'review',
-    })
-    expect(getItemCheckbox(container, 'section').checked).toBe(false)
     expect(queryItemSelect(container, 'section', 'Item state')).toBeNull()
   })
 
@@ -1469,7 +1567,7 @@ describe('Outliner live newly added filter exemptions', () => {
     )
   })
 
-  it('restores Feedback and Respond when their done checkboxes are unchecked', async () => {
+  it('restores released rows when their done checkboxes are unchecked', async () => {
     const container = await render(
       React.createElement(LiveOutlinerHarness, {
         initialItems: [
@@ -1505,21 +1603,21 @@ describe('Outliner live newly added filter exemptions', () => {
       state: 'done',
     })
     expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'feedback-row', {
-      state: 'feedback',
+      state: 'released',
     })
     expect(actionMocks.patchItem).toHaveBeenNthCalledWith(3, 'respond-row', {
       state: 'done',
     })
     expect(actionMocks.patchItem).toHaveBeenNthCalledWith(4, 'respond-row', {
-      state: 'respond',
+      state: 'released',
     })
     expect(getItemCheckbox(container, 'feedback-row').checked).toBe(false)
     expect(getItemSelect(container, 'feedback-row', 'Item state').value).toBe(
-      'feedback'
+      'released'
     )
     expect(getItemCheckbox(container, 'respond-row').checked).toBe(false)
     expect(getItemSelect(container, 'respond-row', 'Item state').value).toBe(
-      'respond'
+      'released'
     )
   })
 
@@ -1534,17 +1632,18 @@ describe('Outliner live newly added filter exemptions', () => {
     actionMocks.patchItem.mockImplementation(
       async (itemId: string, patch: LivePatch) => {
         if (patch.state) {
+          const nextState = mappedState(patch.state)
           activity.push({
             id: `activity-${activity.length + 1}`,
             item_id: itemId,
             kind: 'state-change',
             actor: 'alice',
             from_state: currentState,
-            to_state: patch.state,
+            to_state: nextState,
             created_at:
               timestamps[activity.length] ?? '2026-06-29T00:20:00.000000Z',
           })
-          currentState = patch.state
+          currentState = nextState
         }
         publishPatchedItem?.(itemId, patch)
         return {}
@@ -1589,7 +1688,7 @@ describe('Outliner live newly added filter exemptions', () => {
         item_id: 'done-row',
         kind: 'state-change',
         actor: 'alice',
-        from_state: 'review',
+        from_state: 'spec',
         to_state: 'done',
         created_at: '2026-06-29T00:10:00.000000Z',
       },
@@ -1616,11 +1715,62 @@ describe('Outliner live newly added filter exemptions', () => {
 
     expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
     expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
-      state: 'review',
+      state: 'spec',
     })
     expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
     expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
-      'review'
+      'spec'
+    )
+  })
+
+  it('ignores interleaved ball-change activity when restoring a done row', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'done-row',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:10:00.000000Z',
+      },
+      {
+        id: 'activity-2',
+        item_id: 'done-row',
+        kind: 'ball-change',
+        actor: 'alice',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:11:00.000000Z',
+      },
+    ])
+    const container = await render(
+      React.createElement(LiveOutlinerHarness, {
+        initialItems: [
+          item({
+            id: 'root',
+            title: 'Root',
+            actionable: false,
+          }),
+          item({
+            id: 'done-row',
+            title: 'Done row',
+            parent_id: 'root',
+            state: 'done',
+          }),
+        ],
+      })
+    )
+
+    await clickCheckbox(getItemCheckbox(container, 'done-row'))
+
+    expect(actionMocks.fetchItemActivity).toHaveBeenCalledWith('done-row')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('done-row', {
+      state: 'spec',
+    })
+    expect(getItemCheckbox(container, 'done-row').checked).toBe(false)
+    expect(getItemSelect(container, 'done-row', 'Item state').value).toBe(
+      'spec'
     )
   })
 
@@ -2036,11 +2186,11 @@ describe('Outliner live newly added filter exemptions', () => {
 
     await changeSelect(
       getItemSelect(container, 'created-root-sibling', 'Item state'),
-      'respond'
+      'review'
     )
 
     expect(actionMocks.patchItem).toHaveBeenCalledWith('created-root-sibling', {
-      state: 'respond',
+      state: 'review',
     })
     expect(getOutlinerItemIds(container)).toEqual([
       'created-root-sibling',
@@ -2050,8 +2200,8 @@ describe('Outliner live newly added filter exemptions', () => {
     await click(getButton(container, 'Show up next work'))
 
     expect(getOutlinerItemIds(container)).toEqual([
-      'created-root-sibling',
       'ready-root',
+      'created-root-sibling',
     ])
   })
 })

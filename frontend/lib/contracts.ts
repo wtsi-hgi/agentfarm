@@ -43,15 +43,26 @@ export type LoginResponse = z.infer<typeof loginResponseSchema>
 // Closed enum sets, mirroring backend models/enums.py (exact lowercase values).
 export const stateSchema = z.enum([
   'not-started',
+  'defining',
   'spec',
   'implement',
   'review',
-  'feedback',
-  'respond',
   'merged',
   'released',
   'done',
   'abandoned',
+])
+
+export const ballSchema = z.enum(['you', 'agent', 'person'])
+
+export const statusSchema = z.enum([
+  'ready',
+  'monitoring',
+  'waiting',
+  'blocked',
+  'done',
+  'dropped',
+  'rollup',
 ])
 
 export const modeSchema = z.enum([
@@ -65,33 +76,42 @@ export const modeSchema = z.enum([
 export const effortSchema = z.enum(['quick', 'medium', 'long'])
 
 export type State = z.infer<typeof stateSchema>
+export type Ball = z.infer<typeof ballSchema>
+export type ItemStatus = z.infer<typeof statusSchema>
 export type Mode = z.infer<typeof modeSchema>
 export type Effort = z.infer<typeof effortSchema>
 
 // Mirrors the backend ItemOut Pydantic model (api/schemas.py). Nullable columns
 // use .nullable(); timestamps are ISO-8601 UTC strings; sort_order is a number.
-export const itemSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  slug: z.string(),
-  parent_id: z.string().nullable(),
-  sort_order: z.number(),
-  state: stateSchema,
-  mode: modeSchema,
-  effort: effortSchema,
-  blocked_external: z.boolean(),
-  blocked_note: z.string().nullable(),
-  blocked_followup_date: z.string().nullable(),
-  description: z.string(),
-  repo_url: z.string().nullable(),
-  usage: z.string(),
-  created_by: z.string(),
-  updated_by: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  state_changed_at: z.string(),
-  completed_at: z.string().nullable(),
-})
+export const itemSchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    slug: z.string(),
+    parent_id: z.string().nullable(),
+    sort_order: z.number(),
+    state: stateSchema,
+    ball: ballSchema,
+    mode: modeSchema,
+    effort: effortSchema,
+    blocked_note: z.string().nullable(),
+    blocked_followup_date: z.string().nullable(),
+    dev_updated: z.boolean(),
+    prod_updated: z.boolean(),
+    docs_updated: z.boolean(),
+    announced: z.boolean(),
+    description: z.string(),
+    repo_url: z.string().nullable(),
+    usage: z.string(),
+    created_by: z.string(),
+    updated_by: z.string(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    state_changed_at: z.string(),
+    ball_changed_at: z.string(),
+    completed_at: z.string().nullable(),
+  })
+  .strict()
 
 export type Item = z.infer<typeof itemSchema>
 
@@ -124,10 +144,45 @@ export const treeDependencyEdgeSchema = z
 
 export type TreeDependencyEdge = z.infer<typeof treeDependencyEdgeSchema>
 
+export const rollupStatusCountsSchema = z
+  .object({
+    ready: z.number().int(),
+    monitoring: z.number().int(),
+    waiting: z.number().int(),
+    blocked: z.number().int(),
+    done: z.number().int(),
+    dropped: z.number().int(),
+  })
+  .strict()
+
+export const rollupShipProgressSchema = z
+  .object({
+    dev_updated: z.number().int(),
+    prod_updated: z.number().int(),
+    docs_updated: z.number().int(),
+    announced: z.number().int(),
+    shipped: z.number().int(),
+    total: z.number().int(),
+  })
+  .strict()
+
+export const rollupSchema = z
+  .object({
+    status_counts: rollupStatusCountsSchema,
+    ship: rollupShipProgressSchema,
+    phase: stateSchema.nullable(),
+  })
+  .strict()
+
+export type Rollup = z.infer<typeof rollupSchema>
+
 export const treeItemSchema = itemSchema
   .extend({
     needs: z.array(z.string()),
     needs_edges: z.array(treeDependencyEdgeSchema),
+    status: statusSchema,
+    resume: z.boolean(),
+    rollup: rollupSchema.nullable(),
     actionable: z.boolean(),
     complete: z.boolean(),
     has_notes: z.boolean(),
@@ -241,7 +296,7 @@ export const scratchpadSchema = z
 
 export type Scratchpad = z.infer<typeof scratchpadSchema>
 
-export const itemActivitySchema = z
+export const stateChangeActivitySchema = z
   .object({
     id: z.string(),
     item_id: z.string(),
@@ -252,6 +307,23 @@ export const itemActivitySchema = z
     created_at: z.string(),
   })
   .strict()
+
+export const ballChangeActivitySchema = z
+  .object({
+    id: z.string(),
+    item_id: z.string(),
+    kind: z.literal('ball-change'),
+    actor: z.string(),
+    from_ball: ballSchema,
+    to_ball: ballSchema,
+    created_at: z.string(),
+  })
+  .strict()
+
+export const itemActivitySchema = z.discriminatedUnion('kind', [
+  stateChangeActivitySchema,
+  ballChangeActivitySchema,
+])
 
 export const itemActivityListSchema = z.array(itemActivitySchema)
 

@@ -31,6 +31,7 @@ type CreateItemInput = {
   title: string
   parent_id?: string | null
   after_id?: string | null
+  ball?: string
   state?: string
 }
 
@@ -104,15 +105,23 @@ test.describe('filtered hierarchy reproduction', () => {
         title: `${titlePrefix} section`,
         parent_id: root.id,
       })
+      const readyGroup = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} ready group`,
+        parent_id: section.id,
+      })
       const readyChild = await createBackendItem(request, sessionToken, {
         title: `${titlePrefix} ready child`,
+        parent_id: readyGroup.id,
+      })
+      const waitingGroup = await createBackendItem(request, sessionToken, {
+        title: `${titlePrefix} waiting group`,
         parent_id: section.id,
       })
       const waitingChild = await createBackendItem(request, sessionToken, {
         title: `${titlePrefix} waiting child`,
-        parent_id: section.id,
-        after_id: readyChild.id,
-        state: 'feedback',
+        parent_id: waitingGroup.id,
+        state: 'released',
+        ball: 'person',
       })
 
       await gotoPath(page, '/')
@@ -153,25 +162,35 @@ test.describe('filtered hierarchy reproduction', () => {
           upNextItems.map((item) => item.title),
           `Up Next rendered: ${describeItems(upNextItems)}`
         )
-        .toEqual([root.title, section.title, readyChild.title])
+        .toEqual([
+          root.title,
+          section.title,
+          readyGroup.title,
+          readyChild.title,
+        ])
       expect
         .soft(
           upNextItems.map((item) => item.paddingLeft),
           `Up Next rendered: ${describeItems(upNextItems)}`
         )
-        .toEqual(['0rem', '1.25rem', '2.5rem'])
+        .toEqual(['0rem', '1.25rem', '2.5rem', '3.75rem'])
       expect
         .soft(
           followUpItems.map((item) => item.title),
           `Follow Up rendered: ${describeItems(followUpItems)}`
         )
-        .toEqual([root.title, section.title, waitingChild.title])
+        .toEqual([
+          root.title,
+          section.title,
+          waitingGroup.title,
+          waitingChild.title,
+        ])
       expect
         .soft(
           followUpItems.map((item) => item.paddingLeft),
           `Follow Up rendered: ${describeItems(followUpItems)}`
         )
-        .toEqual(['0rem', '1.25rem', '2.5rem'])
+        .toEqual(['0rem', '1.25rem', '2.5rem', '3.75rem'])
     } finally {
       if (root) {
         await deleteBackendItem(request, sessionToken, root.id)

@@ -3,7 +3,13 @@
 import * as React from 'react'
 import dynamic from 'next/dynamic'
 import { flushSync } from 'react-dom'
-import { Plus } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  MessagesSquare,
+  NotebookText,
+  Plus,
+} from 'lucide-react'
 
 import {
   addDependency,
@@ -21,7 +27,11 @@ import type { DestructiveConfirmationDialogProps } from '@/components/destructiv
 import type { ItemDialogBreadcrumb } from '@/components/item-dialog-heading'
 import type { ItemNotesDialogProps } from '@/components/item-notes-dialog'
 import { MarkerControls } from '@/components/marker-controls'
-import { OutlinerRow } from '@/components/outliner-row'
+import {
+  MODE_COLOUR_MAP,
+  OutlinerRow,
+  type DisplayReadiness,
+} from '@/components/outliner-row'
 import {
   ProductSwitcher,
   focusAndScrollOutlinerItem,
@@ -33,9 +43,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ViewControls, type OutlinerView } from '@/components/view-controls'
 import type {
+  Ball,
   Dependency,
   Item,
   ItemActivity,
+  ItemStatus,
   Marker,
   PriorityItem,
   Scratchpad as ScratchpadState,
@@ -56,12 +68,15 @@ import {
   type RowMutationActions,
   type SubmitRowTextOptions,
 } from '@/lib/outliner-mutations'
-import {
-  type ItemReadiness,
-  isExternalWaitingItem,
-  itemReadiness,
-} from '@/lib/state-metadata'
 import { DEFAULT_SCRATCHPAD } from '@/lib/scratchpad'
+import {
+  MANAGER_STATUS_LABELS,
+  PHASE_LABELS,
+  compareFollowUp,
+  compareMonitoring,
+  isResume,
+  statusAfterBallChange,
+} from '@/lib/state-metadata'
 import { cn } from '@/lib/utils'
 
 export type VisibleOutlinerRow = {
@@ -69,7 +84,7 @@ export type VisibleOutlinerRow = {
   depth: number
   hasChildren: boolean
   collapsed: boolean
-  displayReadiness: ItemReadiness
+  displayReadiness: DisplayReadiness
   filteredOutNewlyAdded: boolean
 }
 
@@ -95,6 +110,7 @@ type OutlinerProps = {
   newlyAddedIds?: IdCollection
   scratchpad?: ScratchpadState
   scratchpadEditable?: boolean
+  initialView?: OutlinerView
 }
 
 const ItemNotesDialog = dynamic<ItemNotesDialogProps>(
@@ -232,6 +248,50 @@ type PendingDependencyRemoval =
 
 const DONE_RESTORE_FALLBACK_STATE: State = 'not-started'
 const EMPTY_MARKERS: readonly Marker[] = []
+const MANAGER_STATUS_BUCKETS = [
+  { key: 'ready', label: 'Ready' },
+  { key: 'monitoring', label: 'Monitoring' },
+  { key: 'waiting', label: 'Waiting' },
+  { key: 'blocked', label: 'Blocked' },
+  { key: 'done', label: 'Done' },
+  { key: 'dropped', label: 'Dropped' },
+] satisfies readonly {
+  key: Exclude<ItemStatus, 'rollup'>
+  label: string
+}[]
+type ManagerShipMilestone = Exclude<
+  keyof NonNullable<TreeItem['rollup']>['ship'],
+  'shipped' | 'total'
+>
+type LocalRollup = NonNullable<TreeItem['rollup']>
+
+const SHIP_MILESTONE_KEYS = [
+  'dev_updated',
+  'prod_updated',
+  'docs_updated',
+  'announced',
+] satisfies readonly ManagerShipMilestone[]
+const ROLLUP_PHASE_ORDER = [
+  'not-started',
+  'defining',
+  'spec',
+  'implement',
+  'review',
+  'merged',
+  'released',
+] satisfies readonly State[]
+const ROLLUP_PHASE_RANKS: ReadonlyMap<State, number> = new Map(
+  ROLLUP_PHASE_ORDER.map((phase, index) => [phase, index] as const)
+)
+const MANAGER_SHIP_BUCKETS = [
+  { key: 'dev_updated', label: 'Dev' },
+  { key: 'prod_updated', label: 'Prod' },
+  { key: 'docs_updated', label: 'Docs' },
+  { key: 'announced', label: 'Announced' },
+] satisfies readonly {
+  key: ManagerShipMilestone
+  label: string
+}[]
 
 type PreservedAutomaticEdge = {
   fromId: string
@@ -372,6 +432,209 @@ function FirstRootCreator({
   )
 }
 
+type ManagerProjectionRowProps = {
+  item: TreeItem
+  depth: number
+  hasChildren: boolean
+  collapsed: boolean
+  selected?: boolean
+  onToggle: (itemId: string) => void
+  onSelect: (itemId: string) => void
+  onOpenNotes: (item: TreeItem) => void
+  onOpenPromptTimeline: (item: TreeItem) => void
+}
+
+const AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS =
+  'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
+
+function managerLeafStatusLabel(status: ItemStatus): string {
+  return status === 'rollup' ? 'Roll-up' : MANAGER_STATUS_LABELS[status]
+}
+
+function ManagerProjectionRow({
+  item,
+  depth,
+  hasChildren,
+  collapsed,
+  selected = false,
+  onToggle,
+  onSelect,
+  onOpenNotes,
+  onOpenPromptTimeline,
+}: ManagerProjectionRowProps) {
+  const rollup = item.rollup
+  const terminal = item.status === 'done' || item.status === 'dropped'
+  const leafPhaseLabel = terminal ? null : PHASE_LABELS[item.state]
+  const rollupPhaseLabel = rollup?.phase ? PHASE_LABELS[rollup.phase] : null
+  const hasNotes = item.has_notes
+  const hasPromptResponseEntries = item.has_prompt_response_entries
+
+  return (
+    <div
+      className={cn(
+        'grid min-h-11 grid-cols-[auto_1fr] items-center gap-2 border-l-4 py-2 pr-3',
+        MODE_COLOUR_MAP[item.mode],
+        selected && 'ring-ring/30 ring-1 ring-inset',
+        terminal && 'text-muted-foreground'
+      )}
+      style={{ paddingLeft: `${depth * 1.25}rem` }}
+      data-mode={item.mode}
+      onClick={() => onSelect(item.id)}
+    >
+      <div className="flex size-8 items-center justify-center">
+        {hasChildren ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            aria-label={collapsed ? 'Expand item' : 'Collapse item'}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand' : 'Collapse'}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggle(item.id)
+            }}
+          >
+            {collapsed ? (
+              <ChevronRight className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        ) : (
+          <span className="size-7" aria-hidden="true" />
+        )}
+      </div>
+      <div
+        aria-label="Manager projection"
+        className="flex min-w-0 flex-col gap-1"
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="truncate font-medium">{item.title}</span>
+          {rollup ? (
+            rollupPhaseLabel ? (
+              <span
+                aria-label={`Phase: ${rollupPhaseLabel}`}
+                className="border-border bg-background/70 text-muted-foreground rounded-sm border px-1.5 py-0.5 text-xs"
+              >
+                {rollupPhaseLabel}
+              </span>
+            ) : null
+          ) : (
+            <>
+              <span
+                aria-label={`Manager status: ${managerLeafStatusLabel(
+                  item.status
+                )}`}
+                className="border-border bg-background/70 rounded-sm border px-1.5 py-0.5 text-xs font-medium"
+              >
+                {managerLeafStatusLabel(item.status)}
+              </span>
+              {leafPhaseLabel ? (
+                <span
+                  aria-label={`Phase: ${leafPhaseLabel}`}
+                  className="border-border bg-background/70 text-muted-foreground rounded-sm border px-1.5 py-0.5 text-xs"
+                >
+                  {leafPhaseLabel}
+                </span>
+              ) : null}
+            </>
+          )}
+          {hasNotes ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'size-7 shrink-0 transition-colors',
+                AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS
+              )}
+              aria-label="Open notes"
+              aria-description="Notes available"
+              data-available="true"
+              title="Notes available"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenNotes(item)
+              }}
+            >
+              <NotebookText
+                className="size-3.5"
+                strokeWidth={2.75}
+                aria-hidden="true"
+              />
+            </Button>
+          ) : null}
+          {hasPromptResponseEntries ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'size-7 shrink-0 transition-colors',
+                AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS
+              )}
+              aria-label="Open prompt/response timeline"
+              aria-description="Prompt/response entries available"
+              data-available="true"
+              title="Prompt/response entries available"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenPromptTimeline(item)
+              }}
+            >
+              <MessagesSquare
+                className="size-3.5"
+                strokeWidth={2.75}
+                aria-hidden="true"
+              />
+            </Button>
+          ) : null}
+        </div>
+        {rollup ? (
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            {MANAGER_STATUS_BUCKETS.map(({ key, label }) => {
+              const value = rollup.status_counts[key]
+              return (
+                <span
+                  key={key}
+                  aria-label={`${label}: ${value}`}
+                  className="border-border/80 bg-background/60 rounded-sm border px-1.5 py-0.5"
+                >
+                  <span className="text-muted-foreground">{label}</span>{' '}
+                  <span className="font-medium tabular-nums">{value}</span>
+                </span>
+              )
+            })}
+            <span
+              aria-label={`Ship: ${rollup.ship.shipped} of ${rollup.ship.total}`}
+              className="border-border/80 bg-background/60 rounded-sm border px-1.5 py-0.5"
+            >
+              <span className="font-medium tabular-nums">
+                {rollup.ship.shipped}/{rollup.ship.total}
+              </span>{' '}
+              <span className="text-muted-foreground">shipped</span>
+            </span>
+            {MANAGER_SHIP_BUCKETS.map(({ key, label }) => {
+              const value = rollup.ship[key]
+              return (
+                <span
+                  key={key}
+                  aria-label={`${label}: ${value}`}
+                  className="text-muted-foreground px-1 py-0.5"
+                >
+                  {label} <span className="tabular-nums">{value}</span>
+                </span>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function hashString(value: string): number {
   let hash = 2166136261
   for (let index = 0; index < value.length; index += 1) {
@@ -437,6 +700,10 @@ function makePriorityRanks(
   return new Map(priorityItems.map((item) => [item.id, item.rank]))
 }
 
+function isTerminalStatus(status: ItemStatus): boolean {
+  return status === 'done' || status === 'dropped'
+}
+
 type ProjectionStateOptions = {
   hasChildren?: boolean
 }
@@ -448,7 +715,9 @@ function isDoneForProjection(
   return (
     item.complete ||
     item.state === 'done' ||
-    (!options.hasChildren && item.state === 'abandoned')
+    item.status === 'done' ||
+    (!options.hasChildren &&
+      (item.state === 'abandoned' || item.status === 'dropped'))
   )
 }
 
@@ -457,6 +726,13 @@ function compareTimestamp(left: string, right: string): number {
     return 0
   }
   return left < right ? -1 : 1
+}
+
+function localDateString(date: Date): string {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function compareMarkers(
@@ -531,11 +807,33 @@ function isCompleteState(state: State): boolean {
   return state === 'done' || state === 'abandoned'
 }
 
+function statusFromLeafItem(
+  item: Pick<Item, 'ball' | 'state'>,
+  blocked = false
+): ItemStatus {
+  if (item.state === 'done') {
+    return 'done'
+  }
+  if (item.state === 'abandoned') {
+    return 'dropped'
+  }
+  if (blocked) {
+    return 'blocked'
+  }
+  if (item.ball === 'agent') {
+    return 'monitoring'
+  }
+  if (item.ball === 'person') {
+    return 'waiting'
+  }
+  return 'ready'
+}
+
 function isPriorityEligibleItem(item: TreeItem, hasChildren = false): boolean {
   return (
-    item.actionable &&
+    !hasChildren &&
     !isDoneForProjection(item, { hasChildren }) &&
-    !isExternalWaitingItem(item, { ignoreState: hasChildren })
+    item.status === 'ready'
   )
 }
 
@@ -550,8 +848,21 @@ function isUpNextItem(
 function isFollowUpItem(item: TreeItem, hasChildren: boolean): boolean {
   return (
     !isDoneForProjection(item, { hasChildren }) &&
-    isExternalWaitingItem(item, { ignoreState: hasChildren })
+    !hasChildren &&
+    item.status === 'waiting'
   )
+}
+
+function isMonitoringItem(item: TreeItem, hasChildren: boolean): boolean {
+  return (
+    !isDoneForProjection(item, { hasChildren }) &&
+    !hasChildren &&
+    item.status === 'monitoring'
+  )
+}
+
+function isWorkView(view: OutlinerView): boolean {
+  return view === 'up-next' || view === 'follow-up' || view === 'monitoring'
 }
 
 function isVisibleInView(
@@ -565,6 +876,9 @@ function isVisibleInView(
   }
   if (view === 'follow-up') {
     return isFollowUpItem(item, hasChildren)
+  }
+  if (view === 'monitoring') {
+    return isMonitoringItem(item, hasChildren)
   }
   return true
 }
@@ -588,10 +902,14 @@ function treeItemFromSavedItem(savedItem: Item): TreeItem {
     ...savedItem,
     needs: [],
     needs_edges: [],
-    actionable:
-      !complete &&
-      !isExternalWaitingItem(savedItem) &&
-      !savedItem.blocked_external,
+    status: statusFromLeafItem(savedItem),
+    resume: isResume({
+      state: savedItem.state,
+      has_notes: false,
+      has_prompt_response_entries: false,
+    }),
+    rollup: null,
+    actionable: !complete && savedItem.ball === 'you',
     complete,
     has_notes: false,
     has_prompt_response_entries: false,
@@ -810,6 +1128,105 @@ function moveLocalSiblingAfter(
   return items.map((item) => rewrittenSiblings.get(item.id) ?? item)
 }
 
+function recomputeLocalRollups(items: readonly TreeItem[]): TreeItem[] {
+  const children = localChildrenByParent(items)
+  const leafCache = new Map<string, TreeItem[]>()
+  const visiting = new Set<string>()
+
+  function descendantLeaves(itemId: string): TreeItem[] {
+    const cached = leafCache.get(itemId)
+    if (cached) {
+      return cached
+    }
+
+    if (visiting.has(itemId)) {
+      return []
+    }
+
+    visiting.add(itemId)
+    const leaves: TreeItem[] = []
+    for (const child of children.get(itemId) ?? []) {
+      if ((children.get(child.id) ?? []).length === 0) {
+        leaves.push(child)
+      } else {
+        leaves.push(...descendantLeaves(child.id))
+      }
+    }
+    visiting.delete(itemId)
+    leafCache.set(itemId, leaves)
+    return leaves
+  }
+
+  function rollupFor(item: TreeItem): LocalRollup | null {
+    if ((children.get(item.id) ?? []).length === 0) {
+      return null
+    }
+
+    const status_counts: LocalRollup['status_counts'] = {
+      ready: 0,
+      monitoring: 0,
+      waiting: 0,
+      blocked: 0,
+      done: 0,
+      dropped: 0,
+    }
+    const ship: LocalRollup['ship'] = {
+      dev_updated: 0,
+      prod_updated: 0,
+      docs_updated: 0,
+      announced: 0,
+      shipped: 0,
+      total: 0,
+    }
+    let phase: State | null = null
+    let phaseRank = Number.POSITIVE_INFINITY
+    const leafItems = descendantLeaves(item.id)
+
+    ship.total = leafItems.length
+    for (const leaf of leafItems) {
+      if (leaf.status !== 'rollup') {
+        status_counts[leaf.status] += 1
+      }
+
+      let completedMilestones = 0
+      for (const key of SHIP_MILESTONE_KEYS) {
+        if (leaf[key]) {
+          ship[key] += 1
+          completedMilestones += 1
+        }
+      }
+      if (completedMilestones === SHIP_MILESTONE_KEYS.length) {
+        ship.shipped += 1
+      }
+
+      const nextPhaseRank = ROLLUP_PHASE_RANKS.get(leaf.state)
+      if (nextPhaseRank !== undefined && nextPhaseRank < phaseRank) {
+        phase = leaf.state
+        phaseRank = nextPhaseRank
+      }
+    }
+
+    return {
+      status_counts,
+      ship,
+      phase,
+    }
+  }
+
+  return items.map((item) => {
+    const nextRollup = rollupFor(item)
+    if (nextRollup === null && item.rollup === null) {
+      return item
+    }
+
+    return {
+      ...item,
+      status: nextRollup ? 'rollup' : item.status,
+      rollup: nextRollup,
+    }
+  })
+}
+
 function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
   const children = localChildrenByParent(items)
   const byId = new Map(items.map((item) => [item.id, item]))
@@ -868,38 +1285,78 @@ function recomputeLocalWorkFlags(items: readonly TreeItem[]): TreeItem[] {
     return targetIds
   }
 
-  return items.map((item) => {
+  const withWorkFlags = items.map((item) => {
     const itemComplete = complete(item.id)
-    const actionable =
-      isLeaf(item.id) &&
+    const leaf = isLeaf(item.id)
+    const blocked =
+      leaf &&
       !itemComplete &&
-      !isExternalWaitingItem(item) &&
-      dependencyTargetIds(item).every((targetId) => complete(targetId))
+      dependencyTargetIds(item).some((targetId) => !complete(targetId))
+    const status: ItemStatus = leaf
+      ? statusFromLeafItem(item, blocked)
+      : 'rollup'
+    const actionable = leaf && status === 'ready'
     return {
       ...item,
+      status,
       actionable,
       complete: itemComplete,
     }
   })
+
+  return recomputeLocalRollups(withWorkFlags)
+}
+
+type OptimisticItemPatch = {
+  ball?: Ball
+}
+
+function hasOptimisticBallPatch(
+  patch: OptimisticItemPatch | undefined
+): patch is { ball: Ball } {
+  return (
+    patch !== undefined &&
+    Object.hasOwn(patch, 'ball') &&
+    patch.ball !== undefined
+  )
 }
 
 function mergeSavedItem(
   items: readonly TreeItem[],
-  savedItem: Item
+  savedItem: Item,
+  optimisticPatch?: OptimisticItemPatch
 ): TreeItem[] {
   const existing = items.find((item) => item.id === savedItem.id)
   const oldSlug = existing?.slug
-  const merged = treeItemFromSavedItem(savedItem)
+  const hasBallPatch = hasOptimisticBallPatch(optimisticPatch)
+  const optimisticallySavedItem = hasBallPatch
+    ? { ...savedItem, ball: optimisticPatch.ball }
+    : savedItem
+  const merged = treeItemFromSavedItem(optimisticallySavedItem)
   return recomputeLocalWorkFlags(
     items.map((item) => {
       if (item.id === savedItem.id) {
+        const isContainer = item.status === 'rollup' || item.rollup !== null
+        const status =
+          hasBallPatch && !isContainer
+            ? statusAfterBallChange(item.status, optimisticPatch.ball)
+            : merged.status
+        const hasNotes = item.has_notes
+        const hasPromptResponseEntries = item.has_prompt_response_entries
         return {
           ...item,
           ...merged,
           needs: item.needs,
           needs_edges: item.needs_edges,
-          has_notes: item.has_notes,
-          has_prompt_response_entries: item.has_prompt_response_entries,
+          status: isContainer ? 'rollup' : status,
+          rollup: isContainer ? item.rollup : merged.rollup,
+          has_notes: hasNotes,
+          has_prompt_response_entries: hasPromptResponseEntries,
+          resume: isResume({
+            state: merged.state,
+            has_notes: hasNotes,
+            has_prompt_response_entries: hasPromptResponseEntries,
+          }),
         }
       }
       if (!oldSlug || oldSlug === savedItem.slug) {
@@ -944,10 +1401,14 @@ function markItemContentAvailability(
     }
 
     changed = true
-    return {
+    const nextItem = {
       ...item,
       has_notes: hasNotes,
       has_prompt_response_entries: hasPromptResponseEntries,
+    }
+    return {
+      ...nextItem,
+      resume: isResume(nextItem),
     }
   })
 
@@ -1061,24 +1522,12 @@ type LocalPriorityEntry = {
   localIndex: number
   serverIndex: number
   serverRank: number | null
-  userActionTier: number
-}
-
-function localUserActionTier(
-  item: Pick<TreeItem, 'state'> | undefined
-): number {
-  return item?.state === 'respond' ? 1 : 0
 }
 
 function compareLocalPriorityEntries(
   left: LocalPriorityEntry,
   right: LocalPriorityEntry
 ): number {
-  const byUserAction = right.userActionTier - left.userActionTier
-  if (byUserAction !== 0) {
-    return byUserAction
-  }
-
   if (left.serverRank !== null && right.serverRank !== null) {
     const byServerRank = left.serverRank - right.serverRank
     return byServerRank !== 0
@@ -1102,7 +1551,6 @@ function localPriorityItems(
     return [...priorityItems]
   }
 
-  const itemsById = new Map(items.map((item) => [item.id, item]))
   const rankedItemIds = new Set(priorityItems.map((item) => item.id))
   const itemIdsWithChildren = new Set<string>()
   for (const item of items) {
@@ -1127,14 +1575,12 @@ function localPriorityItems(
     localIndex: index,
     serverIndex: index,
     serverRank: item.rank,
-    userActionTier: localUserActionTier(itemsById.get(item.id)),
   }))
   const localEntries = localItems.map((item, index) => ({
     id: item.id,
     localIndex: index,
     serverIndex: index,
     serverRank: null,
-    userActionTier: localUserActionTier(item),
   }))
 
   return [...serverEntries, ...localEntries]
@@ -1144,24 +1590,29 @@ function localPriorityItems(
 
 function patchAffectsPriorityMembership(patch: {
   state?: State
+  ball?: unknown
   mode?: unknown
   effort?: unknown
-  blocked_external?: unknown
 }): boolean {
   return (
     Object.hasOwn(patch, 'state') ||
+    Object.hasOwn(patch, 'ball') ||
     Object.hasOwn(patch, 'mode') ||
-    Object.hasOwn(patch, 'effort') ||
-    Object.hasOwn(patch, 'blocked_external')
+    Object.hasOwn(patch, 'effort')
   )
 }
 
 function previousDoneStateFromActivity(
   activity: readonly ItemActivity[]
 ): State | null {
-  for (let index = activity.length - 1; index >= 0; index -= 1) {
-    const entry = activity[index]
-    if (entry?.to_state !== 'done') {
+  const stateChanges = activity.filter(
+    (entry): entry is Extract<ItemActivity, { kind: 'state-change' }> =>
+      entry.kind === 'state-change'
+  )
+
+  for (let index = stateChanges.length - 1; index >= 0; index -= 1) {
+    const entry = stateChanges[index]
+    if (entry.to_state !== 'done') {
       continue
     }
 
@@ -1174,10 +1625,7 @@ function previousDoneStateFromActivity(
       previousIndex >= 0;
       previousIndex -= 1
     ) {
-      const previousEntry = activity[previousIndex]
-      if (!previousEntry) {
-        continue
-      }
+      const previousEntry = stateChanges[previousIndex]
       if (isRestorableDoneState(previousEntry.to_state)) {
         return previousEntry.to_state
       }
@@ -1204,8 +1652,11 @@ function makeChildMap(
 
   const priorityRanks = makePriorityRanks(order.priorityItems)
   const view = order.view ?? 'tree'
-  const usePriorityRanks = order.leverageSort === true && view !== 'tree'
+  const usePriorityRanks = order.leverageSort === true && view === 'up-next'
+  const useWorkViewOrder = view === 'follow-up' || view === 'monitoring'
+  const today = localDateString(new Date())
   const bestRankCache = new Map<string, number>()
+  const bestWorkItemCache = new Map<string, TreeItem | null>()
 
   function bestPriorityRank(item: TreeItem): number {
     const cached = bestRankCache.get(item.id)
@@ -1220,7 +1671,7 @@ function makeChildMap(
     }
 
     let rank =
-      view !== 'tree' &&
+      view === 'up-next' &&
       !isVisibleInView(item, view, priorityRanks, hasChildren)
         ? Number.POSITIVE_INFINITY
         : (priorityRanks.get(item.id) ?? Number.POSITIVE_INFINITY)
@@ -1234,6 +1685,14 @@ function makeChildMap(
 
   function treeOrder(a: TreeItem, b: TreeItem) {
     return a.sort_order - b.sort_order || a.id.localeCompare(b.id)
+  }
+
+  function compareWorkViewItems(a: TreeItem, b: TreeItem) {
+    const byView =
+      view === 'follow-up'
+        ? compareFollowUp(a, b, today)
+        : compareMonitoring(a, b)
+    return byView !== 0 ? byView : treeOrder(a, b)
   }
 
   function rootTreeOrder(a: TreeItem, b: TreeItem) {
@@ -1255,6 +1714,46 @@ function makeChildMap(
     const rankB = bestPriorityRank(b)
     if (rankA !== rankB) {
       return rankA - rankB
+    }
+
+    const completeOrder = doneOrder(a, b)
+    return completeOrder !== 0 ? completeOrder : treeOrder(a, b)
+  }
+
+  function bestWorkViewItem(item: TreeItem): TreeItem | null {
+    if (bestWorkItemCache.has(item.id)) {
+      return bestWorkItemCache.get(item.id) ?? null
+    }
+
+    const hasChildren = hasChildItems(item)
+    let best: TreeItem | null =
+      !isDoneForProjection(item, { hasChildren }) &&
+      isVisibleInView(item, view, priorityRanks, hasChildren)
+        ? item
+        : null
+
+    for (const child of children.get(item.id) ?? []) {
+      const candidate = bestWorkViewItem(child)
+      if (candidate && (!best || compareWorkViewItems(candidate, best) < 0)) {
+        best = candidate
+      }
+    }
+
+    bestWorkItemCache.set(item.id, best)
+    return best
+  }
+
+  function workViewOrder(a: TreeItem, b: TreeItem) {
+    const bestA = bestWorkViewItem(a)
+    const bestB = bestWorkViewItem(b)
+    if (bestA && bestB) {
+      const byWorkItem = compareWorkViewItems(bestA, bestB)
+      if (byWorkItem !== 0) {
+        return byWorkItem
+      }
+    }
+    if (bestA || bestB) {
+      return bestA ? -1 : 1
     }
 
     const completeOrder = doneOrder(a, b)
@@ -1387,7 +1886,7 @@ function makeChildMap(
   }
 
   for (const [parentId, siblings] of children.entries()) {
-    if (!order.leverageSort) {
+    if (!order.leverageSort && !useWorkViewOrder) {
       siblings.sort(
         parentId === null && view === 'tree' ? rootTreeOrder : treeOrder
       )
@@ -1396,8 +1895,22 @@ function makeChildMap(
     }
 
     if (parentId === null) {
-      siblings.sort(usePriorityRanks ? priorityOrder : rootTreeOrder)
+      siblings.sort(
+        useWorkViewOrder
+          ? workViewOrder
+          : usePriorityRanks
+            ? priorityOrder
+            : rootTreeOrder
+      )
+      if (useWorkViewOrder) {
+        continue
+      }
       applyExplicitSectionDependencyOrderFor(parentId, siblings)
+      continue
+    }
+
+    if (useWorkViewOrder) {
+      siblings.sort(workViewOrder)
       continue
     }
 
@@ -1824,7 +2337,7 @@ export function visibleOutlinerRows(
   const filteredRootItem = rootItem?.parent_id === null ? rootItem : null
   const children = makeChildMap(items, {
     ...options,
-    leverageSort: view !== 'tree' ? true : options.leverageSort,
+    leverageSort: isWorkView(view) ? true : options.leverageSort,
   })
   const rows: VisibleOutlinerRow[] = []
   const projectionCache = new Map<
@@ -1832,15 +2345,22 @@ export function visibleOutlinerRows(
     {
       collapsed: boolean
       directlyVisible: boolean
-      displayReadiness: ItemReadiness
+      displayReadiness: DisplayReadiness
       filteredOutNewlyAdded: boolean
       hasChildren: boolean
     }
   >()
-  const displayReadinessCache = new Map<string, ItemReadiness>()
+  const displayReadinessCache = new Map<string, DisplayReadiness>()
   const visibleDescendantCache = new Map<string, boolean>()
 
-  function displayReadiness(item: TreeItem): ItemReadiness {
+  function leafDisplayReadiness(item: TreeItem): DisplayReadiness {
+    if (isDoneForProjection(item) || isTerminalStatus(item.status)) {
+      return 'done'
+    }
+    return item.status === 'ready' ? 'ready' : 'waiting'
+  }
+
+  function displayReadiness(item: TreeItem): DisplayReadiness {
     const cached = displayReadinessCache.get(item.id)
     if (cached) {
       return cached
@@ -1848,12 +2368,12 @@ export function visibleOutlinerRows(
 
     const childItems = children.get(item.id) ?? []
     if (childItems.length === 0) {
-      const readiness = itemReadiness(item)
+      const readiness = leafDisplayReadiness(item)
       displayReadinessCache.set(item.id, readiness)
       return readiness
     }
 
-    let readiness: ItemReadiness = 'done'
+    let readiness: DisplayReadiness = 'done'
     for (const child of childItems) {
       const childReadiness = displayReadiness(child)
       if (childReadiness === 'ready') {
@@ -2004,6 +2524,7 @@ export function Outliner({
   newlyAddedIds,
   scratchpad = DEFAULT_SCRATCHPAD,
   scratchpadEditable = false,
+  initialView = 'tree',
 }: OutlinerProps) {
   const markers = providedMarkers ?? EMPTY_MARKERS
   const refreshMarkersOnMount = providedMarkers === undefined
@@ -2034,7 +2555,8 @@ export function Outliner({
     React.useState<PendingDependencyRemoval | null>(null)
   const [draftResetRequest, setDraftResetRequest] =
     React.useState<RowDraftResetRequest | null>(null)
-  const [selectedView, setSelectedView] = React.useState<OutlinerView>('tree')
+  const [selectedView, setSelectedView] =
+    React.useState<OutlinerView>(initialView)
   const [selectedProductId, setSelectedProductId] = React.useState<
     string | null
   >(null)
@@ -2078,6 +2600,17 @@ export function Outliner({
     }
     setLocalItems((current) => mergeSavedItem(current, savedItem))
   }, [])
+
+  const mergePatchedReturnedItem = React.useCallback(
+    (value: unknown, patch: OptimisticItemPatch) => {
+      const savedItem = itemResponse(value)
+      if (!savedItem) {
+        return
+      }
+      setLocalItems((current) => mergeSavedItem(current, savedItem, patch))
+    },
+    []
+  )
 
   const appendReturnedItem = React.useCallback((value: unknown) => {
     const savedItem = itemResponse(value)
@@ -2165,7 +2698,7 @@ export function Outliner({
     () => ({
       patchItem: async (itemId, patch) => {
         const savedItem = await patchItem(itemId, patch)
-        mergeReturnedItem(savedItem)
+        mergePatchedReturnedItem(savedItem, patch)
         if (patchAffectsPriorityMembership(patch)) {
           setLocallyRankedItemIds((current) => {
             if (current.has(itemId)) {
@@ -2217,14 +2750,14 @@ export function Outliner({
         return savedItem
       },
     }),
-    [appendReturnedItem, mergeReturnedItem, mergeStructuralReturnedItem]
+    [appendReturnedItem, mergePatchedReturnedItem, mergeStructuralReturnedItem]
   )
   const rows = React.useMemo(
     () =>
       visibleOutlinerRows(activeItems, expandedIds, {
         dragPreview,
         hiddenItemIds: mergedHiddenItemIds,
-        leverageSort: selectedView !== 'tree' ? true : leverageSort,
+        leverageSort: isWorkView(selectedView) ? true : leverageSort,
         newlyAddedIds: mergedNewlyAddedIds,
         priorityItems: effectivePriorityItems,
         rootItemId: selectedProductId,
@@ -2249,7 +2782,7 @@ export function Outliner({
 
     return visibleOutlinerRows(activeItems, expandedIds, {
       hiddenItemIds: mergedHiddenItemIds,
-      leverageSort: selectedView !== 'tree' ? true : leverageSort,
+      leverageSort: isWorkView(selectedView) ? true : leverageSort,
       newlyAddedIds: mergedNewlyAddedIds,
       priorityItems: effectivePriorityItems,
       rootItemId: selectedProductId,
@@ -2313,6 +2846,7 @@ export function Outliner({
     () => rootSectionBlocks(rows, itemsById),
     [itemsById, rows]
   )
+  const canCreateRootsInSelectedView = selectedView !== 'manager'
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -2750,6 +3284,17 @@ export function Outliner({
     } else if (isRestorableDoneState(state)) {
       rememberPreviousDoneState(item.id, state)
     }
+    setDetailRefreshKey((current) => current + 1)
+    requestItemFocus(item.id)
+    setSelectedItemId(item.id)
+  }
+
+  async function changeItemBall(item: TreeItem, ball: Ball) {
+    if (ball === item.ball) {
+      return
+    }
+
+    await mutationActions.patchItem(item.id, { ball })
     setDetailRefreshKey((current) => current + 1)
     requestItemFocus(item.id)
     setSelectedItemId(item.id)
@@ -3298,6 +3843,42 @@ export function Outliner({
     const returningDraggedItem =
       isDragReturnTarget && dragPreview?.draggedItemId === item.id
 
+    if (selectedView === 'manager') {
+      return (
+        <div
+          key={item.id}
+          data-outliner-item-id={item.id}
+          tabIndex={-1}
+          className={cn(
+            'focus-visible:ring-ring transition-[background-color,box-shadow] outline-none focus-visible:ring-2 focus-visible:ring-inset',
+            focusedItemId === item.id && 'ring-ring/30 ring-1 ring-inset'
+          )}
+        >
+          <ManagerProjectionRow
+            item={item}
+            depth={depth}
+            hasChildren={hasChildren}
+            collapsed={collapsed}
+            selected={selectedItemId === item.id}
+            onToggle={toggle}
+            onSelect={(itemId) => setSelectedItemId(itemId)}
+            onOpenNotes={openNotes}
+            onOpenPromptTimeline={openPromptTimeline}
+          />
+          {filteredOutNewlyAdded ? (
+            <div
+              className="border-border/50 text-muted-foreground border-t px-2 py-1 text-xs"
+              style={{
+                paddingLeft: `calc(${depth * 1.25}rem + 2.5rem)`,
+              }}
+            >
+              added this session, currently filtered out
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
     return (
       <React.Fragment key={item.id}>
         {dragOriginMarker?.nextItemId === item.id ? (
@@ -3409,6 +3990,7 @@ export function Outliner({
             onKeyboardReorder={reorderFromDragHandleKeyboard}
             onChangeState={changeItemState}
             onChangeDone={changeItemDone}
+            onChangeBall={changeItemBall}
             onOpenNotes={openNotes}
             onOpenPromptTimeline={openPromptTimeline}
             draftResetRequest={rowDraftResetRequest}
@@ -3468,12 +4050,14 @@ export function Outliner({
               {section.rows.map((row) => renderVisibleRow(row))}
             </div>
           ))}
-          <div className="border-border border-y">
-            <FirstRootCreator
-              autoFocus={activeItems.length === 0}
-              onCreate={createRoot}
-            />
-          </div>
+          {canCreateRootsInSelectedView ? (
+            <div className="border-border border-y">
+              <FirstRootCreator
+                autoFocus={activeItems.length === 0}
+                onCreate={createRoot}
+              />
+            </div>
+          ) : null}
           {dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker
               slot={dragOriginMarker}
@@ -3499,6 +4083,7 @@ export function Outliner({
           draggingItemId={draggingItemId}
           className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
           onAddDependency={addExplicitDependency}
+          onItemPatched={mergeReturnedItem}
           onRemoveDependency={removeExplicitDependency}
         />
       </div>

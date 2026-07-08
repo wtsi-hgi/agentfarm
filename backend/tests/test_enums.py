@@ -7,27 +7,36 @@ the effort/mode weighting and the "complete" predicate that later phases
 
 from __future__ import annotations
 
+from typing import get_args
+
+import pytest
+
 from models.enums import (
     EFFORT_WEIGHT,
-    EXTERNAL_WAITING_STATES,
     MODE_WEIGHT,
+    PHASE_ORDER,
+    Ball,
     Effort,
     Mode,
     State,
+    Status,
     is_complete,
-    is_external_waiting,
 )
+
+
+@pytest.fixture(autouse=True)
+def default_owner_identity() -> None:
+    """Enum tests do not need the app-level identity override fixture."""
 
 
 def test_state_values_exact() -> None:
     """State has exactly the spec's members and lowercase string values."""
     assert {member.value for member in State} == {
         "not-started",
+        "defining",
         "spec",
         "implement",
         "review",
-        "feedback",
-        "respond",
         "merged",
         "released",
         "done",
@@ -35,6 +44,7 @@ def test_state_values_exact() -> None:
     }
     # The hyphenated member is exposed under a python-safe name.
     assert State.not_started.value == "not-started"
+    assert State.defining.value == "defining"
 
 
 def test_mode_values_exact() -> None:
@@ -54,9 +64,16 @@ def test_effort_values_exact() -> None:
     assert {member.value for member in Effort} == {"quick", "medium", "long"}
 
 
+def test_ball_values_exact() -> None:
+    """Ball has exactly the spec's members and defaults to the owner."""
+    assert {member.value for member in Ball} == {"you", "agent", "person"}
+    assert Ball.you.value == "you"
+
+
 def test_enums_are_str_valued() -> None:
     """Members are plain strings so Pydantic/JSON serialise to the exact value."""
     assert State.spec == "spec"
+    assert Ball.agent == "agent"
     assert Mode.review == "review"
     assert Effort.long == "long"
     # str subclassing also means json.dumps emits the bare string.
@@ -95,9 +112,44 @@ def test_is_complete_only_done_and_abandoned() -> None:
         assert is_complete(state) is False
 
 
-def test_external_waiting_states_are_metadata_driven() -> None:
-    """Feedback and Implement wait externally; Respond remains user-actionable."""
-    assert EXTERNAL_WAITING_STATES == frozenset({State.feedback, State.implement})
-    assert is_external_waiting(State.feedback) is True
-    assert is_external_waiting(State.implement) is True
-    assert is_external_waiting(State.respond) is False
+def test_phase_order_is_non_terminal_pipeline_order() -> None:
+    """PHASE_ORDER lists the seven non-terminal phases in pipeline order."""
+    assert PHASE_ORDER == (
+        State.not_started,
+        State.defining,
+        State.spec,
+        State.implement,
+        State.review,
+        State.merged,
+        State.released,
+    )
+    assert State.done not in PHASE_ORDER
+    assert State.abandoned not in PHASE_ORDER
+
+
+def test_status_literal_values_exact() -> None:
+    """Status exposes the derived item statuses separately from State."""
+    assert set(get_args(Status)) == {
+        "ready",
+        "monitoring",
+        "waiting",
+        "blocked",
+        "done",
+        "dropped",
+        "rollup",
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "EXTERNAL_WAITING_STATES",
+        "USER_ACTION_STATES",
+        "is_external_waiting",
+        "user_action_priority",
+    ],
+)
+def test_removed_waiting_exports_no_longer_import(name: str) -> None:
+    """Waiting/user-action state helpers are no longer part of the enum API."""
+    with pytest.raises(ImportError, match=name):
+        exec(f"from models.enums import {name}", {})

@@ -20,18 +20,20 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.v1.authz import require_identity, require_owner
 from db.connection import get_db, get_write_db
-from models.enums import State, is_complete
+from models.enums import Ball, State, is_complete
 from services import graph, leverage, tree
 from services.clock import now
 from services.identity import current_actor
 
 from ..schemas import (
+    BallChangeActivityOut,
     DeletedResponse,
     ItemActivityOut,
     ItemCreate,
     ItemOut,
     ItemUpdate,
     MoveRequest,
+    StateChangeActivityOut,
     TreeItemOut,
 )
 
@@ -41,22 +43,25 @@ router = APIRouter()
 # and the read-back stay in sync.
 _ITEM_COLUMNS = (
     "id, title, slug, parent_id, sort_order, state, mode, effort, "
-    "blocked_external, blocked_note, blocked_followup_date, "
+    "ball, blocked_note, blocked_followup_date, "
+    "ball_changed_at, dev_updated, prod_updated, docs_updated, announced, "
     "description, repo_url, usage, "
     "created_by, updated_by, created_at, updated_at, state_changed_at, "
     "completed_at"
 )
-_ACTIVITY_COLUMNS = "id, item_id, actor, from_state, to_state, created_at"
+_ACTIVITY_COLUMNS = "id, item_id, kind, actor, from_state, to_state, created_at"
 
 
 def _row_to_item(row: sqlite3.Row) -> ItemOut:
     """Build an :class:`ItemOut` from a persisted ``items`` row.
 
-    The stored ``blocked_external`` integer (0/1) is mapped to a Python bool so
-    the response is a JSON boolean; the remaining columns map straight across.
+    Stored integer booleans are mapped to Python bools so the response is JSON
+    boolean-shaped; the remaining columns map straight across.
     """
     data = dict(row)
-    data["blocked_external"] = bool(data["blocked_external"])
+    for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
+        if field in data:
+            data[field] = bool(data[field])
     if data["parent_id"] is not None:
         data["repo_url"] = None
         data["usage"] = ""
@@ -64,8 +69,13 @@ def _row_to_item(row: sqlite3.Row) -> ItemOut:
 
 
 def _row_to_activity(row: sqlite3.Row) -> ItemActivityOut:
-    """Build an :class:`ItemActivityOut` from a persisted state-change row."""
-    return ItemActivityOut(kind="state-change", **dict(row))
+    """Build an activity response from a persisted state or Ball change row."""
+    data = dict(row)
+    if data["kind"] == "ball-change":
+        data["from_ball"] = data.pop("from_state")
+        data["to_ball"] = data.pop("to_state")
+        return BallChangeActivityOut(**data)
+    return StateChangeActivityOut(**data)
 
 
 def _explicit_needs_edges_by_item(
@@ -201,7 +211,9 @@ async def create_item(
         INSERT INTO items ({_ITEM_COLUMNS})
         VALUES (
             :id, :title, :slug, :parent_id, :sort_order, :state, :mode, :effort,
-            :blocked_external, :blocked_note, :blocked_followup_date,
+            :ball, :blocked_note, :blocked_followup_date,
+            :ball_changed_at, :dev_updated, :prod_updated, :docs_updated,
+            :announced,
             :description, :repo_url, :usage,
             :created_by, :updated_by, :created_at, :updated_at,
             :state_changed_at, :completed_at
@@ -216,10 +228,15 @@ async def create_item(
             "state": payload.state.value,
             "mode": payload.mode.value,
             "effort": payload.effort.value,
+            "ball": payload.ball.value,
+            "ball_changed_at": timestamp,
             # Defaults that are not part of the create contract yet.
-            "blocked_external": 0,
             "blocked_note": None,
             "blocked_followup_date": None,
+            "dev_updated": 0,
+            "prod_updated": 0,
+            "docs_updated": 0,
+            "announced": 0,
             "description": "",
             "repo_url": None,
             "usage": "",
@@ -487,10 +504,6 @@ async def get_tree(
     """
     projection = leverage.build_projection(conn)
     needs_edges_by_item = _explicit_needs_edges_by_item(conn)
-    item_ids_with_notes = _item_ids_with_notes(conn)
-    item_ids_with_prompt_response_entries = _item_ids_with_prompt_response_entries(
-        conn,
-    )
     result: list[TreeItemOut] = []
     for item_id in projection.tree_order_ids():
         row = projection.item_rows.get(item_id)
@@ -498,16 +511,22 @@ async def get_tree(
             continue
         item = _row_to_item(row)
         needs_edges = needs_edges_by_item.get(item_id, [])
+        status = projection.status(item_id)
+        if status is None:
+            continue
         result.append(
             TreeItemOut(
                 **item.model_dump(),
                 needs=[edge["slug"] for edge in needs_edges],
                 needs_edges=needs_edges,
+                status=status,
+                resume=projection.resume(item_id),
+                rollup=projection.rollup(item_id),
                 actionable=projection.is_actionable(item_id),
                 complete=projection.is_complete(item_id),
-                has_notes=item_id in item_ids_with_notes,
-                has_prompt_response_entries=(
-                    item_id in item_ids_with_prompt_response_entries
+                has_notes=projection.has_notes(item_id),
+                has_prompt_response_entries=projection.has_prompt_response_entries(
+                    item_id
                 ),
             )
         )
@@ -520,7 +539,7 @@ async def list_item_activity(
     _identity: Annotated[object, Depends(require_identity)],
     conn: Annotated[sqlite3.Connection, Depends(get_db, scope="function")],
 ) -> list[ItemActivityOut]:
-    """List timestamped state-change activity for the item detail panel."""
+    """List timestamped state and Ball activity for the item detail panel."""
     if not _item_exists(conn, item_id):
         raise HTTPException(status_code=404, detail="item not found")
 
@@ -543,7 +562,7 @@ async def update_item(
     _owner: Annotated[object, Depends(require_owner)],
     conn: Annotated[sqlite3.Connection, Depends(get_write_db, scope="function")],
 ) -> ItemOut:
-    """Edit any subset of an item's fields (A2).
+    """Edit any subset of an item's fields (A2/A3).
 
     Applies ONLY the fields the client actually sent (``exclude_unset``), so an
     omitted field is left unchanged while an explicit ``null`` for a nullable
@@ -559,12 +578,21 @@ async def update_item(
     * A ``state`` change stamps ``state_changed_at = now`` and sets
       ``completed_at`` to ``now`` for ``done``/``abandoned`` or clears it
       otherwise.
+    * A ``ball`` change stamps ``ball_changed_at = now`` and records
+      ``ball-change`` activity; sending the stored Ball value is a no-op for
+      that axis.
+    * Setting ``ball`` to ``you`` or ``agent`` clears hand-off context
+      (``blocked_note`` / ``blocked_followup_date``) in the same write.
+    * Re-opening a terminal item without an explicit ``ball`` forces
+      ``ball`` to ``you`` through the same Ball-change path.
 
     Identity, parent, ``sort_order``, edges, and comments are never touched
     here, so a rename or re-categorisation is lossless.
     """
     existing = conn.execute(
-        "SELECT id, state, parent_id FROM items WHERE id = ?", (item_id,)
+        "SELECT id, state, ball, parent_id, blocked_note, blocked_followup_date "
+        "FROM items WHERE id = ?",
+        (item_id,),
     ).fetchone()
     if existing is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -576,6 +604,8 @@ async def update_item(
     # Columns to write, built from the provided fields plus derived side effects.
     updates: dict[str, object] = {}
     activity: tuple[State, State, str] | None = None
+    ball_activity: tuple[Ball, Ball, str] | None = None
+    clear_handoff_context = False
     timestamp: str | None = None
 
     def mutation_timestamp() -> str:
@@ -610,14 +640,39 @@ async def update_item(
                 change_timestamp if is_complete(new_state) else None
             )
             activity = (old_state, new_state, change_timestamp)
+            if (
+                is_complete(old_state)
+                and not is_complete(new_state)
+                and "ball" not in provided
+            ):
+                provided["ball"] = Ball.you
 
-    if "blocked_external" in provided:
-        # Stored as integer 0/1 (schema), exposed as a JSON bool on read-back.
-        updates["blocked_external"] = 1 if provided["blocked_external"] else 0
+    if "ball" in provided:
+        new_ball: Ball = provided["ball"]
+        old_ball = Ball(existing["ball"])
+        if new_ball != old_ball:
+            change_timestamp = mutation_timestamp()
+            updates["ball"] = new_ball.value
+            updates["ball_changed_at"] = change_timestamp
+            ball_activity = (old_ball, new_ball, change_timestamp)
+        clear_handoff_context = new_ball in {Ball.you, Ball.agent} and (
+            new_ball != old_ball
+            or "blocked_note" in provided
+            or "blocked_followup_date" in provided
+            or existing["blocked_note"] is not None
+            or existing["blocked_followup_date"] is not None
+        )
+
     if "blocked_note" in provided:
         updates["blocked_note"] = provided["blocked_note"]
     if "blocked_followup_date" in provided:
         updates["blocked_followup_date"] = provided["blocked_followup_date"]
+    if clear_handoff_context:
+        updates["blocked_note"] = None
+        updates["blocked_followup_date"] = None
+    for field in ("dev_updated", "prod_updated", "docs_updated", "announced"):
+        if field in provided:
+            updates[field] = 1 if provided[field] else 0
     if "description" in provided:
         updates["description"] = provided["description"] or ""
     if "repo_url" in provided:
@@ -636,7 +691,8 @@ async def update_item(
     if updates:
         # Any change updates the audit columns with one shared instant.
         updates["updated_at"] = mutation_timestamp()
-        updates["updated_by"] = current_actor()
+        actor = current_actor()
+        updates["updated_by"] = actor
 
         assignments = ", ".join(f"{column} = :{column}" for column in updates)
         conn.execute(
@@ -648,14 +704,32 @@ async def update_item(
             conn.execute(
                 f"""
                 INSERT INTO item_state_changes ({_ACTIVITY_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid.uuid4()),
                     item_id,
-                    current_actor(),
+                    "state-change",
+                    actor,
                     old_state.value,
                     new_state.value,
+                    change_timestamp,
+                ),
+            )
+        if ball_activity is not None:
+            old_ball, new_ball, change_timestamp = ball_activity
+            conn.execute(
+                f"""
+                INSERT INTO item_state_changes ({_ACTIVITY_COLUMNS})
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    item_id,
+                    "ball-change",
+                    actor,
+                    old_ball.value,
+                    new_ball.value,
                     change_timestamp,
                 ),
             )

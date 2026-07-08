@@ -1,10 +1,10 @@
 """Pydantic models used across the API layer."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictBool, model_validator
 
-from models.enums import Effort, Mode, State
+from models.enums import Ball, Effort, Mode, State, Status
 
 
 class MessageResponse(BaseModel):
@@ -52,13 +52,13 @@ class LoginResponse(WhoAmI):
 
 
 class ItemCreate(BaseModel):
-    """Request body for ``POST /items`` (spec: A1).
+    """Request body for ``POST /items`` (spec: A1/A2).
 
     Only ``title`` is required. ``parent_id``/``after_id`` place the item in the
     tree; when provided, ``after_id`` must be a sibling in the requested parent
-    group. ``mode``/``effort``/``state`` default to the documented values. The
-    enum-typed fields make FastAPI reject an out-of-set token with HTTP 422
-    whose ``detail`` names the offending field.
+    group. ``mode``/``effort``/``state``/``ball`` default to the documented
+    values. The enum-typed fields make FastAPI reject an out-of-set token with
+    HTTP 422 whose ``detail`` names the offending field.
     """
 
     title: str
@@ -67,10 +67,11 @@ class ItemCreate(BaseModel):
     mode: Mode = Mode.prompt_agent
     effort: Effort = Effort.medium
     state: State = State.not_started
+    ball: Ball = Ball.you
 
 
 class ItemUpdate(BaseModel):
-    """Request body for ``PATCH /items/{id}`` (spec: A2).
+    """Request body for ``PATCH /items/{id}`` (spec: A2/A3).
 
     Every field is optional. The distinction the endpoint relies on is *which
     fields the client actually sent*, recovered via ``model_fields_set`` /
@@ -86,11 +87,15 @@ class ItemUpdate(BaseModel):
 
     title: str | None = None
     state: State | None = None
+    ball: Ball | None = None
     mode: Mode | None = None
     effort: Effort | None = None
-    blocked_external: bool | None = None
     blocked_note: str | None = None
     blocked_followup_date: str | None = None
+    dev_updated: StrictBool | None = None
+    prod_updated: StrictBool | None = None
+    docs_updated: StrictBool | None = None
+    announced: StrictBool | None = None
     description: str | None = None
     repo_url: str | None = None
     usage: str | None = None
@@ -249,16 +254,34 @@ class ScratchpadOut(BaseModel):
     updated_at: str | None
 
 
-class ItemActivityOut(BaseModel):
+class StateChangeActivityOut(BaseModel):
     """Response model for timestamped item activity in the detail panel."""
 
     id: str
     item_id: str
-    kind: Literal["state-change"]
+    kind: Literal["state-change"] = "state-change"
     actor: str
     from_state: State
     to_state: State
     created_at: str
+
+
+class BallChangeActivityOut(BaseModel):
+    """Response model for timestamped Ball hand-off activity."""
+
+    id: str
+    item_id: str
+    kind: Literal["ball-change"] = "ball-change"
+    actor: str
+    from_ball: Ball
+    to_ball: Ball
+    created_at: str
+
+
+ItemActivityOut = Annotated[
+    StateChangeActivityOut | BallChangeActivityOut,
+    Field(discriminator="kind"),
+]
 
 
 class RunOut(BaseModel):
@@ -271,7 +294,7 @@ class RunOut(BaseModel):
 
 
 class ItemOut(BaseModel):
-    """Response model for a single item (spec: A1).
+    """Response model for a single item (spec: A1/A2).
 
     Mirrors the persisted ``items`` row. Enum fields serialise to their exact
     lowercase string values; timestamps are ISO-8601 UTC strings; nullable
@@ -284,11 +307,15 @@ class ItemOut(BaseModel):
     parent_id: str | None
     sort_order: float
     state: State
+    ball: Ball = Ball.you
     mode: Mode
     effort: Effort
-    blocked_external: bool
     blocked_note: str | None
     blocked_followup_date: str | None
+    dev_updated: bool = False
+    prod_updated: bool = False
+    docs_updated: bool = False
+    announced: bool = False
     description: str
     repo_url: str | None
     usage: str
@@ -297,6 +324,7 @@ class ItemOut(BaseModel):
     created_at: str
     updated_at: str
     state_changed_at: str
+    ball_changed_at: str = ""
     completed_at: str | None
 
 
@@ -333,6 +361,36 @@ class TreeDependencyEdgeOut(BaseModel):
     automatic_chain: bool = False
 
 
+class RollupStatusCounts(BaseModel):
+    """Status bucket counts over a container's descendant leaves."""
+
+    ready: int
+    monitoring: int
+    waiting: int
+    blocked: int
+    done: int
+    dropped: int
+
+
+class RollupShipProgress(BaseModel):
+    """Shipping milestone counts over a container's descendant leaves."""
+
+    dev_updated: int
+    prod_updated: int
+    docs_updated: int
+    announced: int
+    shipped: int
+    total: int
+
+
+class RollupOut(BaseModel):
+    """Manager aggregate exposed only for container tree rows."""
+
+    status_counts: RollupStatusCounts
+    ship: RollupShipProgress
+    phase: State | None
+
+
 class TreeItemOut(ItemOut):
     """A single item as returned by GET ``/tree`` (spec: A3, extended by H1).
 
@@ -354,6 +412,9 @@ class TreeItemOut(ItemOut):
 
     needs: list[str]
     needs_edges: list[TreeDependencyEdgeOut]
+    status: Status
+    resume: bool
+    rollup: RollupOut | None
     actionable: bool
     complete: bool
     has_notes: bool

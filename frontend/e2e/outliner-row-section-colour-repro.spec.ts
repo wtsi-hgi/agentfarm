@@ -245,8 +245,8 @@ test.describe('outliner row section colour reproduction', () => {
       const stateSelect = stateCandidateRow.getByRole('combobox', {
         name: 'Item state',
       })
-      await stateSelect.selectOption('feedback')
-      await expect(stateSelect).toHaveValue('feedback')
+      await stateSelect.selectOption('released')
+      await expect(stateSelect).toHaveValue('released')
       await page.screenshot({
         caret: 'initial',
         fullPage: true,

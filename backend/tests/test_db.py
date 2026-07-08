@@ -20,6 +20,9 @@ from threading import Event, Thread
 from db.connection import SQLITE_BUSY_TIMEOUT_MS, get_connection, get_write_connection
 from db.migrate import apply_migrations
 
+LEGACY_TIMESTAMP = "2026-01-01T00:00:00.000000Z"
+PHASE_BALL_SPLIT_MIGRATION_ID = "20260707_phase_ball_split"
+
 EXPECTED_TABLES = {
     "items",
     "dependencies",
@@ -45,6 +48,114 @@ EXPECTED_INDEX_COLUMNS = {
     "idx_item_notes_item_created": ["item_id", "created_at", "id"],
     "idx_prompt_response_entries_item_created": ["item_id", "created_at", "id"],
 }
+
+
+def _create_legacy_items_table(conn: sqlite3.Connection) -> None:
+    """Create the pre-ball items table used by legacy migration tests."""
+    conn.execute(
+        """
+        CREATE TABLE items (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          slug TEXT NOT NULL UNIQUE,
+          parent_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+          sort_order REAL NOT NULL,
+          state TEXT NOT NULL DEFAULT 'not-started',
+          mode TEXT NOT NULL DEFAULT 'prompt-agent',
+          effort TEXT NOT NULL DEFAULT 'medium',
+          blocked_external INTEGER NOT NULL DEFAULT 0,
+          blocked_note TEXT,
+          blocked_followup_date TEXT,
+          created_by TEXT NOT NULL,
+          updated_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          state_changed_at TEXT NOT NULL,
+          completed_at TEXT
+        )
+        """
+    )
+
+
+def _insert_legacy_item(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    state: str,
+    blocked_external: int,
+    blocked_note: str | None = None,
+    blocked_followup_date: str | None = None,
+    state_changed_at: str = LEGACY_TIMESTAMP,
+) -> None:
+    """Insert a legacy item row before the phase/ball split migration."""
+    conn.execute(
+        """
+        INSERT INTO items (
+            id, title, slug, sort_order, state, blocked_external, blocked_note,
+            blocked_followup_date, created_by, updated_by, created_at,
+            updated_at, state_changed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            item_id,
+            item_id,
+            item_id,
+            1.0,
+            state,
+            blocked_external,
+            blocked_note,
+            blocked_followup_date,
+            "alice",
+            "alice",
+            LEGACY_TIMESTAMP,
+            LEGACY_TIMESTAMP,
+            state_changed_at,
+        ),
+    )
+
+
+def _create_legacy_state_changes_table(conn: sqlite3.Connection) -> None:
+    """Create the pre-kind activity table used by legacy migration tests."""
+    conn.execute(
+        """
+        CREATE TABLE item_state_changes (
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+          actor TEXT NOT NULL,
+          from_state TEXT NOT NULL,
+          to_state TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _insert_legacy_state_change(
+    conn: sqlite3.Connection,
+    change_id: str,
+    item_id: str,
+    *,
+    from_state: str,
+    to_state: str,
+) -> None:
+    """Insert a legacy activity row before the kind discriminator existed."""
+    conn.execute(
+        """
+        INSERT INTO item_state_changes (
+            id, item_id, actor, from_state, to_state, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            change_id,
+            item_id,
+            "alice",
+            from_state,
+            to_state,
+            LEGACY_TIMESTAMP,
+        ),
+    )
 
 
 def _table_names(db_path: Path) -> set[str]:
@@ -239,6 +350,355 @@ def test_migration_upgrades_existing_items_with_detail_columns(tmp_path) -> None
     assert _index_names(db_path) == EXPECTED_INDEXES
 
 
+def test_phase_ball_split_maps_implement_to_agent(tmp_path) -> None:
+    """Legacy in-progress work remains implement and moves to the agent ball."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-implement",
+            state="implement",
+            blocked_external=0,
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT state, ball FROM items WHERE id = 'legacy-implement'"
+        ).fetchone()
+
+    assert dict(row) == {"state": "implement", "ball": "agent"}
+
+
+def test_phase_ball_split_maps_feedback_to_released_person(tmp_path) -> None:
+    """Legacy feedback keeps its hand-off details and becomes released/person."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-feedback",
+            state="feedback",
+            blocked_external=0,
+            blocked_note="n",
+            blocked_followup_date="2026-01-01",
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT state, ball, blocked_note, blocked_followup_date
+            FROM items
+            WHERE id = 'legacy-feedback'
+            """
+        ).fetchone()
+
+    assert dict(row) == {
+        "state": "released",
+        "ball": "person",
+        "blocked_note": "n",
+        "blocked_followup_date": "2026-01-01",
+    }
+
+
+def test_phase_ball_split_maps_respond_to_released_you(tmp_path) -> None:
+    """Legacy respond collapses into released but keeps the default you ball."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-respond",
+            state="respond",
+            blocked_external=0,
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT state, ball FROM items WHERE id = 'legacy-respond'"
+        ).fetchone()
+
+    assert dict(row) == {"state": "released", "ball": "you"}
+
+
+def test_phase_ball_split_external_block_overrides_implement_to_person(
+    tmp_path,
+) -> None:
+    """The legacy external block flag takes precedence over implement/agent."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-blocked",
+            state="implement",
+            blocked_external=1,
+            blocked_note="n",
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT state, ball, blocked_note
+            FROM items
+            WHERE id = 'legacy-blocked'
+            """
+        ).fetchone()
+
+    assert dict(row) == {
+        "state": "implement",
+        "ball": "person",
+        "blocked_note": "n",
+    }
+
+
+def test_phase_ball_split_keeps_unmatched_state_on_you_ball(tmp_path) -> None:
+    """Legacy states outside implement/feedback/respond keep the default ball."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-spec",
+            state="spec",
+            blocked_external=0,
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT state, ball FROM items WHERE id = 'legacy-spec'"
+        ).fetchone()
+
+    assert dict(row) == {"state": "spec", "ball": "you"}
+
+
+def test_phase_ball_split_rewrites_legacy_activity_states(tmp_path) -> None:
+    """Legacy activity no longer references feedback or respond after upgrade."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(conn, "legacy-item", state="feedback", blocked_external=0)
+        _create_legacy_state_changes_table(conn)
+        _insert_legacy_state_change(
+            conn,
+            "change-feedback",
+            "legacy-item",
+            from_state="released",
+            to_state="feedback",
+        )
+        _insert_legacy_state_change(
+            conn,
+            "change-respond",
+            "legacy-item",
+            from_state="respond",
+            to_state="implement",
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, from_state, to_state
+            FROM item_state_changes
+            ORDER BY id
+            """
+        ).fetchall()
+        legacy_state_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM item_state_changes
+            WHERE from_state IN ('feedback', 'respond')
+               OR to_state IN ('feedback', 'respond')
+            """
+        ).fetchone()[0]
+
+    assert [dict(row) for row in rows] == [
+        {
+            "id": "change-feedback",
+            "from_state": "released",
+            "to_state": "released",
+        },
+        {
+            "id": "change-respond",
+            "from_state": "released",
+            "to_state": "implement",
+        },
+    ]
+    assert legacy_state_count == 0
+
+
+def test_phase_ball_split_drops_blocked_external_and_backfills_columns(
+    tmp_path,
+) -> None:
+    """The upgraded item schema has ball/ship fields and stamped ball times."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(
+            conn,
+            "legacy-with-state-time",
+            state="spec",
+            blocked_external=0,
+            state_changed_at="2026-02-03T04:05:06.000000Z",
+        )
+        _insert_legacy_item(
+            conn,
+            "legacy-without-state-time",
+            state="spec",
+            blocked_external=0,
+            state_changed_at="",
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        rows = conn.execute(
+            """
+            SELECT id, ball_changed_at
+            FROM items
+            ORDER BY id
+            """
+        ).fetchall()
+
+    assert "blocked_external" not in columns
+    assert {
+        "ball",
+        "ball_changed_at",
+        "dev_updated",
+        "prod_updated",
+        "docs_updated",
+        "announced",
+    } <= columns
+    assert [dict(row) for row in rows] == [
+        {
+            "id": "legacy-with-state-time",
+            "ball_changed_at": "2026-02-03T04:05:06.000000Z",
+        },
+        {
+            "id": "legacy-without-state-time",
+            "ball_changed_at": rows[1]["ball_changed_at"],
+        },
+    ]
+    assert all(row["ball_changed_at"] for row in rows)
+
+
+def test_phase_ball_split_is_idempotent(tmp_path) -> None:
+    """The one-time marker prevents subsequent phase/ball split rewrites."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(conn, "legacy-item", state="feedback", blocked_external=0)
+        _create_legacy_state_changes_table(conn)
+        _insert_legacy_state_change(
+            conn,
+            "change-feedback",
+            "legacy-item",
+            from_state="released",
+            to_state="feedback",
+        )
+
+    apply_migrations(db_path)
+    with get_connection(db_path) as conn:
+        first_items = conn.execute("SELECT * FROM items ORDER BY id").fetchall()
+        first_activity = conn.execute(
+            "SELECT * FROM item_state_changes ORDER BY id"
+        ).fetchall()
+        first_migrations = conn.execute(
+            "SELECT id FROM schema_migrations ORDER BY id"
+        ).fetchall()
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        second_items = conn.execute("SELECT * FROM items ORDER BY id").fetchall()
+        second_activity = conn.execute(
+            "SELECT * FROM item_state_changes ORDER BY id"
+        ).fetchall()
+        second_migrations = conn.execute(
+            "SELECT id FROM schema_migrations ORDER BY id"
+        ).fetchall()
+
+    assert [dict(row) for row in second_items] == [dict(row) for row in first_items]
+    assert [dict(row) for row in second_activity] == [
+        dict(row) for row in first_activity
+    ]
+    assert [row["id"] for row in second_migrations] == [
+        row["id"] for row in first_migrations
+    ]
+    assert [row["id"] for row in second_migrations].count(
+        PHASE_BALL_SPLIT_MIGRATION_ID
+    ) == 1
+
+
+def test_phase_ball_split_records_noop_on_fresh_database(tmp_path) -> None:
+    """A fresh DB has the new schema and records the migration with no rows."""
+    db_path = tmp_path / "agentfarm.db"
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        item_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(items)").fetchall()
+        }
+        item_count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        migration = conn.execute(
+            """
+            SELECT id
+            FROM schema_migrations
+            WHERE id = ?
+            """,
+            (PHASE_BALL_SPLIT_MIGRATION_ID,),
+        ).fetchone()
+
+    assert "blocked_external" not in item_columns
+    assert item_count == 0
+    assert migration is not None
+
+
+def test_phase_ball_split_adds_default_kind_to_legacy_activity(tmp_path) -> None:
+    """Activity tables that predate kind read back as state-change activity."""
+    db_path = tmp_path / "agentfarm.db"
+    with sqlite3.connect(db_path) as conn:
+        _create_legacy_items_table(conn)
+        _insert_legacy_item(conn, "legacy-item", state="spec", blocked_external=0)
+        _create_legacy_state_changes_table(conn)
+        _insert_legacy_state_change(
+            conn,
+            "change-spec",
+            "legacy-item",
+            from_state="not-started",
+            to_state="spec",
+        )
+
+    apply_migrations(db_path)
+
+    with get_connection(db_path) as conn:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(item_state_changes)").fetchall()
+        }
+        rows = conn.execute(
+            "SELECT kind FROM item_state_changes ORDER BY id"
+        ).fetchall()
+
+    assert "kind" in columns
+    assert [row["kind"] for row in rows] == ["state-change"]
+
+
 def test_migration_backfills_automatic_leaf_chain_once(tmp_path) -> None:
     """Upgrading an old DB creates explicit automatic sibling edges once.
 
@@ -345,7 +805,10 @@ def test_migration_backfills_automatic_leaf_chain_once(tmp_path) -> None:
             "automatic_chain": 0,
         },
     ]
-    assert [row["id"] for row in migrations] == ["20260701_automatic_sibling_chain"]
+    assert [row["id"] for row in migrations] == [
+        "20260701_automatic_sibling_chain",
+        PHASE_BALL_SPLIT_MIGRATION_ID,
+    ]
 
 
 def test_migration_records_run_once_marker_in_legacy_timestamped_table(

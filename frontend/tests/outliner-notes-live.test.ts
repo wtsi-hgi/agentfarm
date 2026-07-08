@@ -47,9 +47,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -58,9 +62,13 @@ const baseItem = {
   created_at: '2026-07-02T00:00:00.000000Z',
   updated_at: '2026-07-02T00:00:00.000000Z',
   state_changed_at: '2026-07-02T00:00:00.000000Z',
+  ball_changed_at: '2026-07-02T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
@@ -69,11 +77,13 @@ const baseItem = {
 
 let roots: Root[] = []
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 function note(overrides: Partial<Note>): Note {
@@ -143,6 +153,12 @@ function getItemButton(
     throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
   }
   return button
+}
+
+function resumeAffordance(container: ParentNode, itemId: string) {
+  return container.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
 }
 
 function getButton(container: ParentNode, ariaLabel: string) {
@@ -396,6 +412,7 @@ describe('Outliner notes overlay', () => {
       'No notes available'
     )
     expect(notesButton.title).toBe('Notes')
+    expect(resumeAffordance(container, 'root')).toBeNull()
     await flushDeferredWork()
 
     await click(notesButton)
@@ -434,6 +451,7 @@ describe('Outliner notes overlay', () => {
     expect(getItemButton(container, 'root', 'Open notes').title).toBe(
       'Notes available'
     )
+    expect(resumeAffordance(container, 'root')).toBeInstanceOf(HTMLElement)
     expect(dialog.textContent).toContain('New note')
     expect(dialog.textContent).toContain('2026-07-02 10:00 UTC')
 

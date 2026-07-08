@@ -8,7 +8,7 @@ An item is actionable iff ALL of:
 
 * it is a LEAF (has no children) -- containers are NEVER actionable;
 * it is NOT complete (its own state is not ``done``/``abandoned``);
-* ``blocked_external`` is false and its state is not externally waiting; and
+* its ``ball`` is ``you``; and
 * EVERY stored dependency target attached to the item or any ancestor section is
   complete. A section-level dependency gates all leaves nested inside that
   section. Automatic ordinary-leaf chain dependencies are persisted as rows, so
@@ -21,8 +21,8 @@ Unblock leverage
 ----------------
 ``Downstream(L)`` is every open leaf whose own dependency edges, inherited
 ancestor-section dependency edges depend on ``L`` directly or transitively.
-``blocked_external`` and external-waiting states exclude a leaf from
-actionability, but not from downstream membership.
+``ball`` values other than ``you`` exclude a leaf from actionability, but not
+from downstream membership.
 """
 
 from __future__ import annotations
@@ -36,17 +36,28 @@ from typing import Any
 from models.enums import (
     EFFORT_WEIGHT,
     MODE_WEIGHT,
+    PHASE_ORDER,
+    Ball,
     Effort,
     Mode,
     State,
-    is_external_waiting,
-    user_action_priority,
+    Status,
 )
 from models.enums import (
     is_complete as state_is_complete,
 )
 
 ItemRow = dict[str, Any]
+RollupPayload = dict[str, Any]
+STATUS_COUNT_KEYS: tuple[Status, ...] = (
+    "ready",
+    "monitoring",
+    "waiting",
+    "blocked",
+    "done",
+    "dropped",
+)
+SHIP_FIELDS = ("dev_updated", "prod_updated", "docs_updated", "announced")
 
 
 def _append_unique(
@@ -69,6 +80,11 @@ class LeverageProjection:
     dependency_targets_by_id: dict[str, list[str]]
     descendants_by_id: dict[str, set[str]]
     complete_by_id: dict[str, bool]
+    status_by_id: dict[str, Status]
+    has_notes_by_id: dict[str, bool]
+    has_prompt_response_entries_by_id: dict[str, bool]
+    resume_by_id: dict[str, bool]
+    rollup_by_id: dict[str, RollupPayload | None]
     actionable_by_id: dict[str, bool]
     depends_on_by_id: dict[str, set[str]]
     downstream_by_id: dict[str, set[str]]
@@ -81,11 +97,27 @@ class LeverageProjection:
             row["id"]: dict(row)
             for row in conn.execute("SELECT * FROM items").fetchall()
         }
+        item_ids_with_notes = cls._item_ids_with_notes(conn)
+        item_ids_with_prompt_response_entries = (
+            cls._item_ids_with_prompt_response_entries(conn)
+        )
+        has_notes_by_id = {
+            item_id: item_id in item_ids_with_notes for item_id in item_rows
+        }
+        has_prompt_response_entries_by_id = {
+            item_id: item_id in item_ids_with_prompt_response_entries
+            for item_id in item_rows
+        }
+        resume_by_id = cls._resume_by_id(
+            item_rows,
+            has_notes_by_id,
+            has_prompt_response_entries_by_id,
+        )
         children_by_parent = cls._children_by_parent(item_rows)
         stored_targets = cls._stored_dependency_targets(conn)
         complete_by_id = cls._complete_by_id(item_rows, children_by_parent)
+        descendants_by_id = cls._descendants_by_id(item_rows, children_by_parent)
         if stored_targets:
-            descendants_by_id = cls._descendants_by_id(item_rows, children_by_parent)
             dependency_targets_by_id = cls._dependency_targets_by_id(
                 item_rows,
                 children_by_parent,
@@ -104,16 +136,26 @@ class LeverageProjection:
             )
             score_by_id = cls._score_by_id(item_rows, downstream_by_id)
         else:
-            descendants_by_id = {item_id: set() for item_id in item_rows}
             dependency_targets_by_id = {item_id: [] for item_id in item_rows}
             depends_on_by_id = {item_id: set() for item_id in item_rows}
             downstream_by_id = {item_id: set() for item_id in item_rows}
             score_by_id = {item_id: 0.0 for item_id in item_rows}
-        actionable_by_id = cls._actionable_by_id(
+        status_by_id = cls._status_by_id(
             item_rows,
             children_by_parent,
             dependency_targets_by_id,
             complete_by_id,
+        )
+        rollup_by_id = cls._rollup_by_id(
+            item_rows,
+            children_by_parent,
+            descendants_by_id,
+            status_by_id,
+        )
+        actionable_by_id = cls._actionable_by_id(
+            item_rows,
+            children_by_parent,
+            status_by_id,
         )
         return cls(
             item_rows=item_rows,
@@ -121,11 +163,30 @@ class LeverageProjection:
             dependency_targets_by_id=dependency_targets_by_id,
             descendants_by_id=descendants_by_id,
             complete_by_id=complete_by_id,
+            status_by_id=status_by_id,
+            has_notes_by_id=has_notes_by_id,
+            has_prompt_response_entries_by_id=has_prompt_response_entries_by_id,
+            resume_by_id=resume_by_id,
+            rollup_by_id=rollup_by_id,
             actionable_by_id=actionable_by_id,
             depends_on_by_id=depends_on_by_id,
             downstream_by_id=downstream_by_id,
             score_by_id=score_by_id,
         )
+
+    @staticmethod
+    def _item_ids_with_notes(conn: sqlite3.Connection) -> set[str]:
+        rows = conn.execute("SELECT DISTINCT item_id FROM item_notes").fetchall()
+        return {row["item_id"] for row in rows}
+
+    @staticmethod
+    def _item_ids_with_prompt_response_entries(
+        conn: sqlite3.Connection,
+    ) -> set[str]:
+        rows = conn.execute(
+            "SELECT DISTINCT item_id FROM prompt_response_entries"
+        ).fetchall()
+        return {row["item_id"] for row in rows}
 
     @staticmethod
     def _children_by_parent(
@@ -242,23 +303,119 @@ class LeverageProjection:
     def _actionable_by_id(
         item_rows: dict[str, ItemRow],
         children_by_parent: dict[str | None, list[str]],
+        status_by_id: dict[str, Status],
+    ) -> dict[str, bool]:
+        return {
+            item_id: not children_by_parent.get(item_id)
+            and status_by_id.get(item_id) == "ready"
+            for item_id in item_rows
+        }
+
+    @staticmethod
+    def _status_by_id(
+        item_rows: dict[str, ItemRow],
+        children_by_parent: dict[str | None, list[str]],
         dependency_targets_by_id: dict[str, list[str]],
         complete_by_id: dict[str, bool],
-    ) -> dict[str, bool]:
-        actionable: dict[str, bool] = {}
+    ) -> dict[str, Status]:
+        statuses: dict[str, Status] = {}
         for item_id, row in item_rows.items():
+            if children_by_parent.get(item_id):
+                statuses[item_id] = "rollup"
+                continue
+
             state = State(row["state"])
-            actionable[item_id] = (
-                not children_by_parent.get(item_id)
-                and not complete_by_id.get(item_id, False)
-                and not is_external_waiting(state)
-                and not row["blocked_external"]
-                and all(
-                    complete_by_id.get(target_id, False)
-                    for target_id in dependency_targets_by_id[item_id]
-                )
+            if state == State.done:
+                statuses[item_id] = "done"
+                continue
+            if state == State.abandoned:
+                statuses[item_id] = "dropped"
+                continue
+            if not complete_by_id.get(item_id, False) and any(
+                not complete_by_id.get(target_id, False)
+                for target_id in dependency_targets_by_id[item_id]
+            ):
+                statuses[item_id] = "blocked"
+                continue
+
+            ball = Ball(row["ball"])
+            if ball == Ball.agent:
+                statuses[item_id] = "monitoring"
+            elif ball == Ball.person:
+                statuses[item_id] = "waiting"
+            else:
+                statuses[item_id] = "ready"
+
+        return statuses
+
+    @staticmethod
+    def _resume_by_id(
+        item_rows: dict[str, ItemRow],
+        has_notes_by_id: dict[str, bool],
+        has_prompt_response_entries_by_id: dict[str, bool],
+    ) -> dict[str, bool]:
+        return {
+            item_id: State(row["state"]) != State.not_started
+            or has_notes_by_id[item_id]
+            or has_prompt_response_entries_by_id[item_id]
+            for item_id, row in item_rows.items()
+        }
+
+    @staticmethod
+    def _rollup_by_id(
+        item_rows: dict[str, ItemRow],
+        children_by_parent: dict[str | None, list[str]],
+        descendants_by_id: dict[str, set[str]],
+        status_by_id: dict[str, Status],
+    ) -> dict[str, RollupPayload | None]:
+        rollups: dict[str, RollupPayload | None] = {}
+        phase_rank = {phase: rank for rank, phase in enumerate(PHASE_ORDER)}
+        for item_id in item_rows:
+            if not children_by_parent.get(item_id):
+                rollups[item_id] = None
+                continue
+
+            leaf_ids = [
+                descendant_id
+                for descendant_id in descendants_by_id.get(item_id, set())
+                if not children_by_parent.get(descendant_id)
+            ]
+            status_counts = {status: 0 for status in STATUS_COUNT_KEYS}
+            ship = {field: 0 for field in SHIP_FIELDS}
+            ship["shipped"] = 0
+            ship["total"] = len(leaf_ids)
+            open_phases: list[State] = []
+
+            for leaf_id in leaf_ids:
+                status = status_by_id[leaf_id]
+                if status in status_counts:
+                    status_counts[status] += 1
+
+                row = item_rows[leaf_id]
+                completed_milestones = 0
+                for field in SHIP_FIELDS:
+                    if bool(row[field]):
+                        ship[field] += 1
+                        completed_milestones += 1
+                if completed_milestones == len(SHIP_FIELDS):
+                    ship["shipped"] += 1
+
+                phase = State(row["state"])
+                if phase in phase_rank:
+                    open_phases.append(phase)
+
+            least_phase = (
+                min(open_phases, key=lambda phase: phase_rank[phase])
+                if open_phases
+                else None
             )
-        return actionable
+            rollups[item_id] = {
+                "status_counts": status_counts,
+                "ship": ship,
+                "phase": least_phase,
+            }
+
+        return rollups
 
     @classmethod
     def _depends_on_by_id(
@@ -371,7 +528,6 @@ class LeverageProjection:
         )
         ordered.sort(
             key=lambda item_id: (
-                user_action_priority(State(self.item_rows[item_id]["state"])),
                 self.score_by_id.get(item_id, 0.0),
                 self.item_rows[item_id]["updated_at"],
                 self.item_rows[item_id]["created_at"],
@@ -387,6 +543,26 @@ class LeverageProjection:
     def is_complete(self, item_id: str) -> bool:
         """Return whether ``item_id`` is complete in this projection."""
         return self.complete_by_id.get(item_id, False)
+
+    def status(self, item_id: str) -> Status | None:
+        """Return the derived status for ``item_id``, if it exists."""
+        return self.status_by_id.get(item_id)
+
+    def has_notes(self, item_id: str) -> bool:
+        """Return whether ``item_id`` has one or more dated notes."""
+        return self.has_notes_by_id.get(item_id, False)
+
+    def has_prompt_response_entries(self, item_id: str) -> bool:
+        """Return whether ``item_id`` has one or more prompt/response entries."""
+        return self.has_prompt_response_entries_by_id.get(item_id, False)
+
+    def resume(self, item_id: str) -> bool:
+        """Return the fresh-vs-resume predicate for ``item_id``."""
+        return self.resume_by_id.get(item_id, False)
+
+    def rollup(self, item_id: str) -> RollupPayload | None:
+        """Return the descendant-leaf roll-up for a container, else ``None``."""
+        return self.rollup_by_id.get(item_id)
 
     def downstream_item_ids(self, item_id: str) -> set[str]:
         """Return ``Downstream(item_id)`` in this projection."""
@@ -409,8 +585,8 @@ def build_projection(conn: sqlite3.Connection) -> LeverageProjection:
 def is_actionable(conn: sqlite3.Connection, item_id: str) -> bool:
     """Return whether ``item_id`` is actionable right now (Core domain rules).
 
-    True iff ``item_id`` is a leaf, is not itself complete, is not
-    ``blocked_external`` or in an external-waiting state, and every dependency
+    True iff ``item_id`` is a leaf, is not itself complete, has ``ball == you``,
+    and every dependency
     target on the item or its ancestor sections is complete under the recursive
     container-completeness rule.
     Containers are never actionable; a missing id is not actionable.

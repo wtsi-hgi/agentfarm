@@ -3,6 +3,51 @@ import { describe, expect, it } from 'vitest'
 import { parseRow } from '@/lib/outliner-parse'
 
 describe('parseRow', () => {
+  it('extracts a Ball token from row text', () => {
+    expect(parseRow('Fix bug ~agent')).toEqual({
+      ok: true,
+      row: {
+        title: 'Fix bug',
+        ball: 'agent',
+        needs: [],
+      },
+    })
+  })
+
+  it('matches Ball tokens case-insensitively', () => {
+    expect(parseRow('~PERSON note')).toEqual({
+      ok: true,
+      row: {
+        title: 'note',
+        ball: 'person',
+        needs: [],
+      },
+    })
+  })
+
+  it('returns a Ball error for an unrecognized Ball token', () => {
+    const result = parseRow('x ~bogus')
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      throw new Error('Expected parse failure')
+    }
+    expect(result.error).toMatch(/ball/i)
+  })
+
+  it('combines Ball tokens with existing state and mode tokens', () => {
+    expect(parseRow('Ship it ::review ~you @merge')).toEqual({
+      ok: true,
+      row: {
+        title: 'Ship it',
+        state: 'review',
+        ball: 'you',
+        mode: 'merge',
+        needs: [],
+      },
+    })
+  })
+
   it('extracts all inline metadata tokens from a row', () => {
     expect(
       parseRow('Ship login @review !quick ::implement >needs:deploy-db')
@@ -44,6 +89,9 @@ describe('parseRow', () => {
     const result = parseRow('X @bogus')
 
     expect(result.ok).toBe(false)
+    if (result.ok) {
+      throw new Error('Expected parse failure')
+    }
     expect(result.error).toContain('bogus')
   })
 

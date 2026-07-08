@@ -1,4 +1,4 @@
-import type { Effort, Mode, State, TreeItem } from '@/lib/contracts'
+import type { Ball, Effort, Mode, State, TreeItem } from '@/lib/contracts'
 import { parseRow } from '@/lib/outliner-parse'
 
 export const NEW_ITEM_TITLE = 'New item'
@@ -8,6 +8,9 @@ type PatchPayload = {
   mode?: Mode
   effort?: Effort
   state?: State
+  ball?: Ball
+  blocked_note?: string | null
+  blocked_followup_date?: string | null
 }
 
 type DependencyPayload =
@@ -131,6 +134,9 @@ export async function submitRowText(
   }
   if (parsed.row.state && parsed.row.state !== item.state) {
     patch.state = parsed.row.state
+  }
+  if (parsed.row.ball && parsed.row.ball !== item.ball) {
+    patch.ball = parsed.row.ball
   }
 
   const existingNeeds = new Set(item.needs)

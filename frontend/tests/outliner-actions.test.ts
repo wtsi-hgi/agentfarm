@@ -1,3 +1,8 @@
+// @vitest-environment jsdom
+
+import * as React from 'react'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -30,7 +35,9 @@ import {
   spawnItem,
   updateScratchpad,
 } from '@/app/actions'
-import type { Item } from '@/lib/contracts'
+import { Outliner } from '@/components/outliner'
+import type { Item, TreeItem } from '@/lib/contracts'
+import { submitRowText } from '@/lib/outliner-mutations'
 
 const cacheMocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
@@ -56,11 +63,15 @@ const baseItem = {
   parent_id: null,
   sort_order: 1,
   state: 'not-started',
+  ball: 'you',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -69,12 +80,29 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
 } satisfies Item
 
 function item(overrides: Partial<Item> = {}) {
   return {
     ...baseItem,
+    ...overrides,
+  }
+}
+
+function treeItem(overrides: Partial<TreeItem> = {}): TreeItem {
+  return {
+    ...baseItem,
+    needs: [],
+    needs_edges: [],
+    status: 'ready',
+    resume: false,
+    rollup: null,
+    actionable: true,
+    complete: false,
+    has_notes: false,
+    has_prompt_response_entries: false,
     ...overrides,
   }
 }
@@ -107,8 +135,164 @@ function expectedAuthHeaders(count: number) {
   }))
 }
 
+let roots: Root[] = []
+const hasNativeScrollIntoView = 'scrollIntoView' in Element.prototype
+
+function ensureScrollIntoViewExists() {
+  if (hasNativeScrollIntoView) {
+    return
+  }
+
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: () => undefined,
+  })
+}
+
+function removeScrollIntoViewPlaceholder() {
+  if (hasNativeScrollIntoView) {
+    return
+  }
+
+  delete (
+    Element.prototype as Element & {
+      scrollIntoView?: Element['scrollIntoView']
+    }
+  ).scrollIntoView
+}
+
+async function flushReact() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+async function render(element: React.ReactElement) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  await act(async () => {
+    root.render(element)
+  })
+  await flushReact()
+
+  return container
+}
+
+function getButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing button: ${ariaLabel}`)
+  }
+  return button
+}
+
+function getItemInput(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item input: ${itemId}`)
+  }
+  return input
+}
+
+function getOutlinerItemIds(container: ParentNode) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('[data-outliner-item-id]')
+  ).map((element) => element.dataset.outlinerItemId)
+}
+
+function getTextarea(container: ParentNode, ariaLabel: string) {
+  const textarea = container.querySelector(
+    `textarea[aria-label="${ariaLabel}"]`
+  )
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    throw new Error(`Missing textarea: ${ariaLabel}`)
+  }
+  return textarea
+}
+
+async function click(button: HTMLButtonElement) {
+  await act(async () => {
+    button.click()
+  })
+  await flushReact()
+}
+
+async function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
+}
+
+async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing textarea value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(textarea, value)
+    textarea.dispatchEvent(
+      new Event('input', { bubbles: true, cancelable: true })
+    )
+  })
+  await flushReact()
+}
+
+async function keyDown(input: HTMLInputElement, key: string) {
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function submitItemText(
+  container: ParentNode,
+  itemId: string,
+  text: string
+) {
+  const input = getItemInput(container, itemId)
+  await setInputValue(input, text)
+  await keyDown(input, 'Enter')
+}
+
 describe('outliner mutation Server Actions', () => {
   beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0)
+      return 1
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    ensureScrollIntoViewExists()
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(
+      () => undefined
+    )
     sessionMocks.readSessionIdentity.mockResolvedValue({
       username: 'alice',
       role: 'owner',
@@ -117,8 +301,238 @@ describe('outliner mutation Server Actions', () => {
   })
 
   afterEach(() => {
+    for (const root of roots) {
+      act(() => root.unmount())
+    }
+    roots = []
+    document.body.replaceChildren()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    removeScrollIntoViewPlaceholder()
     vi.clearAllMocks()
+  })
+
+  it('submits parsed Ball tokens only when the Ball changes', async () => {
+    const current = treeItem({ id: 'current', title: 'Fix bug', ball: 'you' })
+    const actions = {
+      patchItem: vi.fn(async () => undefined),
+      createDependency: vi.fn(async () => undefined),
+      deleteDependency: vi.fn(async () => undefined),
+    }
+
+    await submitRowText(current, 'Fix bug ~agent', actions)
+    await submitRowText(current, 'Fix bug ~you', actions)
+
+    expect(actions.patchItem).toHaveBeenCalledTimes(1)
+    expect(actions.patchItem).toHaveBeenCalledWith('current', {
+      ball: 'agent',
+    })
+    expect(actions.createDependency).not.toHaveBeenCalled()
+    expect(actions.deleteDependency).not.toHaveBeenCalled()
+  })
+
+  it('removes a ready leaf from Up Next immediately when handed to the agent', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [treeItem({ id: 'handoff-row', title: 'Hand off work' })],
+        markers: [],
+        priorityItems: [{ id: 'handoff-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+
+    await submitItemText(container, 'handoff-row', 'Hand off work ~agent')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/api/v1/items/handoff-row' }),
+      expect.objectContaining({
+        body: JSON.stringify({ ball: 'agent' }),
+        method: 'PATCH',
+      })
+    )
+    expect(getOutlinerItemIds(container)).toEqual([])
+  })
+
+  it('shows the handed-off leaf in Monitoring before the next tree refresh', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [treeItem({ id: 'handoff-row', title: 'Hand off work' })],
+        markers: [],
+        priorityItems: [{ id: 'handoff-row', rank: 1 }],
+      })
+    )
+
+    await click(getButton(container, 'Show up next work'))
+    await submitItemText(container, 'handoff-row', 'Hand off work ~agent')
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+  })
+
+  it('trims hand-off notes before saving the rendered editor payload', async () => {
+    const patchBodies: unknown[] = []
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        const body = requestBody(init)
+        patchBodies.push(body)
+        return jsonResponse(
+          item({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            ball: 'person',
+            blocked_note:
+              typeof body?.blocked_note === 'string' ? body.blocked_note : null,
+            blocked_followup_date: body?.blocked_followup_date ?? null,
+          })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          treeItem({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            ball: 'person',
+          }),
+        ],
+        markers: [],
+        priorityItems: [],
+      })
+    )
+
+    const handoffNote = getTextarea(container, 'Hand-off note')
+    await setTextareaValue(handoffNote, '  Needs Alice  ')
+    await click(getButton(container, 'Save hand-off'))
+    await click(getButton(container, 'Edit hand-off'))
+    await setTextareaValue(getTextarea(container, 'Hand-off note'), '   ')
+    await click(getButton(container, 'Save hand-off'))
+
+    expect(patchBodies).toEqual([
+      { blocked_note: 'Needs Alice', blocked_followup_date: null },
+      { blocked_note: null, blocked_followup_date: null },
+    ])
+  })
+
+  it('returns a monitoring leaf to Up Next immediately when handed back to you', async () => {
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/comments'
+      ) {
+        return jsonResponse([])
+      }
+      if (
+        method === 'GET' &&
+        pathname === '/api/v1/items/handoff-row/activity'
+      ) {
+        return jsonResponse([])
+      }
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        return jsonResponse(
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          treeItem({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            actionable: false,
+            ball: 'agent',
+            status: 'monitoring',
+          }),
+        ],
+        markers: [],
+        priorityItems: [],
+      })
+    )
+
+    await click(getButton(container, 'Show monitoring work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+
+    await submitItemText(container, 'handoff-row', 'Hand off work ~you')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/api/v1/items/handoff-row' }),
+      expect.objectContaining({
+        body: JSON.stringify({ ball: 'you' }),
+        method: 'PATCH',
+      })
+    )
+    expect(getOutlinerItemIds(container)).toEqual([])
+
+    await click(getButton(container, 'Show up next work'))
+
+    expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
   })
 
   it('calls item mutation endpoints and revalidates only route-refreshing changes', async () => {
@@ -665,6 +1079,9 @@ describe('outliner mutation Server Actions', () => {
       ...baseItem,
       needs: [],
       needs_edges: [],
+      status: 'ready',
+      resume: false,
+      rollup: null,
       actionable: true,
       complete: false,
       has_notes: false,

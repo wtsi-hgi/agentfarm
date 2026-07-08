@@ -43,9 +43,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -54,9 +58,13 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
@@ -109,11 +117,13 @@ function mockDetailsPatchState(
   )
 }
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 async function flushReact() {
@@ -199,6 +209,14 @@ function getDetailsPanel(container: ParentNode) {
     throw new Error('Missing item details panel')
   }
   return panel
+}
+
+function getSection(container: ParentNode, ariaLabel: string) {
+  const section = container.querySelector(`section[aria-label="${ariaLabel}"]`)
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`Missing ${ariaLabel} section`)
+  }
+  return section
 }
 
 function getTextOffset(container: HTMLElement, text: string) {
@@ -762,6 +780,423 @@ describe('Outliner comment target lifecycle', () => {
       body: 'Ready for review',
     })
     expect(newCommentInput.value).toBe('')
+  })
+
+  it('shows compact hand-off controls in Details and can enter person hand-off', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'you',
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+          blocked_note:
+            patch.ball && patch.ball !== 'person'
+              ? null
+              : (patch.blocked_note ?? savedItem.blocked_note),
+          blocked_followup_date:
+            patch.ball && patch.ball !== 'person'
+              ? null
+              : (patch.blocked_followup_date ??
+                savedItem.blocked_followup_date),
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+
+    expect(handoffSection.textContent).toContain('With you')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+    expect(getOptionalInput(handoffSection, 'Follow-up date')).toBeNull()
+
+    await click(getButton(handoffSection, 'Hand off to person'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff-row', {
+      ball: 'person',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('Waiting on person')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('')
+  })
+
+  it('saves hand-off note and follow-up date from Details, then collapses to a summary', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    await changeTextarea(
+      getTextarea(handoffSection, 'Hand-off note'),
+      '  ask Sam  '
+    )
+    await changeInput(getInput(handoffSection, 'Follow-up date'), '2026-07-10')
+    await click(getButton(handoffSection, 'Save hand-off'))
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('handoff-row', {
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+    expect(getOptionalInput(handoffSection, 'Follow-up date')).toBeNull()
+    expect(handoffSection.textContent).toContain('ask Sam')
+    expect(handoffSection.textContent).toContain('2026-07-10')
+
+    await click(getButton(handoffSection, 'Edit hand-off'))
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('ask Sam')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('2026-07-10')
+  })
+
+  it('can leave person hand-off from Details and return with cleared fields', async () => {
+    let savedItem = item({
+      id: 'handoff-row',
+      title: 'Ask partner',
+      ball: 'person',
+      status: 'waiting',
+      actionable: false,
+      blocked_note: 'ask Sam',
+      blocked_followup_date: '2026-07-10',
+    })
+    actionMocks.patchItem.mockImplementation(
+      async (_itemId: string, patch: Partial<TreeItem>) => {
+        const leavingPerson = patch.ball && patch.ball !== 'person'
+        savedItem = item({
+          ...savedItem,
+          ...patch,
+          blocked_note: leavingPerson
+            ? null
+            : (patch.blocked_note ?? savedItem.blocked_note),
+          blocked_followup_date: leavingPerson
+            ? null
+            : (patch.blocked_followup_date ?? savedItem.blocked_followup_date),
+        })
+        return savedItem
+      }
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [savedItem],
+      })
+    )
+
+    let handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('Waiting on person')
+    expect(handoffSection.textContent).toContain('ask Sam')
+
+    await click(getButton(handoffSection, 'Take back hand-off'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'you',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(handoffSection.textContent).toContain('With you')
+    expect(handoffSection.textContent).not.toContain('ask Sam')
+    expect(getOptionalTextarea(handoffSection, 'Hand-off note')).toBeNull()
+
+    await click(getButton(handoffSection, 'Hand off to person'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'person',
+    })
+
+    handoffSection = getSection(getDetailsPanel(container), 'Hand-off')
+    expect(getTextarea(handoffSection, 'Hand-off note').value).toBe('')
+    expect(getInput(handoffSection, 'Follow-up date').value).toBe('')
+
+    await click(getButton(handoffSection, 'Move hand-off to agent'))
+
+    expect(actionMocks.patchItem).toHaveBeenLastCalledWith('handoff-row', {
+      ball: 'agent',
+    })
+    expect(
+      getSection(getDetailsPanel(container), 'Hand-off').textContent
+    ).toContain('With agent')
+  })
+
+  it('shows leaf ship milestone checkboxes from item booleans', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            dev_updated: true,
+            prod_updated: false,
+            docs_updated: true,
+            announced: false,
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+
+    expect(getInput(shipSection, 'Dev updated').checked).toBe(true)
+    expect(getInput(shipSection, 'Prod updated').checked).toBe(false)
+    expect(getInput(shipSection, 'Docs updated').checked).toBe(true)
+    expect(getInput(shipSection, 'Announced').checked).toBe(false)
+  })
+
+  it('patches only the toggled ship milestone from the leaf detail panel', async () => {
+    actionMocks.patchItem.mockResolvedValue(
+      item({
+        id: 'root',
+        title: 'Root project',
+        docs_updated: true,
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            docs_updated: false,
+          }),
+        ],
+      })
+    )
+
+    const docsCheckbox = getInput(
+      getSection(getDetailsPanel(container), 'Ship milestones'),
+      'Docs updated'
+    )
+
+    expect(docsCheckbox.checked).toBe(false)
+
+    await click(docsCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('root', {
+      docs_updated: true,
+    })
+    expect(actionMocks.patchItem.mock.calls[0][1]).not.toHaveProperty('state')
+    expect(actionMocks.patchItem.mock.calls[0][1]).not.toHaveProperty('ball')
+    expect(docsCheckbox.checked).toBe(true)
+  })
+
+  it('disables every ship milestone checkbox while a milestone save is pending', async () => {
+    let resolvePatch: (value: TreeItem) => void = () => {}
+    actionMocks.patchItem.mockImplementation(
+      () =>
+        new Promise<TreeItem>((resolve) => {
+          resolvePatch = resolve
+        })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            docs_updated: false,
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+    const docsCheckbox = getInput(shipSection, 'Docs updated')
+    const prodCheckbox = getInput(shipSection, 'Prod updated')
+
+    await click(docsCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(shipSection.textContent).toContain('Saving')
+    expect(getInput(shipSection, 'Dev updated').disabled).toBe(true)
+    expect(prodCheckbox.disabled).toBe(true)
+    expect(docsCheckbox.disabled).toBe(true)
+    expect(getInput(shipSection, 'Announced').disabled).toBe(true)
+
+    await click(prodCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolvePatch(
+        item({
+          id: 'root',
+          title: 'Root project',
+          docs_updated: true,
+        })
+      )
+    })
+    await flushReact()
+
+    expect(getInput(shipSection, 'Dev updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Prod updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Docs updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Announced').disabled).toBe(false)
+  })
+
+  it('refreshes container ship rollups after a leaf milestone save', async () => {
+    const child = item({
+      id: 'child',
+      title: 'Child task',
+      parent_id: 'root',
+      dev_updated: true,
+      prod_updated: true,
+      docs_updated: false,
+      announced: true,
+    })
+    actionMocks.patchItem.mockResolvedValue(
+      item({
+        ...child,
+        docs_updated: true,
+      })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            status: 'rollup',
+            rollup: {
+              phase: 'not-started',
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 0,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 1,
+                prod_updated: 1,
+                docs_updated: 0,
+                announced: 1,
+                shipped: 0,
+                total: 1,
+              },
+            },
+          }),
+          child,
+        ],
+      })
+    )
+
+    let shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+    expect(shipSection.textContent).toContain('0/1 shipped')
+    expect(shipSection.textContent).toContain('Docs 0')
+
+    await click(getItemRow(container, 'child'))
+    shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+
+    const docsCheckbox = getInput(shipSection, 'Docs updated')
+    expect(docsCheckbox.checked).toBe(false)
+
+    await click(docsCheckbox)
+    await click(getItemRow(container, 'root'))
+
+    shipSection = getSection(getDetailsPanel(container), 'Ship milestones')
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('child', {
+      docs_updated: true,
+    })
+    expect(shipSection.textContent).toContain('1/1 shipped')
+    expect(shipSection.textContent).toContain('Docs 1')
+  })
+
+  it('shows container ship rollup without editable milestone checkboxes', async () => {
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            status: 'rollup',
+            rollup: {
+              phase: 'review',
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 1,
+                blocked: 0,
+                done: 2,
+                dropped: 1,
+              },
+              ship: {
+                dev_updated: 3,
+                prod_updated: 2,
+                docs_updated: 2,
+                announced: 1,
+                shipped: 2,
+                total: 5,
+              },
+            },
+          }),
+          item({
+            id: 'child',
+            title: 'Child task',
+            parent_id: 'root',
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+
+    expect(shipSection.textContent).toContain('2/5 shipped')
+    expect(shipSection.textContent).toContain('Dev 3')
+    expect(shipSection.textContent).toContain('Prod 2')
+    expect(shipSection.textContent).toContain('Docs 2')
+    expect(shipSection.textContent).toContain('Announced 1')
+    expect(shipSection.querySelectorAll('input[type="checkbox"]')).toHaveLength(
+      0
+    )
+    expect(getOptionalInput(shipSection, 'Dev updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Prod updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Docs updated')).toBeNull()
+    expect(getOptionalInput(shipSection, 'Announced')).toBeNull()
   })
 
   it('orders root Details with Repository before Description and aligns field actions with labels', async () => {
@@ -1339,6 +1774,114 @@ describe('Outliner comment target lifecycle', () => {
 
     expect(container.textContent).toContain('Looks ready')
     expect(container.textContent).toContain('2026-06-29 00:05 UTC')
+  })
+
+  it('shows timestamped phase changes in the right-side activity area', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:10:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(activitySection.textContent).toContain('Spec -> Done')
+    expect(activitySection.textContent).toContain('alice')
+    expect(activitySection.textContent).toContain('2026-06-29 00:10 UTC')
+  })
+
+  it('shows timestamped ball changes in the right-side activity area', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'ball-change',
+        actor: 'bob',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:15:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(activitySection.textContent).toContain('You -> Agent')
+    expect(activitySection.textContent).toContain('bob')
+    expect(activitySection.textContent).toContain('2026-06-29 00:15 UTC')
+  })
+
+  it('shows mixed timeline entries in the returned order', async () => {
+    actionMocks.fetchItemActivity.mockResolvedValue([
+      {
+        id: 'activity-1',
+        item_id: 'root',
+        kind: 'ball-change',
+        actor: 'bob',
+        from_ball: 'you',
+        to_ball: 'agent',
+        created_at: '2026-06-29T00:15:00.000000Z',
+      },
+      {
+        id: 'activity-2',
+        item_id: 'root',
+        kind: 'state-change',
+        actor: 'alice',
+        from_state: 'spec',
+        to_state: 'done',
+        created_at: '2026-06-29T00:20:00.000000Z',
+      },
+    ])
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+          }),
+        ],
+      })
+    )
+
+    await flushDeferredWork()
+
+    const activitySection = getSection(getDetailsPanel(container), 'Activity')
+
+    expect(getTextOffset(activitySection, 'You -> Agent')).toBeLessThan(
+      getTextOffset(activitySection, 'Spec -> Done')
+    )
   })
 
   it('refreshes and shows timestamped state changes after a UI state update', async () => {

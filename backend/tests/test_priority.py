@@ -60,6 +60,161 @@ async def _tree(client: AsyncClient):
     return await client.get("/api/v1/tree")
 
 
+async def _home(client: AsyncClient):
+    return await client.get("/api/v1/home")
+
+
+async def _create_note(client: AsyncClient, item_id: str, body: str):
+    return await client.post(f"/api/v1/items/{item_id}/notes", json={"body": body})
+
+
+async def _create_prompt_response_entry(
+    client: AsyncClient, item_id: str, *, kind: str, body: str
+):
+    return await client.post(
+        f"/api/v1/items/{item_id}/prompt-responses",
+        json={"kind": kind, "body": body},
+    )
+
+
+def _rows_by_title(rows: list[dict]) -> dict[str, dict]:
+    return {row["title"]: row for row in rows}
+
+
+L1_WORKFLOW_CASES = (
+    pytest.param(
+        "01 Idea, no dep",
+        {"state": "not-started", "ball": "you"},
+        False,
+        "ready",
+        False,
+        id="01-idea-no-dep",
+    ),
+    pytest.param(
+        "02 Idea, unfinished dep",
+        {"state": "not-started", "ball": "you"},
+        True,
+        "blocked",
+        False,
+        id="02-idea-unfinished-dep",
+    ),
+    pytest.param(
+        "03 Thinking notes",
+        {"state": "defining", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="03-thinking-notes",
+    ),
+    pytest.param(
+        "04 Spec QA my turn",
+        {"state": "spec", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="04-spec-qa-my-turn",
+    ),
+    pytest.param(
+        "05 Spec QA external answer needed",
+        {"state": "spec", "ball": "person"},
+        False,
+        "waiting",
+        True,
+        id="05-spec-qa-external-answer-needed",
+    ),
+    pytest.param(
+        "06 Spec generating",
+        {"state": "spec", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="06-spec-generating",
+    ),
+    pytest.param(
+        "07 Implementing",
+        {"state": "implement", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="07-implementing",
+    ),
+    pytest.param(
+        "08 Build and manually test",
+        {"state": "review", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="08-build-and-manually-test",
+    ),
+    pytest.param(
+        "09 Re-trigger pr-resolver",
+        {"state": "review", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="09-re-trigger-pr-resolver",
+    ),
+    pytest.param(
+        "10 Waiting on pr-resolver bugfix",
+        {"state": "review", "ball": "agent"},
+        False,
+        "monitoring",
+        True,
+        id="10-waiting-on-pr-resolver-bugfix",
+    ),
+    pytest.param(
+        "11 Ship step",
+        {"state": "merged", "ball": "you"},
+        False,
+        "ready",
+        True,
+        id="11-ship-step",
+    ),
+    pytest.param(
+        "12 Asked users awaiting feedback",
+        {"state": "released", "ball": "person"},
+        False,
+        "waiting",
+        True,
+        id="12-asked-users-awaiting-feedback",
+    ),
+    pytest.param(
+        "13 Nothing left",
+        {"state": "done", "ball": "person"},
+        False,
+        "done",
+        True,
+        id="13-nothing-left",
+    ),
+)
+
+
+async def _create_bucketed_leaf(
+    client: AsyncClient,
+    root_id: str,
+    *,
+    bucket_title: str,
+    leaf_body: dict,
+) -> dict:
+    """Create a leaf under a dedicated bucket container below ``root_id``."""
+    bucket = await _create(client, {"title": bucket_title, "parent_id": root_id})
+    assert bucket.status_code == 200
+    leaf = await _create(
+        client,
+        {
+            **leaf_body,
+            "parent_id": bucket.json()["id"],
+        },
+    )
+    assert leaf.status_code == 200
+    return leaf.json()
+
+
+def _status_count_total(rollup: dict) -> int:
+    """Return the sum of the six status buckets in a roll-up payload."""
+    return sum(rollup["status_counts"].values())
+
+
 async def _count_endpoint_queries(db_path, path: str) -> tuple[int, list[str]]:
     """Return the number of SQL work statements used to serve one GET request."""
     from main import app
@@ -99,6 +254,18 @@ def _dependency_edges(db_path) -> set[tuple[str, str]]:
     return {(row["from_id"], row["to_id"]) for row in rows}
 
 
+def _insert_dependency(db_path, from_id: str, to_id: str) -> None:
+    """Insert a valid explicit dependency edge with controlled ids."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO dependencies (id, from_id, to_id, kind, automatic_chain)
+            VALUES (?, ?, ?, 'explicit', 0)
+            """,
+            (f"dep-{from_id}-needs-{to_id}", from_id, to_id),
+        )
+
+
 def _downstream(db_path, item_id: str) -> set[str]:
     """Return downstream ids through the spec-defined leverage service boundary."""
     with get_connection(db_path) as conn:
@@ -111,6 +278,52 @@ def _score(db_path, item_id: str) -> float:
         return leverage.score(conn, item_id)
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    (
+        "workflow_row",
+        "leaf_body",
+        "has_incomplete_dependency",
+        "expected_status",
+        "expected_resume",
+    ),
+    L1_WORKFLOW_CASES,
+)
+async def test_l1_workflow_table_maps_phase_and_ball_to_tree_status(
+    fresh_db,
+    workflow_row: str,
+    leaf_body: dict,
+    has_incomplete_dependency: bool,
+    expected_status: str,
+    expected_resume: bool,
+) -> None:
+    """L1: each canonical workflow row projects to the expected tree cell."""
+    title = f"L1 {workflow_row}"
+    async with _client() as client:
+        if has_incomplete_dependency:
+            target = await _create(client, {"title": f"{title} blocker"})
+            assert target.status_code == 200
+
+        created = await _create(client, {"title": title, **leaf_body})
+        assert created.status_code == 200
+
+        if has_incomplete_dependency:
+            dependency = await _post_dependency(
+                client,
+                {"from_id": created.json()["id"], "to_id": target.json()["id"]},
+            )
+            assert dependency.status_code == 200
+
+        tree = await _tree(client)
+
+    assert tree.status_code == 200
+    row = _rows_by_title(tree.json())[title]
+    assert row["state"] == leaf_body["state"]
+    assert row["ball"] == leaf_body["ball"]
+    assert row["status"] == expected_status
+    assert row["resume"] is expected_resume
+
+
 def _insert_priority_leaf(
     db_path,
     item_id: str,
@@ -118,16 +331,20 @@ def _insert_priority_leaf(
     created_at: str,
     updated_at: str,
     state: str = "not-started",
+    ball: str = "you",
+    mode: str = "prompt-agent",
+    effort: str = "medium",
 ) -> None:
     """Insert a valid actionable leaf with controlled audit timestamps."""
     with get_connection(db_path) as conn:
         conn.execute(
             """
             INSERT INTO items (
-                id, title, slug, sort_order, state, created_by, updated_by,
-                created_at, updated_at, state_changed_at
+                id, title, slug, sort_order, state, ball, mode, effort,
+                created_by, updated_by, created_at, updated_at, state_changed_at,
+                ball_changed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -135,13 +352,270 @@ def _insert_priority_leaf(
                 item_id,
                 1.0,
                 state,
+                ball,
+                mode,
+                effort,
                 "tester",
                 "tester",
                 created_at,
                 updated_at,
                 created_at,
+                created_at,
             ),
         )
+
+
+def _set_ball(db_path, item_id: str, ball: str) -> None:
+    """Set Ball directly for projection tests before the PATCH flow exists."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE items
+            SET ball = ?,
+                ball_changed_at = '2026-01-03T00:00:00.000000Z',
+                updated_at = '2026-01-03T00:00:00.000000Z'
+            WHERE id = ?
+            """,
+            (ball, item_id),
+        )
+
+
+@pytest.mark.anyio
+async def test_b1_leaf_without_dependencies_is_ready_on_tree_and_home(
+    fresh_db,
+) -> None:
+    """B1 test 1: an unblocked owner leaf is ready everywhere it is exposed."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Ready leaf"})
+        tree = await _tree(client)
+        home = await _home(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert home.status_code == 200
+    tree_row = _rows_by_title(tree.json())["Ready leaf"]
+    home_row = _rows_by_title(home.json()["items"])["Ready leaf"]
+    assert tree_row["status"] == "ready"
+    assert home_row["status"] == "ready"
+
+
+@pytest.mark.anyio
+async def test_b1_agent_leaf_without_incomplete_dependency_is_monitoring(
+    fresh_db,
+) -> None:
+    """B1 test 2: Ball=agent derives monitoring when dependencies are satisfied."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Agent leaf", "ball": "agent"})
+        tree = await _tree(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Agent leaf"]["status"] == "monitoring"
+
+
+@pytest.mark.anyio
+async def test_b1_person_leaf_is_waiting(fresh_db) -> None:
+    """B1 test 3: Ball=person derives waiting."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Person leaf", "ball": "person"})
+        tree = await _tree(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Person leaf"]["status"] == "waiting"
+
+
+@pytest.mark.anyio
+async def test_b1_incomplete_dependency_blocks_owner_leaf(fresh_db) -> None:
+    """B1 test 4: an incomplete dependency outranks Ball=you readiness."""
+    async with _client() as client:
+        target = await _create(client, {"title": "Incomplete target"})
+        dependent = await _create(client, {"title": "Owner dependent"})
+        dependency = await _post_dependency(
+            client,
+            {"from_id": dependent.json()["id"], "to_id": target.json()["id"]},
+        )
+        tree = await _tree(client)
+
+    assert target.status_code == 200
+    assert dependent.status_code == 200
+    assert dependency.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Owner dependent"]["status"] == "blocked"
+
+
+@pytest.mark.anyio
+async def test_b1_incomplete_dependency_blocks_agent_leaf_before_monitoring(
+    fresh_db,
+) -> None:
+    """B1 test 5: blocked outranks monitoring."""
+    async with _client() as client:
+        target = await _create(client, {"title": "Open prerequisite"})
+        dependent = await _create(
+            client,
+            {"title": "Agent dependent", "ball": "agent"},
+        )
+        dependency = await _post_dependency(
+            client,
+            {"from_id": dependent.json()["id"], "to_id": target.json()["id"]},
+        )
+        tree = await _tree(client)
+
+    assert target.status_code == 200
+    assert dependent.status_code == 200
+    assert dependency.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Agent dependent"]["status"] == "blocked"
+
+
+@pytest.mark.anyio
+async def test_b1_terminal_leaf_status_ignores_ball(fresh_db) -> None:
+    """B1 test 6: terminal phases outrank Ball-derived open statuses."""
+    async with _client() as client:
+        done = await _create(
+            client,
+            {"title": "Done leaf", "state": "done", "ball": "agent"},
+        )
+        dropped = await _create(
+            client,
+            {"title": "Dropped leaf", "state": "abandoned", "ball": "person"},
+        )
+        tree = await _tree(client)
+
+    assert done.status_code == 200
+    assert dropped.status_code == 200
+    assert tree.status_code == 200
+    rows = _rows_by_title(tree.json())
+    assert rows["Done leaf"]["status"] == "done"
+    assert rows["Dropped leaf"]["status"] == "dropped"
+
+
+@pytest.mark.anyio
+async def test_b1_container_status_rollup_precedes_terminal_state(fresh_db) -> None:
+    """B1 test 7: containers derive rollup even if their stored state is done."""
+    async with _client() as client:
+        container = await _create(client, {"title": "Done container", "state": "done"})
+        child = await _create(
+            client,
+            {"title": "Container child", "parent_id": container.json()["id"]},
+        )
+        tree = await _tree(client)
+
+    assert container.status_code == 200
+    assert child.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Done container"]["status"] == "rollup"
+
+
+@pytest.mark.anyio
+async def test_b1_completed_dependency_flips_blocked_to_ball_status(
+    fresh_db,
+) -> None:
+    """B1 test 8: completing the target releases the dependent leaf next read."""
+    async with _client() as client:
+        target = await _create(client, {"title": "Blocking target"})
+        dependent = await _create(
+            client,
+            {"title": "Blocked agent", "ball": "agent"},
+        )
+        dependency = await _post_dependency(
+            client,
+            {"from_id": dependent.json()["id"], "to_id": target.json()["id"]},
+        )
+        blocked_tree = await _tree(client)
+        completed = await _patch(client, target.json()["id"], {"state": "done"})
+        released_tree = await _tree(client)
+
+    assert target.status_code == 200
+    assert dependent.status_code == 200
+    assert dependency.status_code == 200
+    assert blocked_tree.status_code == 200
+    assert completed.status_code == 200
+    assert released_tree.status_code == 200
+    assert _rows_by_title(blocked_tree.json())["Blocked agent"]["status"] == "blocked"
+    assert (
+        _rows_by_title(released_tree.json())["Blocked agent"]["status"] == "monitoring"
+    )
+
+
+@pytest.mark.anyio
+async def test_b2_fresh_not_started_leaf_has_resume_false_on_tree_and_home(
+    fresh_db,
+) -> None:
+    """B2 test 1: untouched not-started work is fresh, not resume."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Fresh ready leaf"})
+        tree = await _tree(client)
+        home = await _home(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert home.status_code == 200
+    tree_row = _rows_by_title(tree.json())["Fresh ready leaf"]
+    home_row = _rows_by_title(home.json()["items"])["Fresh ready leaf"]
+    assert tree_row["resume"] is False
+    assert home_row["resume"] is False
+
+
+@pytest.mark.anyio
+async def test_b2_not_started_leaf_with_note_has_resume_true_on_tree_and_home(
+    fresh_db,
+) -> None:
+    """B2 test 2: adding a note turns a fresh leaf into resume work."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Noted ready leaf"})
+        initial_tree = await _tree(client)
+        note = await _create_note(client, created.json()["id"], "Keep going here.")
+        resumed_tree = await _tree(client)
+        resumed_home = await _home(client)
+
+    assert created.status_code == 200
+    assert initial_tree.status_code == 200
+    assert note.status_code == 200
+    assert resumed_tree.status_code == 200
+    assert resumed_home.status_code == 200
+    assert _rows_by_title(initial_tree.json())["Noted ready leaf"]["resume"] is False
+    assert _rows_by_title(resumed_tree.json())["Noted ready leaf"]["resume"] is True
+    assert (
+        _rows_by_title(resumed_home.json()["items"])["Noted ready leaf"]["resume"]
+        is True
+    )
+
+
+@pytest.mark.anyio
+async def test_b2_defining_leaf_without_notes_has_resume_true(fresh_db) -> None:
+    """B2 test 3: any phase beyond not-started is resume work."""
+    async with _client() as client:
+        created = await _create(
+            client,
+            {"title": "Mid thought leaf", "state": "defining"},
+        )
+        tree = await _tree(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Mid thought leaf"]["resume"] is True
+
+
+@pytest.mark.anyio
+async def test_b2_not_started_leaf_with_prompt_response_has_resume_true(
+    fresh_db,
+) -> None:
+    """B2 test 4: agent timeline entries turn not-started work into resume."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Prompted ready leaf"})
+        entry = await _create_prompt_response_entry(
+            client,
+            created.json()["id"],
+            kind="prompt",
+            body="Start by checking the logs.",
+        )
+        tree = await _tree(client)
+
+    assert created.status_code == 200
+    assert entry.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["Prompted ready leaf"]["resume"] is True
 
 
 async def _build_e1_setup(client: AsyncClient) -> dict[str, str]:
@@ -561,102 +1035,596 @@ async def test_priority_tie_break_prefers_lexically_smaller_id_e5(fresh_db) -> N
 
 
 @pytest.mark.anyio
-async def test_priority_excludes_blocked_external_root_leaf_e6(fresh_db) -> None:
-    """E6 test 1: an externally blocked open root leaf is not actionable."""
+async def test_b3_you_ball_leaf_is_actionable_and_in_priority(fresh_db) -> None:
+    """B3 test 1: owner-held ready work is actionable and ranked."""
     async with _client() as client:
-        v1 = await _create(client, {"title": "V1"})
-        assert v1.status_code == 200
-        blocked = await client.patch(
-            f"/api/v1/items/{v1.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked.status_code == 200
-
+        created = await _create(client, {"title": "Ready owner work"})
+        tree = await _tree(client)
         response = await _priority(client)
 
+    assert created.status_code == 200
+    assert tree.status_code == 200
     assert response.status_code == 200
-    assert response.json() == []
+    item_id = created.json()["id"]
+    tree_row = _rows_by_title(tree.json())["Ready owner work"]
+    assert tree_row["id"] == item_id
+    assert tree_row["status"] == "ready"
+    assert tree_row["actionable"] is True
+    assert [entry["id"] for entry in response.json()] == [item_id]
+    with get_connection(fresh_db) as conn:
+        assert leverage.is_actionable(conn, item_id) is True
 
 
 @pytest.mark.anyio
-async def test_priority_counts_blocked_external_leaf_downstream_e6(fresh_db) -> None:
-    """E6 test 2: blocked downstream leaves still contribute to upstream score."""
+async def test_b3_agent_ball_leaf_is_excluded_but_keeps_downstream_rank(
+    fresh_db,
+) -> None:
+    """B3 test 2: agent-held leaves are not actionable but still downstream."""
     async with _client() as client:
-        w1 = await _create(client, {"title": "W1", "effort": "quick"})
-        assert w1.status_code == 200
-        w2 = await _create(
+        upstream = await _create(client, {"title": "Upstream", "effort": "quick"})
+        peer = await _create(client, {"title": "Peer", "effort": "quick"})
+        handoff = await _create(
             client,
             {
-                "title": "W2",
+                "title": "Agent handoff",
                 "effort": "long",
                 "mode": "prompt-agent",
             },
         )
-        assert w2.status_code == 200
+        ready_tree = await _tree(client)
 
-        blocked = await client.patch(
-            f"/api/v1/items/{w2.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked.status_code == 200
-        dependency = await _post_dependency(
-            client, {"from_id": w2.json()["id"], "to_id": w1.json()["id"]}
-        )
-        assert dependency.status_code == 200
+    assert upstream.status_code == 200
+    assert peer.status_code == 200
+    assert handoff.status_code == 200
+    assert ready_tree.status_code == 200
+    handoff_id = handoff.json()["id"]
+    assert _rows_by_title(ready_tree.json())["Agent handoff"]["actionable"] is True
 
-        v1 = await _create(client, {"title": "V1"})
-        assert v1.status_code == 200
-        blocked_v1 = await client.patch(
-            f"/api/v1/items/{v1.json()['id']}",
-            json={"blocked_external": True},
-        )
-        assert blocked_v1.status_code == 200
-
+    _set_ball(fresh_db, handoff_id, "agent")
+    async with _client() as client:
+        monitoring_tree = await _tree(client)
         response = await _priority(client)
 
+    assert monitoring_tree.status_code == 200
     assert response.status_code == 200
-    assert _downstream(fresh_db, w1.json()["id"]) == {w2.json()["id"]}
-    assert _score(fresh_db, w1.json()["id"]) == 16
+    handoff_row = _rows_by_title(monitoring_tree.json())["Agent handoff"]
+    assert handoff_row["status"] == "monitoring"
+    assert handoff_row["actionable"] is False
+    assert handoff_id not in {entry["id"] for entry in response.json()}
+    with get_connection(fresh_db) as conn:
+        assert leverage.is_actionable(conn, handoff_id) is False
 
-    body = response.json()
-    assert {entry["id"] for entry in body} == {w1.json()["id"]}
-    assert [entry["title"] for entry in body] == ["W1"]
+    async with _client() as client:
+        dependency = await _post_dependency(
+            client,
+            {"from_id": handoff_id, "to_id": upstream.json()["id"]},
+        )
+        agent_priority = await _priority(client)
+
+    assert dependency.status_code == 200
+    assert agent_priority.status_code == 200
+    agent_ranked_ids = [entry["id"] for entry in agent_priority.json()]
+    assert agent_ranked_ids == [upstream.json()["id"], peer.json()["id"]]
+    assert _downstream(fresh_db, upstream.json()["id"]) == {handoff_id}
+    assert _score(fresh_db, upstream.json()["id"]) == 16
+
+    _set_ball(fresh_db, handoff_id, "you")
+    async with _client() as client:
+        owner_priority = await _priority(client)
+
+    assert owner_priority.status_code == 200
+    assert [entry["id"] for entry in owner_priority.json()] == agent_ranked_ids
 
 
 @pytest.mark.anyio
-async def test_feedback_and_implement_wait_externally_while_respond_is_prioritized(
+async def test_b3_person_ball_leaf_is_not_actionable_or_prioritized(
     fresh_db,
 ) -> None:
-    """Feedback and Implement are not actionable; Respond surfaces ahead of work."""
+    """B3 test 3: person-held leaves are waiting and absent from priority."""
+    async with _client() as client:
+        created = await _create(client, {"title": "Waiting on Sam", "ball": "person"})
+        upstream = await _create(
+            client,
+            {"title": "Person upstream", "effort": "quick"},
+        )
+        downstream = await _create(
+            client,
+            {
+                "title": "Person downstream",
+                "ball": "person",
+                "effort": "long",
+                "mode": "prompt-agent",
+            },
+        )
+        dependency = await _post_dependency(
+            client,
+            {"from_id": downstream.json()["id"], "to_id": upstream.json()["id"]},
+        )
+        tree = await _tree(client)
+        response = await _priority(client)
+
+    assert created.status_code == 200
+    assert upstream.status_code == 200
+    assert downstream.status_code == 200
+    assert dependency.status_code == 200
+    assert tree.status_code == 200
+    assert response.status_code == 200
+    item_id = created.json()["id"]
+    tree_row = _rows_by_title(tree.json())["Waiting on Sam"]
+    assert tree_row["status"] == "waiting"
+    assert tree_row["actionable"] is False
+    assert item_id not in {entry["id"] for entry in response.json()}
+    with get_connection(fresh_db) as conn:
+        assert leverage.is_actionable(conn, item_id) is False
+    assert _downstream(fresh_db, upstream.json()["id"]) == {downstream.json()["id"]}
+    assert _score(fresh_db, upstream.json()["id"]) == 16
+    assert [entry["id"] for entry in response.json()] == [upstream.json()["id"]]
+
+
+@pytest.mark.anyio
+async def test_b3_former_respond_leaf_gets_no_priority_boost(fresh_db) -> None:
+    """B3 test 4: released/owner work uses normal equal-score tie-breaks."""
     older_time = "2026-01-01T00:00:00.000000Z"
     newer_time = "2026-01-02T00:00:00.000000Z"
     _insert_priority_leaf(
         fresh_db,
-        "a-respond",
-        "Respond to feedback",
+        "a-former-respond",
+        "Former respond work",
         older_time,
         older_time,
-        state="respond",
+        state="released",
     )
     _insert_priority_leaf(
         fresh_db,
-        "b-feedback",
-        "Await requested feedback",
+        "z-newer-ready",
+        "Newer ready work",
         newer_time,
         newer_time,
-        state="feedback",
+    )
+
+    async with _client() as client:
+        response = await _priority(client)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [entry["id"] for entry in body] == ["z-newer-ready", "a-former-respond"]
+    assert [entry["rank"] for entry in body] == [1, 2]
+
+
+@pytest.mark.anyio
+async def test_b4_all_owner_leaves_preserve_baseline_priority_order(
+    fresh_db,
+) -> None:
+    """B4 test 1: all-owner trees keep the pre-rework leverage ranking."""
+    async with _client() as client:
+        ids = await _build_e1_setup(client)
+        tree = await _tree(client)
+        response = await _priority(client)
+
+    assert tree.status_code == 200
+    assert response.status_code == 200
+    tree_by_id = {entry["id"]: entry for entry in tree.json()}
+    leaf_ids = {
+        ids["A1"],
+        ids["A2"],
+        ids["B1"],
+        ids["B2"],
+        ids["B3"],
+        ids["G1"],
+        ids["G2"],
+    }
+    assert {tree_by_id[item_id]["ball"] for item_id in leaf_ids} == {"you"}
+    body = response.json()
+    assert [entry["id"] for entry in body] == [ids["A1"], ids["B1"], ids["G1"]]
+    assert {entry["id"] for entry in body} == {ids["A1"], ids["B1"], ids["G1"]}
+    assert [entry["rank"] for entry in body] == [1, 2, 3]
+    assert all("score" not in entry for entry in body)
+
+
+@pytest.mark.anyio
+async def test_b4_agent_downstream_leaf_still_lifts_target_rank(
+    fresh_db,
+) -> None:
+    """B4 test 2: agent-held leaves still contribute to dependency leverage."""
+    older_time = "2026-01-01T00:00:00.000000Z"
+    newer_time = "2026-01-02T00:00:00.000000Z"
+    _insert_priority_leaf(
+        fresh_db,
+        "a-target",
+        "Older dependency target",
+        older_time,
+        older_time,
+        mode="review",
+        effort="quick",
     )
     _insert_priority_leaf(
         fresh_db,
-        "c-implement",
+        "z-newer-peer",
+        "Newer zero-score peer",
+        newer_time,
+        newer_time,
+        mode="review",
+        effort="quick",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "m-agent-downstream",
+        "Agent-held downstream",
+        newer_time,
+        newer_time,
+        ball="agent",
+        mode="prompt-agent",
+        effort="long",
+    )
+    _insert_dependency(fresh_db, "m-agent-downstream", "a-target")
+
+    async with _client() as client:
+        tree = await _tree(client)
+        response = await _priority(client)
+
+    assert tree.status_code == 200
+    assert response.status_code == 200
+    agent_row = _rows_by_title(tree.json())["Agent-held downstream"]
+    assert agent_row["status"] == "blocked"
+    assert agent_row["actionable"] is False
+    body = response.json()
+    assert [entry["id"] for entry in body] == ["a-target", "z-newer-peer"]
+    assert "m-agent-downstream" not in {entry["id"] for entry in body}
+    assert _downstream(fresh_db, "a-target") == {"m-agent-downstream"}
+
+
+@pytest.mark.anyio
+async def test_b4_rank_reflects_mode_and_effort_weights(
+    fresh_db,
+) -> None:
+    """B4 test 3: prompt-agent doubles, other modes are 1, effort is 1/3/8."""
+    timestamp = "2026-01-01T00:00:00.000000Z"
+    _insert_priority_leaf(
+        fresh_db,
+        "quick-base",
+        "Quick base",
+        timestamp,
+        timestamp,
+        mode="review",
+        effort="quick",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "medium-base",
+        "Medium base",
+        timestamp,
+        timestamp,
+        mode="merge",
+        effort="medium",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "long-base",
+        "Long base",
+        timestamp,
+        timestamp,
+        mode="release",
+        effort="long",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "prompt-long-downstream",
+        "Prompt long downstream",
+        timestamp,
+        timestamp,
+        mode="prompt-agent",
+        effort="long",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "review-long-downstream",
+        "Review long downstream",
+        timestamp,
+        timestamp,
+        mode="review",
+        effort="long",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "merge-medium-downstream",
+        "Merge medium downstream",
+        timestamp,
+        timestamp,
+        mode="merge",
+        effort="medium",
+    )
+    _insert_dependency(fresh_db, "prompt-long-downstream", "quick-base")
+    _insert_dependency(fresh_db, "review-long-downstream", "medium-base")
+    _insert_dependency(fresh_db, "merge-medium-downstream", "long-base")
+
+    async with _client() as client:
+        response = await _priority(client)
+
+    assert response.status_code == 200
+    assert _score(fresh_db, "quick-base") == 16
+    assert _score(fresh_db, "medium-base") == pytest.approx(8 / 3)
+    assert _score(fresh_db, "long-base") == pytest.approx(3 / 8)
+    assert [entry["id"] for entry in response.json()] == [
+        "quick-base",
+        "medium-base",
+        "long-base",
+    ]
+
+
+@pytest.mark.anyio
+async def test_b5_container_rollup_counts_each_leaf_status_on_tree_and_home(
+    fresh_db,
+) -> None:
+    """B5 test 1: container status_counts aggregate all descendant leaf statuses."""
+    async with _client() as client:
+        root = await _create(client, {"title": "B5 status rollup"})
+        root_id = root.json()["id"]
+        ready = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Ready bucket",
+            leaf_body={"title": "Ready rollup leaf"},
+        )
+        monitoring = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Monitoring bucket",
+            leaf_body={"title": "Monitoring rollup leaf", "ball": "agent"},
+        )
+        waiting = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Waiting bucket",
+            leaf_body={"title": "Waiting rollup leaf", "ball": "person"},
+        )
+        blocked = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Blocked bucket",
+            leaf_body={"title": "Blocked rollup leaf"},
+        )
+        blocker = await _create(client, {"title": "External blocker"})
+        dependency = await _post_dependency(
+            client,
+            {"from_id": blocked["id"], "to_id": blocker.json()["id"]},
+        )
+        done = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Done bucket",
+            leaf_body={"title": "Done rollup leaf", "state": "done"},
+        )
+        dropped = await _create_bucketed_leaf(
+            client,
+            root_id,
+            bucket_title="Dropped bucket",
+            leaf_body={"title": "Dropped rollup leaf", "state": "abandoned"},
+        )
+        tree = await _tree(client)
+        home = await _home(client)
+
+    assert root.status_code == 200
+    assert dependency.status_code == 200
+    assert tree.status_code == 200
+    assert home.status_code == 200
+    assert {ready["id"], monitoring["id"], waiting["id"], done["id"], dropped["id"]}
+
+    tree_row = _rows_by_title(tree.json())["B5 status rollup"]
+    home_row = _rows_by_title(home.json()["items"])["B5 status rollup"]
+    assert tree_row["status"] == "rollup"
+    assert tree_row["rollup"]["status_counts"] == {
+        "ready": 1,
+        "monitoring": 1,
+        "waiting": 1,
+        "blocked": 1,
+        "done": 1,
+        "dropped": 1,
+    }
+    assert tree_row["rollup"]["ship"]["total"] == 6
+    assert home_row["rollup"] == tree_row["rollup"]
+
+
+@pytest.mark.anyio
+async def test_b5_rollup_ship_counts_only_leaves_with_all_milestones(
+    fresh_db,
+) -> None:
+    """B5 test 2: shipped counts only leaves with all four ship flags true."""
+    async with _client() as client:
+        root = await _create(client, {"title": "B5 ship rollup"})
+        full = await _create_bucketed_leaf(
+            client,
+            root.json()["id"],
+            bucket_title="Fully shipped bucket",
+            leaf_body={"title": "Fully shipped leaf"},
+        )
+        partial = await _create_bucketed_leaf(
+            client,
+            root.json()["id"],
+            bucket_title="Partially shipped bucket",
+            leaf_body={"title": "Partially shipped leaf"},
+        )
+        full_patch = await _patch(
+            client,
+            full["id"],
+            {
+                "dev_updated": True,
+                "prod_updated": True,
+                "docs_updated": True,
+                "announced": True,
+            },
+        )
+        partial_patch = await _patch(
+            client,
+            partial["id"],
+            {
+                "dev_updated": True,
+                "prod_updated": True,
+                "docs_updated": True,
+                "announced": False,
+            },
+        )
+        tree = await _tree(client)
+
+    assert root.status_code == 200
+    assert full_patch.status_code == 200
+    assert partial_patch.status_code == 200
+    assert tree.status_code == 200
+    ship = _rows_by_title(tree.json())["B5 ship rollup"]["rollup"]["ship"]
+    assert ship == {
+        "dev_updated": 2,
+        "prod_updated": 2,
+        "docs_updated": 2,
+        "announced": 1,
+        "shipped": 1,
+        "total": 2,
+    }
+
+
+@pytest.mark.anyio
+async def test_b5_rollup_phase_is_least_advanced_open_leaf_phase(
+    fresh_db,
+) -> None:
+    """B5 test 3: rollup.phase uses least-advanced open descendant phase."""
+    async with _client() as client:
+        root = await _create(client, {"title": "B5 phase rollup"})
+        for phase in ("review", "defining", "released"):
+            await _create_bucketed_leaf(
+                client,
+                root.json()["id"],
+                bucket_title=f"{phase} bucket",
+                leaf_body={"title": f"{phase} rollup leaf", "state": phase},
+            )
+        tree = await _tree(client)
+
+    assert root.status_code == 200
+    assert tree.status_code == 200
+    assert _rows_by_title(tree.json())["B5 phase rollup"]["rollup"]["phase"] == (
+        "defining"
+    )
+
+
+@pytest.mark.anyio
+async def test_b5_all_terminal_container_rollup_has_no_open_phase(
+    fresh_db,
+) -> None:
+    """B5 test 4: all-terminal descendants leave rollup.phase null."""
+    async with _client() as client:
+        root = await _create(client, {"title": "B5 terminal rollup"})
+        await _create_bucketed_leaf(
+            client,
+            root.json()["id"],
+            bucket_title="Terminal done bucket",
+            leaf_body={"title": "Terminal done leaf", "state": "done"},
+        )
+        await _create_bucketed_leaf(
+            client,
+            root.json()["id"],
+            bucket_title="Terminal dropped bucket",
+            leaf_body={"title": "Terminal dropped leaf", "state": "abandoned"},
+        )
+        tree = await _tree(client)
+
+    assert root.status_code == 200
+    assert tree.status_code == 200
+    rollup = _rows_by_title(tree.json())["B5 terminal rollup"]["rollup"]
+    assert rollup["phase"] is None
+    assert rollup["status_counts"] == {
+        "ready": 0,
+        "monitoring": 0,
+        "waiting": 0,
+        "blocked": 0,
+        "done": 1,
+        "dropped": 1,
+    }
+
+
+@pytest.mark.anyio
+async def test_b5_nested_container_rollup_counts_leaves_at_any_depth(
+    fresh_db,
+) -> None:
+    """B5 test 5: intermediate containers aggregate all nested descendant leaves."""
+    async with _client() as client:
+        root = await _create(client, {"title": "B5 nested root"})
+        intermediate = await _create(
+            client,
+            {"title": "B5 intermediate", "parent_id": root.json()["id"]},
+        )
+        direct = await _create(
+            client,
+            {
+                "title": "Nested direct leaf",
+                "parent_id": intermediate.json()["id"],
+            },
+        )
+        nested = await _create(
+            client,
+            {
+                "title": "B5 nested child container",
+                "parent_id": intermediate.json()["id"],
+            },
+        )
+        deep = await _create(
+            client,
+            {"title": "Nested deep leaf", "parent_id": nested.json()["id"]},
+        )
+        tree = await _tree(client)
+
+    assert root.status_code == 200
+    assert intermediate.status_code == 200
+    assert direct.status_code == 200
+    assert nested.status_code == 200
+    assert deep.status_code == 200
+    assert tree.status_code == 200
+    rollup = _rows_by_title(tree.json())["B5 intermediate"]["rollup"]
+    assert rollup["ship"]["total"] == 2
+    assert _status_count_total(rollup) == 2
+    assert rollup["status_counts"]["ready"] == 2
+
+
+@pytest.mark.anyio
+async def test_b5_leaf_rollup_is_null_on_tree_and_home(fresh_db) -> None:
+    """B5 test 6: leaf rows carry rollup null everywhere TreeItemOut is exposed."""
+    async with _client() as client:
+        created = await _create(client, {"title": "B5 leaf with no rollup"})
+        tree = await _tree(client)
+        home = await _home(client)
+
+    assert created.status_code == 200
+    assert tree.status_code == 200
+    assert home.status_code == 200
+    assert _rows_by_title(tree.json())["B5 leaf with no rollup"]["rollup"] is None
+    assert (
+        _rows_by_title(home.json()["items"])["B5 leaf with no rollup"]["rollup"] is None
+    )
+
+
+@pytest.mark.anyio
+async def test_ball_controls_actionability_regardless_of_open_phase(
+    fresh_db,
+) -> None:
+    """Open phases are actionable only while the Ball is with the owner."""
+    older_time = "2026-01-01T00:00:00.000000Z"
+    newer_time = "2026-01-02T00:00:00.000000Z"
+    _insert_priority_leaf(
+        fresh_db,
+        "a-defining",
+        "Define next slice",
+        older_time,
+        older_time,
+        state="defining",
+    )
+    _insert_priority_leaf(
+        fresh_db,
+        "b-implement",
         "Agent is implementing",
         newer_time,
         newer_time,
         state="implement",
+        ball="agent",
     )
     _insert_priority_leaf(
         fresh_db,
-        "d-ready",
+        "c-ready",
         "Ready ordinary work",
         newer_time,
         newer_time,
@@ -667,9 +1635,9 @@ async def test_feedback_and_implement_wait_externally_while_respond_is_prioritiz
 
     assert response.status_code == 200
     body = response.json()
-    assert [entry["id"] for entry in body] == ["a-respond", "d-ready"]
+    assert [entry["id"] for entry in body] == ["c-ready", "a-defining"]
     assert [entry["rank"] for entry in body] == [1, 2]
-    assert [entry["state"] for entry in body] == ["respond", "not-started"]
+    assert [entry["state"] for entry in body] == ["not-started", "defining"]
 
 
 @pytest.mark.anyio

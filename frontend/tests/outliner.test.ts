@@ -1,12 +1,44 @@
+// @vitest-environment jsdom
+
 import * as React from 'react'
+import { act } from 'react'
 import { JSDOM } from 'jsdom'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { MODE_COLOUR_MAP } from '@/components/outliner-row'
+import { MODE_COLOUR_MAP, OutlinerRow } from '@/components/outliner-row'
 import { Outliner, visibleOutlinerRows } from '@/components/outliner'
 import { MODES } from '@/components/view-controls'
-import type { Marker, TreeItem } from '@/lib/contracts'
+import type { Ball, Marker, TreeItem } from '@/lib/contracts'
+
+const actionMocks = vi.hoisted(() => ({
+  addDependency: vi.fn(),
+  createComment: vi.fn(),
+  createItem: vi.fn(),
+  createMarker: vi.fn(),
+  createNote: vi.fn(),
+  createPromptResponseEntry: vi.fn(),
+  deleteComment: vi.fn(),
+  deleteDependency: vi.fn(),
+  deleteItem: vi.fn(),
+  editComment: vi.fn(),
+  editNote: vi.fn(),
+  fetchChanges: vi.fn(),
+  fetchComments: vi.fn(),
+  fetchItemActivity: vi.fn(),
+  fetchMarkers: vi.fn(),
+  fetchNotes: vi.fn(),
+  fetchPromptResponseEntries: vi.fn(),
+  fetchScratchpad: vi.fn(),
+  indentItem: vi.fn(),
+  moveItem: vi.fn(),
+  outdentItem: vi.fn(),
+  patchItem: vi.fn(),
+  updateScratchpad: vi.fn(),
+}))
+
+vi.mock('@/app/actions', () => actionMocks)
 
 const baseItem = {
   slug: 'item',
@@ -15,9 +47,13 @@ const baseItem = {
   state: 'not-started',
   mode: 'prompt-agent',
   effort: 'medium',
-  blocked_external: false,
+  ball: 'you',
   blocked_note: null,
   blocked_followup_date: null,
+  dev_updated: false,
+  prod_updated: false,
+  docs_updated: false,
+  announced: false,
   description: '',
   repo_url: null,
   usage: '',
@@ -26,20 +62,26 @@ const baseItem = {
   created_at: '2026-06-29T00:00:00.000000Z',
   updated_at: '2026-06-29T00:00:00.000000Z',
   state_changed_at: '2026-06-29T00:00:00.000000Z',
+  ball_changed_at: '2026-06-29T00:00:00.000000Z',
   completed_at: null,
   needs: [],
   needs_edges: [],
+  status: 'ready',
+  resume: false,
+  rollup: null,
   actionable: true,
   complete: false,
   has_notes: false,
   has_prompt_response_entries: false,
 } satisfies Omit<TreeItem, 'id' | 'title'>
 
-function item(overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>) {
+function item(
+  overrides: Partial<TreeItem> & Pick<TreeItem, 'id' | 'title'>
+): TreeItem {
   return {
     ...baseItem,
     ...overrides,
-  }
+  } as TreeItem
 }
 
 function marker(overrides: Partial<Marker> & Pick<Marker, 'id' | 'at'>) {
@@ -62,6 +104,81 @@ function renderedDocument(element: React.ReactElement) {
   return new JSDOM(renderToStaticMarkup(element)).window.document
 }
 
+let roots: Root[] = []
+
+async function flushReact() {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
+async function renderClient(element: React.ReactElement) {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  roots.push(root)
+
+  await act(async () => {
+    root.render(element)
+  })
+  await flushReact()
+
+  return container
+}
+
+async function keyDown(element: HTMLElement, key: string) {
+  await act(async () => {
+    element.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key,
+      })
+    )
+  })
+  await flushReact()
+}
+
+async function click(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true })
+    )
+  })
+  await flushReact()
+}
+
+async function clickCheckbox(checkbox: HTMLInputElement) {
+  await act(async () => {
+    checkbox.click()
+  })
+  await flushReact()
+}
+
+async function changeField(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  value: string
+) {
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype
+  const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(element, value)
+    element.dispatchEvent(
+      new Event('input', { bubbles: true, cancelable: true })
+    )
+  })
+  await flushReact()
+}
+
 function itemActionButton(
   document: Document,
   itemId: string,
@@ -74,6 +191,106 @@ function itemActionButton(
     throw new Error(`Missing ${ariaLabel} button for ${itemId}`)
   }
   return button
+}
+
+function itemBallControl(document: Document, itemId: string) {
+  return document.querySelector(
+    `[data-outliner-item-id="${itemId}"] button[aria-label^="Ball:"]`
+  )
+}
+
+function itemDoneCheckbox(document: Document, itemId: string) {
+  const checkbox = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[type="checkbox"][aria-label="Mark item done"]`
+  )
+  return checkbox instanceof document.defaultView!.HTMLInputElement
+    ? checkbox
+    : null
+}
+
+function itemStateSelect(document: Document, itemId: string) {
+  const select = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] select[aria-label="Item state"]`
+  )
+  return select instanceof document.defaultView!.HTMLSelectElement
+    ? select
+    : null
+}
+
+function mountedItemDoneCheckbox(container: ParentNode, itemId: string) {
+  const checkbox = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[type="checkbox"][aria-label="Mark item done"]`
+  )
+  if (!(checkbox instanceof HTMLInputElement)) {
+    throw new Error(`Missing done checkbox for ${itemId}`)
+  }
+  return checkbox
+}
+
+function mountedItemTextField(container: ParentNode, itemId: string) {
+  const input = container.querySelector(
+    `[data-outliner-item-id="${itemId}"] input[aria-label="Item text"]`
+  )
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing item text field for ${itemId}`)
+  }
+  return input
+}
+
+function mountedItemResumeAffordance(container: ParentNode, itemId: string) {
+  return container.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
+}
+
+function mountedBallControl(container: ParentNode, itemId: string) {
+  const control = container.querySelector(`button[aria-label^="Ball:"]`)
+  if (!(control instanceof HTMLButtonElement)) {
+    throw new Error(`Missing Ball control for ${itemId}`)
+  }
+  return control
+}
+
+function itemReadinessChip(document: Document, itemId: string) {
+  const chip = document.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Item readiness"]`
+  )
+  if (!(chip instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing item readiness chip for ${itemId}`)
+  }
+  return chip
+}
+
+function outlinerItem(document: Document, itemId: string) {
+  const row = document.querySelector(`[data-outliner-item-id="${itemId}"]`)
+  if (!(row instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing outliner item ${itemId}`)
+  }
+  return row
+}
+
+function managerProjection(document: Document, itemId: string) {
+  const projection = outlinerItem(document, itemId).querySelector(
+    '[aria-label="Manager projection"]'
+  )
+  if (!(projection instanceof document.defaultView!.HTMLElement)) {
+    throw new Error(`Missing manager projection for ${itemId}`)
+  }
+  return projection
+}
+
+function viewButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing view button: ${ariaLabel}`)
+  }
+  return button
+}
+
+function itemResumeAffordance(document: Document, itemId: string) {
+  return document.querySelector(
+    `[data-outliner-item-id="${itemId}"] [aria-label="Resume ready item"]`
+  )
 }
 
 function rootSectionBackground(document: Document, rootId: string) {
@@ -93,7 +310,119 @@ function renderedRootSectionIds(document: Document) {
   ).map((section) => section.dataset.outlinerRootSectionId)
 }
 
+function rowCallbacks(
+  onChangeBall: (item: TreeItem, ball: Ball) => Promise<void> = async () => {}
+) {
+  return {
+    onToggle: vi.fn(),
+    onSelect: vi.fn(),
+    onSubmitText: vi.fn(async () => undefined),
+    onCreateSibling: vi.fn(async () => undefined),
+    onKeyboardCommand: vi.fn(async () => undefined),
+    onDelete: vi.fn(async () => undefined),
+    onKeyboardReorder: vi.fn(async () => undefined),
+    onChangeState: vi.fn(async () => undefined),
+    onChangeDone: vi.fn(async () => undefined),
+    onChangeBall,
+    onOpenNotes: vi.fn(),
+    onOpenPromptTimeline: vi.fn(),
+  }
+}
+
+function renderOutlinerRow(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+  } = {}
+) {
+  return renderClient(
+    React.createElement(OutlinerRow, {
+      item: rowItem,
+      depth: 0,
+      hasChildren: options.hasChildren ?? false,
+      collapsed: false,
+      displayReadiness: 'ready',
+      ...rowCallbacks(options.onChangeBall),
+    })
+  )
+}
+
+function outlinerRowElement(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+  } = {}
+) {
+  return React.createElement(OutlinerRow, {
+    item: rowItem,
+    depth: 0,
+    hasChildren: options.hasChildren ?? false,
+    collapsed: false,
+    displayReadiness: 'ready',
+    ...rowCallbacks(options.onChangeBall),
+  })
+}
+
+function renderedOutlinerRowDocument(
+  rowItem: TreeItem,
+  options: {
+    hasChildren?: boolean
+    onChangeBall?: (item: TreeItem, ball: Ball) => Promise<void>
+  } = {}
+) {
+  return renderedDocument(
+    React.createElement(
+      'div',
+      { 'data-outliner-item-id': rowItem.id },
+      outlinerRowElement(rowItem, options)
+    )
+  )
+}
+
 describe('Outliner', () => {
+  beforeEach(() => {
+    ;(
+      globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean
+      }
+    ).IS_REACT_ACT_ENVIRONMENT = true
+    Element.prototype.scrollIntoView = vi.fn()
+    actionMocks.addDependency.mockResolvedValue({})
+    actionMocks.createComment.mockResolvedValue({})
+    actionMocks.createItem.mockResolvedValue({})
+    actionMocks.createMarker.mockResolvedValue({})
+    actionMocks.createNote.mockResolvedValue({})
+    actionMocks.createPromptResponseEntry.mockResolvedValue({})
+    actionMocks.deleteComment.mockResolvedValue({})
+    actionMocks.deleteDependency.mockResolvedValue({})
+    actionMocks.deleteItem.mockResolvedValue({})
+    actionMocks.editComment.mockResolvedValue({})
+    actionMocks.editNote.mockResolvedValue({})
+    actionMocks.fetchChanges.mockResolvedValue([])
+    actionMocks.fetchComments.mockResolvedValue([])
+    actionMocks.fetchItemActivity.mockResolvedValue([])
+    actionMocks.fetchMarkers.mockResolvedValue([])
+    actionMocks.fetchNotes.mockResolvedValue([])
+    actionMocks.fetchPromptResponseEntries.mockResolvedValue([])
+    actionMocks.fetchScratchpad.mockResolvedValue({})
+    actionMocks.indentItem.mockResolvedValue({})
+    actionMocks.moveItem.mockResolvedValue({})
+    actionMocks.outdentItem.mockResolvedValue({})
+    actionMocks.patchItem.mockResolvedValue({})
+    actionMocks.updateScratchpad.mockResolvedValue({})
+  })
+
+  afterEach(() => {
+    for (const root of roots) {
+      act(() => root.unmount())
+    }
+    roots = []
+    document.body.replaceChildren()
+    vi.clearAllMocks()
+  })
+
   it('defines one distinct colour token for every mode', () => {
     expect(Object.keys(MODE_COLOUR_MAP).sort()).toEqual([...MODES].sort())
     expect(Object.values(MODE_COLOUR_MAP)).toHaveLength(5)
@@ -101,6 +430,236 @@ describe('Outliner', () => {
 
     for (const mode of MODES) {
       expect(MODE_COLOUR_MAP[mode]).toBeDefined()
+    }
+  })
+
+  it('renders no done checkbox or Phase select for container rows', () => {
+    const document = renderedOutlinerRowDocument(
+      item({
+        id: 'container',
+        title: 'Container',
+        parent_id: 'root',
+        actionable: false,
+      }),
+      { hasChildren: true }
+    )
+
+    expect(itemDoneCheckbox(document, 'container') !== null).toBe(false)
+    expect(itemStateSelect(document, 'container') !== null).toBe(false)
+  })
+
+  it('keeps the done checkbox and Phase select on leaf rows', () => {
+    const document = renderedOutlinerRowDocument(
+      item({
+        id: 'leaf',
+        title: 'Leaf work',
+        parent_id: 'container',
+        state: 'review',
+      })
+    )
+
+    expect(itemDoneCheckbox(document, 'leaf')).toBeTruthy()
+    expect(itemStateSelect(document, 'leaf')?.value).toBe('review')
+  })
+
+  it('patches a leaf done checkbox to done and restores the prior Phase when unchecked', async () => {
+    const originalLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      parent_id: 'container',
+      state: 'review',
+    })
+    let savedLeaf = originalLeaf
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        completed_at:
+          patch.state === 'done' ? '2026-06-30T01:00:00.000000Z' : null,
+        state_changed_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Container',
+            actionable: false,
+          }),
+          originalLeaf,
+        ],
+        markers: [],
+      })
+    )
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(1, 'leaf', {
+      state: 'done',
+    })
+    expect(mountedItemDoneCheckbox(container, 'leaf').checked).toBe(true)
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    expect(actionMocks.patchItem).toHaveBeenNthCalledWith(2, 'leaf', {
+      state: 'review',
+    })
+  })
+
+  it('keeps the resume affordance when a saved not-started item still has content', async () => {
+    let savedLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      has_notes: true,
+      resume: true,
+    })
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        updated_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [savedLeaf],
+        markers: [],
+      })
+    )
+
+    expect(mountedItemResumeAffordance(container, 'leaf')).toBeInstanceOf(
+      HTMLElement
+    )
+
+    const titleField = mountedItemTextField(container, 'leaf')
+    await changeField(titleField, 'Renamed leaf work')
+    await keyDown(titleField, 'Enter')
+
+    expect(actionMocks.patchItem).toHaveBeenCalledWith('leaf', {
+      title: 'Renamed leaf work',
+    })
+    expect(mountedItemTextField(container, 'leaf').value).toBe(
+      'Renamed leaf work'
+    )
+    expect(mountedItemResumeAffordance(container, 'leaf')).toBeInstanceOf(
+      HTMLElement
+    )
+  })
+
+  it('shows a keyboard-focusable Ball control whose name includes the current Ball on leaves', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'agent-leaf',
+            title: 'Agent hand-off',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const control = itemBallControl(document, 'agent-leaf')
+
+    expect(control).toBeTruthy()
+    expect(control?.getAttribute('aria-label')).toContain('Agent')
+    expect(control?.getAttribute('aria-keyshortcuts')).toBe('a y')
+    expect(control?.textContent).toContain('~agent')
+  })
+
+  it('calls onChangeBall for one-key hand-off from the focused Ball control', async () => {
+    const onChangeBall = vi.fn(async () => undefined)
+    const ownerLeaf = item({
+      id: 'owner-leaf',
+      title: 'Owner hand-off',
+      ball: 'you',
+    })
+    const ownerContainer = await renderOutlinerRow(ownerLeaf, { onChangeBall })
+    const ownerControl = mountedBallControl(ownerContainer, 'owner-leaf')
+
+    ownerControl.focus()
+    expect(document.activeElement).toBe(ownerControl)
+    await keyDown(ownerControl, 'a')
+
+    const agentLeaf = item({
+      id: 'agent-leaf',
+      title: 'Agent hand-off',
+      ball: 'agent',
+      status: 'monitoring',
+      actionable: false,
+    })
+    const agentContainer = await renderOutlinerRow(agentLeaf, { onChangeBall })
+    const agentControl = mountedBallControl(agentContainer, 'agent-leaf')
+
+    agentControl.focus()
+    expect(document.activeElement).toBe(agentControl)
+    await keyDown(agentControl, 'y')
+
+    expect(onChangeBall).toHaveBeenCalledTimes(2)
+    expect(onChangeBall).toHaveBeenNthCalledWith(1, ownerLeaf, 'agent')
+    expect(onChangeBall).toHaveBeenNthCalledWith(2, agentLeaf, 'you')
+  })
+
+  it('does not show a Ball control for container rows', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Container',
+          }),
+          item({
+            id: 'child',
+            title: 'Child',
+            parent_id: 'container',
+          }),
+        ],
+      })
+    )
+
+    expect(itemBallControl(document, 'container')).toBeNull()
+    expect(itemBallControl(document, 'child')).toBeTruthy()
+  })
+
+  it('keeps person hand-off rows compact without mounting row-level editors', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'first-handoff',
+            title: 'Ask first person',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+          item({
+            id: 'second-handoff',
+            title: 'Ask second person',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
+    for (const itemId of ['first-handoff', 'second-handoff']) {
+      const row = outlinerItem(document, itemId)
+      expect(
+        row.querySelector('[aria-label="Person hand-off editor"]')
+      ).toBeNull()
+      expect(
+        row.querySelector('textarea[aria-label="Hand-off note"]')
+      ).toBeNull()
+      expect(
+        itemBallControl(document, itemId)?.getAttribute('aria-expanded')
+      ).toBeNull()
     }
   })
 
@@ -341,6 +900,352 @@ describe('Outliner', () => {
     expect(plainTimeline.getAttribute('data-available')).toBe('false')
   })
 
+  it('shows a Ready chip without a resume affordance for fresh ready work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [item({ id: 'ready', title: 'Fresh ready work' })],
+      })
+    )
+
+    const chip = itemReadinessChip(document, 'ready')
+
+    expect(chip.textContent).toBe('Ready')
+    expect(itemResumeAffordance(document, 'ready')).toBeNull()
+  })
+
+  it('shows the resume affordance for ready work that can resume', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'resume',
+            title: 'Resume ready work',
+            resume: true,
+          }),
+        ],
+      })
+    )
+
+    const chip = itemReadinessChip(document, 'resume')
+
+    expect(chip.textContent).toBe('Ready')
+    expect(itemResumeAffordance(document, 'resume')).toBeTruthy()
+  })
+
+  it('shows monitoring, waiting, and blocked status labels in leaf chips', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'monitoring',
+            title: 'Agent work',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+          item({
+            id: 'waiting',
+            title: 'Waiting work',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+            sort_order: 2,
+          }),
+          item({
+            id: 'blocked',
+            title: 'Blocked by dependency',
+            status: 'blocked',
+            actionable: false,
+            sort_order: 3,
+          }),
+        ],
+      })
+    )
+
+    expect(itemReadinessChip(document, 'monitoring').textContent).toBe(
+      'Monitoring'
+    )
+    expect(itemReadinessChip(document, 'waiting').textContent).toBe('Waiting')
+    expect(itemReadinessChip(document, 'blocked').textContent).toBe('Blocked')
+  })
+
+  it('shows dropped and done terminal status labels in leaf chips', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'dropped',
+            title: 'Dropped work',
+            status: 'dropped',
+            state: 'abandoned',
+            actionable: false,
+            complete: true,
+          }),
+          item({
+            id: 'done',
+            title: 'Done work',
+            status: 'done',
+            state: 'done',
+            actionable: false,
+            complete: true,
+            completed_at: '2026-06-30T01:00:00.000000Z',
+            sort_order: 2,
+          }),
+        ],
+      })
+    )
+
+    expect(itemReadinessChip(document, 'dropped').textContent).toBe('Dropped')
+    expect(itemReadinessChip(document, 'done').textContent).toBe('Done')
+  })
+
+  it('renders manager status and phase for ready owner work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'ready-review',
+            title: 'Ready review',
+            state: 'review',
+            status: 'ready',
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'ready-review')
+
+    expect(projection.textContent).toContain('On owner')
+    expect(projection.textContent).toContain('Review')
+  })
+
+  it('renders manager status and phase for agent monitoring work', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'monitoring-implement',
+            title: 'Agent implementation',
+            state: 'implement',
+            ball: 'agent',
+            status: 'monitoring',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'monitoring-implement')
+
+    expect(projection.textContent).toContain('In flight (agent)')
+    expect(projection.textContent).toContain('Implement')
+  })
+
+  it('renders manager status and phase for work waiting on others', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'waiting-released',
+            title: 'Awaiting rollout feedback',
+            state: 'released',
+            ball: 'person',
+            status: 'waiting',
+            actionable: false,
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'waiting-released')
+
+    expect(projection.textContent).toContain('Waiting on others')
+    expect(projection.textContent).toContain('Released')
+  })
+
+  it('renders manager container status counts and rollup phase', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'container',
+            title: 'Launch surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 2,
+                monitoring: 1,
+                waiting: 0,
+                blocked: 1,
+                done: 3,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 4,
+                prod_updated: 3,
+                docs_updated: 2,
+                announced: 1,
+                shipped: 2,
+                total: 6,
+              },
+              phase: 'review',
+            },
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'container')
+
+    for (const bucket of [
+      'Ready: 2',
+      'Monitoring: 1',
+      'Waiting: 0',
+      'Blocked: 1',
+      'Done: 3',
+      'Dropped: 0',
+    ]) {
+      expect(projection.querySelector(`[aria-label="${bucket}"]`)).toBeTruthy()
+    }
+    expect(projection.textContent).toContain('Review')
+  })
+
+  it('renders the manager container ship summary from rollup totals', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        items: [
+          item({
+            id: 'shipping-container',
+            title: 'Shipping surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 0,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 6,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 6,
+                prod_updated: 5,
+                docs_updated: 4,
+                announced: 3,
+                shipped: 2,
+                total: 6,
+              },
+              phase: null,
+            },
+          }),
+        ],
+      })
+    )
+
+    const projection = managerProjection(document, 'shipping-container')
+
+    expect(projection.querySelector('[aria-label="Ship: 2 of 6"]')).toBeTruthy()
+    expect(projection.textContent).toContain('2/6 shipped')
+  })
+
+  it('refreshes manager container rollups after a descendant leaf is changed locally', async () => {
+    const originalLeaf = item({
+      id: 'leaf',
+      title: 'Leaf work',
+      parent_id: 'container',
+    })
+    let savedLeaf = originalLeaf
+    actionMocks.patchItem.mockImplementation(async (_itemId, patch) => {
+      savedLeaf = {
+        ...savedLeaf,
+        ...patch,
+        completed_at:
+          patch.state === 'done'
+            ? '2026-06-30T01:00:00.000000Z'
+            : savedLeaf.completed_at,
+        state_changed_at: '2026-06-30T01:00:00.000000Z',
+      }
+      return savedLeaf
+    })
+
+    const container = await renderClient(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'container',
+            title: 'Launch surface',
+            actionable: false,
+            status: 'rollup',
+            rollup: {
+              status_counts: {
+                ready: 1,
+                monitoring: 0,
+                waiting: 0,
+                blocked: 0,
+                done: 0,
+                dropped: 0,
+              },
+              ship: {
+                dev_updated: 0,
+                prod_updated: 0,
+                docs_updated: 0,
+                announced: 0,
+                shipped: 0,
+                total: 1,
+              },
+              phase: 'not-started',
+            },
+          }),
+          originalLeaf,
+        ],
+        markers: [],
+      })
+    )
+
+    await clickCheckbox(mountedItemDoneCheckbox(container, 'leaf'))
+    await click(viewButton(container, 'Show manager summary'))
+
+    const projection = managerProjection(container.ownerDocument, 'container')
+
+    expect(projection.querySelector('[aria-label="Ready: 0"]')).toBeTruthy()
+    expect(projection.querySelector('[aria-label="Done: 1"]')).toBeTruthy()
+    expect(projection.textContent).not.toContain('Not started')
+  })
+
+  it('renders the manager projection in viewer mode without removing view toggles', () => {
+    const document = renderedDocument(
+      React.createElement(Outliner, {
+        initialView: 'manager',
+        scratchpadEditable: false,
+        items: [item({ id: 'viewer-ready', title: 'Viewer ready' })],
+      })
+    )
+
+    expect(managerProjection(document, 'viewer-ready').textContent).toContain(
+      'On owner'
+    )
+    expect(
+      Array.from(document.querySelectorAll('button')).map((button) =>
+        button.textContent?.trim()
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        'Tree',
+        'Up Next',
+        'Follow Up',
+        'Monitoring',
+        'Manager',
+      ])
+    )
+  })
+
   it('displays an explicit sibling section dependency before its waiting section', () => {
     const items = [
       item({
@@ -394,6 +1299,70 @@ describe('Outliner', () => {
     ])
   })
 
+  it('filters work views by derived status and leaves blocked only in Tree', () => {
+    const items = [
+      item({
+        id: 'ready',
+        title: 'Ready work',
+        actionable: false,
+        status: 'ready',
+      }),
+      item({
+        id: 'waiting',
+        title: 'Waiting work',
+        sort_order: 2,
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
+        actionable: false,
+      }),
+      item({
+        id: 'monitoring',
+        title: 'Monitoring work',
+        sort_order: 3,
+        state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
+        actionable: false,
+      }),
+      item({
+        id: 'blocked',
+        title: 'Blocked work',
+        sort_order: 4,
+        status: 'blocked',
+        actionable: true,
+      }),
+    ]
+    const priorityItems = [
+      { id: 'ready', rank: 1 },
+      { id: 'waiting', rank: 2 },
+      { id: 'monitoring', rank: 3 },
+      { id: 'blocked', rank: 4 },
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set()).map((row) => row.item.id)
+    ).toContain('blocked')
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['ready'])
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'follow-up',
+      }).map((row) => row.item.id)
+    ).toEqual(['waiting'])
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems,
+        view: 'monitoring',
+      }).map((row) => row.item.id)
+    ).toEqual(['monitoring'])
+  })
+
   it('keeps Tree root sections alphabetical even when a root depends on another root section', () => {
     const items = [
       item({
@@ -441,7 +1410,7 @@ describe('Outliner', () => {
     ).toEqual(alphabeticalTreeOrder)
   })
 
-  it('shows up-next rows as actionable non-waiting work with section context', () => {
+  it('shows up-next rows as ready work with section context', () => {
     const items = [
       item({
         id: 'section',
@@ -459,7 +1428,9 @@ describe('Outliner', () => {
         title: 'Waiting on feedback',
         parent_id: 'section',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -468,20 +1439,22 @@ describe('Outliner', () => {
         parent_id: 'section',
         sort_order: 3,
         state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
         actionable: false,
       }),
       item({
         id: 'respond',
         title: 'Respond to feedback',
         sort_order: 2,
-        state: 'respond',
+        state: 'released',
       }),
       item({
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 3,
-        actionable: false,
-        blocked_external: true,
+        actionable: true,
+        status: 'blocked',
       }),
     ]
 
@@ -499,7 +1472,35 @@ describe('Outliner', () => {
     ).toEqual(['respond', 'section', 'ready'])
   })
 
-  it('shows follow-up rows as non-me waiting work without respond', () => {
+  it('does not give legacy respond work an up-next ordering boost', () => {
+    const items = [
+      item({
+        id: 'equal-peer',
+        title: 'Equal leverage peer',
+        sort_order: 1,
+      }),
+      item({
+        id: 'legacy-respond',
+        title: 'Legacy respond work',
+        sort_order: 2,
+        state: 'released',
+        ball: 'you',
+        status: 'ready',
+      }),
+    ]
+
+    expect(
+      visibleOutlinerRows(items, new Set(), {
+        priorityItems: [
+          { id: 'legacy-respond', rank: 1 },
+          { id: 'equal-peer', rank: 1 },
+        ],
+        view: 'up-next',
+      }).map((row) => row.item.id)
+    ).toEqual(['equal-peer', 'legacy-respond'])
+  })
+
+  it('shows follow-up rows as waiting work without ready, monitoring, or blocked rows', () => {
     const items = [
       item({
         id: 'ready',
@@ -509,7 +1510,9 @@ describe('Outliner', () => {
         id: 'feedback',
         title: 'Waiting on feedback',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -517,26 +1520,30 @@ describe('Outliner', () => {
         title: 'Agent is implementing',
         sort_order: 3,
         state: 'implement',
+        ball: 'agent',
+        status: 'monitoring',
         actionable: false,
       }),
       item({
         id: 'respond',
         title: 'Respond to feedback',
         sort_order: 4,
-        state: 'respond',
+        state: 'released',
       }),
       item({
         id: 'blocked',
         title: 'Externally blocked',
         sort_order: 5,
-        actionable: false,
-        blocked_external: true,
+        actionable: true,
+        status: 'blocked',
       }),
       item({
         id: 'done-feedback',
         title: 'Completed feedback',
         sort_order: 6,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'done',
         actionable: false,
         complete: true,
         completed_at: '2026-06-30T01:00:00.000000Z',
@@ -554,7 +1561,7 @@ describe('Outliner', () => {
         ],
         view: 'follow-up',
       }).map((row) => row.item.id)
-    ).toEqual(['implement', 'blocked', 'feedback'])
+    ).toEqual(['feedback'])
   })
 
   it('keeps filtered rows under ancestor context while pruning unrelated siblings', () => {
@@ -581,7 +1588,9 @@ describe('Outliner', () => {
         title: 'Waiting on feedback',
         parent_id: 'section',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -640,7 +1649,9 @@ describe('Outliner', () => {
         title: 'Alpha waiting',
         parent_id: 'alpha-root',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
       item({
@@ -660,7 +1671,9 @@ describe('Outliner', () => {
         title: 'Beta waiting',
         parent_id: 'beta-root',
         sort_order: 2,
-        state: 'feedback',
+        state: 'released',
+        ball: 'person',
+        status: 'waiting',
         actionable: false,
       }),
     ]
@@ -1087,7 +2100,8 @@ describe('Outliner', () => {
         id: 'parent',
         title: 'Blocked project',
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
       item({
         id: 'child',
@@ -1145,7 +2159,8 @@ describe('Outliner', () => {
         id: 'blocked-parent',
         title: 'Blocked parent',
         actionable: false,
-        blocked_external: true,
+        ball: 'person',
+        status: 'waiting',
       }),
       item({
         id: 'blocked-child',

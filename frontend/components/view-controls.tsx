@@ -1,14 +1,26 @@
 'use client'
 
 import * as React from 'react'
-import { ListChecks, ListTodo, ListTree } from 'lucide-react'
+import {
+  Activity,
+  ChartColumnStacked,
+  ListChecks,
+  ListTodo,
+  ListTree,
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { modeSchema } from '@/lib/contracts'
 import { cn } from '@/lib/utils'
 
 export const MODES = modeSchema.options
-export const OUTLINER_VIEWS = ['tree', 'up-next', 'follow-up'] as const
+export const OUTLINER_VIEWS = [
+  'tree',
+  'up-next',
+  'follow-up',
+  'monitoring',
+  'manager',
+] as const
 
 export type OutlinerView = (typeof OUTLINER_VIEWS)[number]
 
@@ -22,17 +34,29 @@ const VIEW_LABELS = {
   tree: 'Tree',
   'up-next': 'Up Next',
   'follow-up': 'Follow Up',
+  monitoring: 'Monitoring',
+  manager: 'Manager',
 } satisfies Record<OutlinerView, string>
 
 const VIEW_ARIA_LABELS = {
   tree: 'Show tree view',
   'up-next': 'Show up next work',
   'follow-up': 'Show follow up work',
+  monitoring: 'Show monitoring work',
+  manager: 'Show manager summary',
 } satisfies Record<OutlinerView, string>
 
 function ViewIcon({ view }: { view: OutlinerView }) {
   const Icon =
-    view === 'tree' ? ListTree : view === 'up-next' ? ListTodo : ListChecks
+    view === 'tree'
+      ? ListTree
+      : view === 'up-next'
+        ? ListTodo
+        : view === 'follow-up'
+          ? ListChecks
+          : view === 'monitoring'
+            ? Activity
+            : ChartColumnStacked
   return <Icon className="size-3.5" aria-hidden="true" />
 }
 
