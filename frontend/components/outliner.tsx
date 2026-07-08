@@ -2846,6 +2846,7 @@ export function Outliner({
     () => rootSectionBlocks(rows, itemsById),
     [itemsById, rows]
   )
+  const canCreateRootsInSelectedView = selectedView !== 'manager'
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -4049,12 +4050,14 @@ export function Outliner({
               {section.rows.map((row) => renderVisibleRow(row))}
             </div>
           ))}
-          <div className="border-border border-y">
-            <FirstRootCreator
-              autoFocus={activeItems.length === 0}
-              onCreate={createRoot}
-            />
-          </div>
+          {canCreateRootsInSelectedView ? (
+            <div className="border-border border-y">
+              <FirstRootCreator
+                autoFocus={activeItems.length === 0}
+                onCreate={createRoot}
+              />
+            </div>
+          ) : null}
           {dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker
               slot={dragOriginMarker}
