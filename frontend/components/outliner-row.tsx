@@ -8,6 +8,7 @@ import {
   GripVertical,
   MessagesSquare,
   NotebookText,
+  Plus,
   Trash2,
 } from 'lucide-react'
 
@@ -51,6 +52,7 @@ const EXPANDED_ICON = <ChevronDown className="size-4" aria-hidden="true" />
 const ADD_SIBLING_ICON = (
   <CornerDownLeft className="size-3.5" aria-hidden="true" />
 )
+const ADD_CHILD_ICON = <Plus className="size-3.5" aria-hidden="true" />
 const NOTES_ICON = (
   <NotebookText className="size-3.5" strokeWidth={2} aria-hidden="true" />
 )
@@ -109,6 +111,7 @@ type OutlinerRowProps = {
   onSelect: (itemId: string) => void
   onSubmitText: (item: TreeItem, text: string) => Promise<void>
   onCreateSibling: (item: TreeItem, text: string) => Promise<void>
+  onCreateChild: (item: TreeItem, text: string) => Promise<void>
   onKeyboardCommand: (
     item: TreeItem,
     text: string,
@@ -136,6 +139,7 @@ export function OutlinerRow({
   onSelect,
   onSubmitText,
   onCreateSibling,
+  onCreateChild,
   onKeyboardCommand,
   onDelete,
   onKeyboardReorder,
@@ -201,6 +205,11 @@ export function OutlinerRow({
   function createSibling() {
     const draft = currentDraftText()
     void run(() => onCreateSibling(item, draft))
+  }
+
+  function createChild() {
+    const draft = currentDraftText()
+    void run(() => onCreateChild(item, draft))
   }
 
   function runKeyboardCommand(command: RowKeyboardCommand) {
@@ -300,7 +309,8 @@ export function OutlinerRow({
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
   const showDoneCheckbox = editable && item.parent_id !== null && isLeaf
-  const showAddSibling = editable && item.parent_id !== null
+  const showAddChild = editable && (item.parent_id === null || hasChildren)
+  const showAddSibling = editable && item.parent_id !== null && !showAddChild
 
   return (
     <div
@@ -383,7 +393,20 @@ export function OutlinerRow({
               <span className="truncate">{item.title}</span>
             </div>
           )}
-          {showAddSibling ? (
+          {showAddChild ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label="Add child"
+              title="Add child"
+              disabled={pending}
+              onClick={createChild}
+            >
+              {ADD_CHILD_ICON}
+            </Button>
+          ) : showAddSibling ? (
             <Button
               type="button"
               variant="ghost"

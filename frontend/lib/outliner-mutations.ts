@@ -178,6 +178,16 @@ export async function createNextSibling(
   })
 }
 
+export async function createChild(
+  item: TreeItem,
+  actions: Pick<RowMutationActions, 'createItem'>
+): Promise<{ id: string }> {
+  return actions.createItem({
+    title: NEW_ITEM_TITLE,
+    parent_id: item.id,
+  })
+}
+
 export async function createFirstRoot(
   title: string,
   actions: Pick<RowMutationActions, 'createItem'>

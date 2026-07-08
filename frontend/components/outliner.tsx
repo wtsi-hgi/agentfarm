@@ -57,6 +57,7 @@ import type {
 import {
   DependencyRemovalConfirmationRequiredError,
   applyRowKeyboardCommand,
+  createChild,
   createNextSibling,
   createFirstRoot,
   moveRowAfter,
@@ -242,6 +243,12 @@ type PendingDependencyRemoval =
     }
   | {
       kind: 'create-sibling'
+      item: TreeItem
+      text: string
+      dependencies: RemovedDependency[]
+    }
+  | {
+      kind: 'create-child'
       item: TreeItem
       text: string
       dependencies: RemovedDependency[]
@@ -3053,9 +3060,8 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
-  function focusCreatedSibling(item: TreeItem, createdItemId: string) {
+  function focusCreatedItem(createdItemId: string, parentId: string | null) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
-    const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))
     }
@@ -3088,7 +3094,18 @@ export function Outliner({
     await submitRowText(item, text, mutationActions, options)
     setDetailRefreshKey((current) => current + 1)
     const created = await createNextSibling(item, mutationActions)
-    focusCreatedSibling(item, created.id)
+    focusCreatedItem(created.id, item.parent_id)
+  }
+
+  async function performCreateChild(
+    item: TreeItem,
+    text: string,
+    options: SubmitRowTextOptions = {}
+  ) {
+    await submitRowText(item, text, mutationActions, options)
+    setDetailRefreshKey((current) => current + 1)
+    const created = await createChild(item, mutationActions)
+    focusCreatedItem(created.id, item.id)
   }
 
   async function createSibling(item: TreeItem, text: string) {
@@ -3098,6 +3115,23 @@ export function Outliner({
       if (caught instanceof DependencyRemovalConfirmationRequiredError) {
         setPendingDependencyRemoval({
           kind: 'create-sibling',
+          item,
+          text,
+          dependencies: caught.dependencies,
+        })
+        return
+      }
+      throw caught
+    }
+  }
+
+  async function createChildItem(item: TreeItem, text: string) {
+    try {
+      await performCreateChild(item, text)
+    } catch (caught) {
+      if (caught instanceof DependencyRemovalConfirmationRequiredError) {
+        setPendingDependencyRemoval({
+          kind: 'create-child',
           item,
           text,
           dependencies: caught.dependencies,
@@ -3131,7 +3165,7 @@ export function Outliner({
 
     const createdItemId = result.createdItemId
     if (createdItemId) {
-      focusCreatedSibling(item, createdItemId)
+      focusCreatedItem(createdItemId, item.parent_id)
     } else if (result.deletedItemId) {
       markItemSubtreeDeleted(item)
     } else if (result.handled) {
@@ -3227,8 +3261,10 @@ export function Outliner({
           pending.command,
           options
         )
-      } else {
+      } else if (pending.kind === 'create-sibling') {
         await performCreateSibling(pending.item, pending.text, options)
+      } else {
+        await performCreateChild(pending.item, pending.text, options)
       }
     } catch (caught) {
       confirmedDependencyRemovalRef.current = false
@@ -4004,6 +4040,7 @@ export function Outliner({
             onSelect={(itemId) => setSelectedItemId(itemId)}
             onSubmitText={submitText}
             onCreateSibling={createSibling}
+            onCreateChild={createChildItem}
             onKeyboardCommand={runKeyboardCommand}
             onDelete={requestItemDelete}
             onKeyboardReorder={reorderFromDragHandleKeyboard}
