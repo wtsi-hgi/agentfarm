@@ -466,7 +466,7 @@ describe('outliner mutation Server Actions', () => {
       }
       if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
         return jsonResponse(
-          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
         )
       }
 
