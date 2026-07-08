@@ -306,9 +306,10 @@ export function OutlinerRow({
   function handleHandoffSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     event.stopPropagation()
+    const trimmedNote = handoffNote.trim()
     void run(() =>
       onSaveHandoff(item, {
-        blocked_note: handoffNote.trim() === '' ? null : handoffNote,
+        blocked_note: trimmedNote === '' ? null : trimmedNote,
         blocked_followup_date: handoffDate === '' ? null : handoffDate,
       })
     )
@@ -463,7 +464,7 @@ export function OutlinerRow({
                   <textarea
                     id={handoffNoteId}
                     aria-label="Hand-off note"
-                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-18 w-full resize-y rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring min-h-[4.5rem] w-full resize-y rounded-md border px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={pending}
                     onChange={(event) =>
                       setHandoffNote(event.currentTarget.value)

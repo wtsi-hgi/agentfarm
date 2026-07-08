@@ -183,6 +183,16 @@ function getOutlinerItemIds(container: ParentNode) {
   ).map((element) => element.dataset.outlinerItemId)
 }
 
+function getTextarea(container: ParentNode, ariaLabel: string) {
+  const textarea = container.querySelector(
+    `textarea[aria-label="${ariaLabel}"]`
+  )
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    throw new Error(`Missing textarea: ${ariaLabel}`)
+  }
+  return textarea
+}
+
 async function click(button: HTMLButtonElement) {
   await act(async () => {
     button.click()
@@ -202,6 +212,24 @@ async function setInputValue(input: HTMLInputElement, value: string) {
   await act(async () => {
     valueSetter.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
+}
+
+async function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing textarea value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(textarea, value)
+    textarea.dispatchEvent(
+      new Event('input', { bubbles: true, cancelable: true })
+    )
   })
   await flushReact()
 }
@@ -297,7 +325,7 @@ describe('outliner mutation Server Actions', () => {
       }
       if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
         return jsonResponse(
-          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
         )
       }
 
@@ -347,7 +375,7 @@ describe('outliner mutation Server Actions', () => {
       }
       if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
         return jsonResponse(
-          item({ id: 'handoff-row', title: 'Hand off work', ball: 'you' })
+          item({ id: 'handoff-row', title: 'Hand off work', ball: 'agent' })
         )
       }
 
@@ -367,6 +395,56 @@ describe('outliner mutation Server Actions', () => {
     await click(getButton(container, 'Show monitoring work'))
 
     expect(getOutlinerItemIds(container)).toEqual(['handoff-row'])
+  })
+
+  it('trims hand-off notes before saving the rendered editor payload', async () => {
+    const patchBodies: unknown[] = []
+    const fetch = vi.fn(async (url: URL | string, init?: RequestInit) => {
+      const pathname = new URL(url.toString()).pathname
+      const method = init?.method ?? 'GET'
+
+      if (method === 'PATCH' && pathname === '/api/v1/items/handoff-row') {
+        const body = requestBody(init)
+        patchBodies.push(body)
+        return jsonResponse(
+          item({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            ball: 'person',
+            blocked_note:
+              typeof body?.blocked_note === 'string' ? body.blocked_note : null,
+            blocked_followup_date: body?.blocked_followup_date ?? null,
+          })
+        )
+      }
+
+      return jsonResponse({ message: `Unexpected ${method} ${pathname}` })
+    })
+    vi.stubGlobal('fetch', fetch)
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          treeItem({
+            id: 'handoff-row',
+            title: 'Hand off work',
+            ball: 'person',
+          }),
+        ],
+        markers: [],
+        priorityItems: [],
+      })
+    )
+
+    const handoffNote = getTextarea(container, 'Hand-off note')
+    await setTextareaValue(handoffNote, '  Needs Alice  ')
+    await click(getButton(container, 'Save hand-off'))
+    await setTextareaValue(handoffNote, '   ')
+    await click(getButton(container, 'Save hand-off'))
+
+    expect(patchBodies).toEqual([
+      { blocked_note: 'Needs Alice', blocked_followup_date: null },
+      { blocked_note: null, blocked_followup_date: null },
+    ])
   })
 
   it('returns a monitoring leaf to Up Next immediately when handed back to you', async () => {
