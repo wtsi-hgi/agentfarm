@@ -64,6 +64,13 @@ const PROMPT_RESPONSE_AVAILABLE_ICON = (
   <MessagesSquare className="size-3.5" strokeWidth={2.75} aria-hidden="true" />
 )
 const DELETE_ICON = <Trash2 className="size-3.5" aria-hidden="true" />
+const HANDOFF_EDITOR_GAP = 4
+const HANDOFF_EDITOR_VIEWPORT_PADDING = 8
+
+type HandoffEditorPosition = {
+  left: number
+  top: number
+}
 
 type ReadinessChipStatus = Exclude<TreeItem['status'], 'rollup'>
 
@@ -91,6 +98,14 @@ function isFollowUpStatus(status: TreeItem['status']): boolean {
 
 function isTerminalStatus(status: TreeItem['status']): boolean {
   return status === 'done' || status === 'dropped'
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) {
+    return min
+  }
+
+  return Math.min(Math.max(value, min), max)
 }
 
 function chipStatus(
@@ -161,10 +176,16 @@ export function OutlinerRow({
   const [error, setError] = React.useState<string | null>(null)
   const pendingRef = React.useRef(false)
   const previousItemTitle = React.useRef(item.title)
+  const handoffTriggerRef = React.useRef<HTMLDivElement>(null)
+  const handoffEditorRef = React.useRef<HTMLFormElement>(null)
   const draftResetRequestId = draftResetRequest?.requestId
   const draftResetText = draftResetRequest?.text
   const handoffEditorId = React.useId()
   const handoffNoteId = React.useId()
+  const [handoffEditorPosition, setHandoffEditorPosition] =
+    React.useState<HandoffEditorPosition | null>(null)
+  const isLeaf = !hasChildren
+  const showHandoffEditor = isLeaf && item.ball === 'person'
 
   React.useEffect(() => {
     if (previousItemTitle.current === item.title) {
@@ -191,6 +212,89 @@ export function OutlinerRow({
     setHandoffNote(item.blocked_note ?? '')
     setHandoffDate(item.blocked_followup_date ?? '')
   }, [item.id, item.ball, item.blocked_note, item.blocked_followup_date])
+
+  const updateHandoffEditorPosition = React.useCallback(() => {
+    const trigger = handoffTriggerRef.current
+    const editor = handoffEditorRef.current
+
+    if (!trigger || !editor) {
+      return
+    }
+
+    const triggerRect = trigger.getBoundingClientRect()
+    const editorRect = editor.getBoundingClientRect()
+    const width = editorRect.width
+    const height = editorRect.height
+    const maxLeft = window.innerWidth - width - HANDOFF_EDITOR_VIEWPORT_PADDING
+    const maxTop = window.innerHeight - height - HANDOFF_EDITOR_VIEWPORT_PADDING
+    const preferredLeft = triggerRect.right - width
+    const belowTop = triggerRect.bottom + HANDOFF_EDITOR_GAP
+    const aboveTop = triggerRect.top - height - HANDOFF_EDITOR_GAP
+    const top =
+      belowTop + height >
+        window.innerHeight - HANDOFF_EDITOR_VIEWPORT_PADDING &&
+      aboveTop >= HANDOFF_EDITOR_VIEWPORT_PADDING
+        ? aboveTop
+        : clamp(belowTop, HANDOFF_EDITOR_VIEWPORT_PADDING, maxTop)
+    const nextPosition = {
+      left: clamp(preferredLeft, HANDOFF_EDITOR_VIEWPORT_PADDING, maxLeft),
+      top,
+    }
+
+    setHandoffEditorPosition((current) =>
+      current?.left === nextPosition.left && current.top === nextPosition.top
+        ? current
+        : nextPosition
+    )
+  }, [])
+
+  React.useLayoutEffect(() => {
+    if (!showHandoffEditor) {
+      setHandoffEditorPosition(null)
+      return
+    }
+
+    updateHandoffEditorPosition()
+  }, [showHandoffEditor, updateHandoffEditorPosition])
+
+  React.useLayoutEffect(() => {
+    if (!showHandoffEditor) {
+      return
+    }
+
+    let frameId: number | null = null
+    const scheduleUpdate = () => {
+      if (frameId !== null) {
+        return
+      }
+
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null
+        updateHandoffEditorPosition()
+      })
+    }
+
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(scheduleUpdate)
+    const editor = handoffEditorRef.current
+    if (editor) {
+      observer?.observe(editor)
+    }
+
+    window.addEventListener('resize', scheduleUpdate)
+    window.addEventListener('scroll', scheduleUpdate, true)
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      observer?.disconnect()
+      window.removeEventListener('resize', scheduleUpdate)
+      window.removeEventListener('scroll', scheduleUpdate, true)
+    }
+  }, [showHandoffEditor, updateHandoffEditorPosition])
 
   function currentDraftText() {
     return draft
@@ -324,10 +428,8 @@ export function OutlinerRow({
     item.status === 'ready' && item.resume && readinessStatus === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
-  const isLeaf = !hasChildren
   const showDoneCheckbox = item.parent_id !== null && isLeaf
   const showAddSibling = item.parent_id !== null
-  const showHandoffEditor = isLeaf && item.ball === 'person'
 
   return (
     <div
@@ -426,7 +528,7 @@ export function OutlinerRow({
 
       <div className="flex flex-wrap items-center justify-end gap-1">
         {isLeaf ? (
-          <div className="relative shrink-0">
+          <div ref={handoffTriggerRef} className="relative shrink-0">
             <Button
               type="button"
               variant="outline"
@@ -447,10 +549,16 @@ export function OutlinerRow({
             </Button>
             {showHandoffEditor ? (
               <form
+                ref={handoffEditorRef}
                 id={handoffEditorId}
                 role="group"
                 aria-label="Person hand-off editor"
-                className="bg-popover text-popover-foreground border-border absolute top-9 right-0 z-30 grid w-72 gap-3 rounded-md border p-3 text-sm shadow-lg"
+                className="bg-popover text-popover-foreground border-border fixed z-50 grid w-72 gap-3 rounded-md border p-3 text-sm shadow-lg"
+                style={{
+                  left: handoffEditorPosition?.left ?? 0,
+                  top: handoffEditorPosition?.top ?? 0,
+                  visibility: handoffEditorPosition ? 'visible' : 'hidden',
+                }}
                 onClick={(event) => event.stopPropagation()}
                 onSubmit={handleHandoffSubmit}
               >
