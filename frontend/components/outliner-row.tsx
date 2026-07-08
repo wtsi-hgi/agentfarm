@@ -111,7 +111,7 @@ type OutlinerRowProps = {
   onSelect: (itemId: string) => void
   onSubmitText: (item: TreeItem, text: string) => Promise<void>
   onCreateSibling: (item: TreeItem, text: string) => Promise<void>
-  onCreateChild: (item: TreeItem, text: string) => Promise<void>
+  onCreateChild?: (item: TreeItem, text: string) => Promise<void>
   onKeyboardCommand: (
     item: TreeItem,
     text: string,
@@ -208,6 +208,10 @@ export function OutlinerRow({
   }
 
   function createChild() {
+    if (!onCreateChild) {
+      return
+    }
+
     const draft = currentDraftText()
     void run(() => onCreateChild(item, draft))
   }
@@ -309,7 +313,10 @@ export function OutlinerRow({
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
   const showDoneCheckbox = editable && item.parent_id !== null && isLeaf
-  const showAddChild = editable && (item.parent_id === null || hasChildren)
+  const showAddChild =
+    editable &&
+    Boolean(onCreateChild) &&
+    (item.parent_id === null || hasChildren)
   const showAddSibling = editable && item.parent_id !== null && !showAddChild
 
   return (

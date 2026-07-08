@@ -448,6 +448,23 @@ describe('Outliner', () => {
     expect(itemStateSelect(document, 'container') !== null).toBe(false)
   })
 
+  it('does not render Add child for a direct row without a child-create handler', () => {
+    const document = renderedOutlinerRowDocument(
+      item({
+        id: 'root',
+        title: 'Root work',
+        parent_id: null,
+      }),
+      { hasChildren: true }
+    )
+
+    expect(
+      outlinerItem(document, 'root').querySelector(
+        'button[aria-label="Add child"]'
+      )
+    ).toBeNull()
+  })
+
   it('keeps the done checkbox and Phase select on leaf rows', () => {
     const document = renderedOutlinerRowDocument(
       item({
