@@ -16,7 +16,10 @@ import {
   ItemDialogHeading,
   type ItemDialogBreadcrumb,
 } from '@/components/item-dialog-heading'
-import { ITEM_DIALOG_HISTORY_CLASS } from '@/components/item-dialog-layout'
+import {
+  ITEM_DIALOG_HISTORY_CLASS,
+  useItemDialogPageScrollLock,
+} from '@/components/item-dialog-layout'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
@@ -65,6 +68,7 @@ export function ItemNotesDialog({
   const [error, setError] = React.useState<string | null>(null)
   const currentItemId = React.useRef<string | null>(itemId)
   currentItemId.current = itemId
+  useItemDialogPageScrollLock()
 
   const loadNotes = React.useCallback(async () => {
     const requestedItemId = itemId
