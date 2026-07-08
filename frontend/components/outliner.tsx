@@ -3,7 +3,13 @@
 import * as React from 'react'
 import dynamic from 'next/dynamic'
 import { flushSync } from 'react-dom'
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  MessagesSquare,
+  NotebookText,
+  Plus,
+} from 'lucide-react'
 
 import {
   addDependency,
@@ -435,7 +441,12 @@ type ManagerProjectionRowProps = {
   selected?: boolean
   onToggle: (itemId: string) => void
   onSelect: (itemId: string) => void
+  onOpenNotes: (item: TreeItem) => void
+  onOpenPromptTimeline: (item: TreeItem) => void
 }
+
+const AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS =
+  'bg-violet-500/10 text-violet-700 hover:bg-violet-500/15 dark:text-violet-300 dark:hover:bg-violet-500/20'
 
 function managerLeafStatusLabel(status: ItemStatus): string {
   return status === 'rollup' ? 'Roll-up' : MANAGER_STATUS_LABELS[status]
@@ -449,11 +460,15 @@ function ManagerProjectionRow({
   selected = false,
   onToggle,
   onSelect,
+  onOpenNotes,
+  onOpenPromptTimeline,
 }: ManagerProjectionRowProps) {
   const rollup = item.rollup
   const terminal = item.status === 'done' || item.status === 'dropped'
   const leafPhaseLabel = terminal ? null : PHASE_LABELS[item.state]
   const rollupPhaseLabel = rollup?.phase ? PHASE_LABELS[rollup.phase] : null
+  const hasNotes = item.has_notes
+  const hasPromptResponseEntries = item.has_prompt_response_entries
 
   return (
     <div
@@ -527,6 +542,56 @@ function ManagerProjectionRow({
               ) : null}
             </>
           )}
+          {hasNotes ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'size-7 shrink-0 transition-colors',
+                AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS
+              )}
+              aria-label="Open notes"
+              aria-description="Notes available"
+              data-available="true"
+              title="Notes available"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenNotes(item)
+              }}
+            >
+              <NotebookText
+                className="size-3.5"
+                strokeWidth={2.75}
+                aria-hidden="true"
+              />
+            </Button>
+          ) : null}
+          {hasPromptResponseEntries ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                'size-7 shrink-0 transition-colors',
+                AVAILABLE_MANAGER_ENTRY_BUTTON_CLASS
+              )}
+              aria-label="Open prompt/response timeline"
+              aria-description="Prompt/response entries available"
+              data-available="true"
+              title="Prompt/response entries available"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenPromptTimeline(item)
+              }}
+            >
+              <MessagesSquare
+                className="size-3.5"
+                strokeWidth={2.75}
+                aria-hidden="true"
+              />
+            </Button>
+          ) : null}
         </div>
         {rollup ? (
           <div className="flex flex-wrap items-center gap-1 text-xs">
@@ -3803,6 +3868,8 @@ export function Outliner({
             selected={selectedItemId === item.id}
             onToggle={toggle}
             onSelect={(itemId) => setSelectedItemId(itemId)}
+            onOpenNotes={openNotes}
+            onOpenPromptTimeline={openPromptTimeline}
           />
           {filteredOutNewlyAdded ? (
             <div
