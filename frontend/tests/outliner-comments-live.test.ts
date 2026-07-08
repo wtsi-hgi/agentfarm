@@ -848,6 +848,64 @@ describe('Outliner comment target lifecycle', () => {
     expect(docsCheckbox.checked).toBe(true)
   })
 
+  it('disables every ship milestone checkbox while a milestone save is pending', async () => {
+    let resolvePatch: (value: TreeItem) => void = () => {}
+    actionMocks.patchItem.mockImplementation(
+      () =>
+        new Promise<TreeItem>((resolve) => {
+          resolvePatch = resolve
+        })
+    )
+
+    const container = await render(
+      React.createElement(Outliner, {
+        items: [
+          item({
+            id: 'root',
+            title: 'Root project',
+            docs_updated: false,
+          }),
+        ],
+      })
+    )
+
+    const shipSection = getSection(
+      getDetailsPanel(container),
+      'Ship milestones'
+    )
+    const docsCheckbox = getInput(shipSection, 'Docs updated')
+    const prodCheckbox = getInput(shipSection, 'Prod updated')
+
+    await click(docsCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+    expect(shipSection.textContent).toContain('Saving')
+    expect(getInput(shipSection, 'Dev updated').disabled).toBe(true)
+    expect(prodCheckbox.disabled).toBe(true)
+    expect(docsCheckbox.disabled).toBe(true)
+    expect(getInput(shipSection, 'Announced').disabled).toBe(true)
+
+    await click(prodCheckbox)
+
+    expect(actionMocks.patchItem).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolvePatch(
+        item({
+          id: 'root',
+          title: 'Root project',
+          docs_updated: true,
+        })
+      )
+    })
+    await flushReact()
+
+    expect(getInput(shipSection, 'Dev updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Prod updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Docs updated').disabled).toBe(false)
+    expect(getInput(shipSection, 'Announced').disabled).toBe(false)
+  })
+
   it('refreshes container ship rollups after a leaf milestone save', async () => {
     const child = item({
       id: 'child',

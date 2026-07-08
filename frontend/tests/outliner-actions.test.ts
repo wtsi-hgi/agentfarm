@@ -136,6 +136,30 @@ function expectedAuthHeaders(count: number) {
 }
 
 let roots: Root[] = []
+const hasNativeScrollIntoView = 'scrollIntoView' in Element.prototype
+
+function ensureScrollIntoViewExists() {
+  if (hasNativeScrollIntoView) {
+    return
+  }
+
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: () => undefined,
+  })
+}
+
+function removeScrollIntoViewPlaceholder() {
+  if (hasNativeScrollIntoView) {
+    return
+  }
+
+  delete (
+    Element.prototype as Element & {
+      scrollIntoView?: Element['scrollIntoView']
+    }
+  ).scrollIntoView
+}
 
 async function flushReact() {
   await act(async () => {
@@ -259,17 +283,16 @@ async function submitItemText(
 
 describe('outliner mutation Server Actions', () => {
   beforeEach(() => {
-    ;(
-      globalThis as typeof globalThis & {
-        IS_REACT_ACT_ENVIRONMENT?: boolean
-      }
-    ).IS_REACT_ACT_ENVIRONMENT = true
-    window.requestAnimationFrame = (callback) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0)
       return 1
-    }
-    window.cancelAnimationFrame = vi.fn()
-    Element.prototype.scrollIntoView = vi.fn()
+    })
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    ensureScrollIntoViewExists()
+    vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(
+      () => undefined
+    )
     sessionMocks.readSessionIdentity.mockResolvedValue({
       username: 'alice',
       role: 'owner',
@@ -284,6 +307,8 @@ describe('outliner mutation Server Actions', () => {
     roots = []
     document.body.replaceChildren()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    removeScrollIntoViewPlaceholder()
     vi.clearAllMocks()
   })
 

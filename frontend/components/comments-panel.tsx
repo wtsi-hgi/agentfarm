@@ -1082,7 +1082,7 @@ export function CommentsPanel({
                         type="checkbox"
                         aria-label={label}
                         checked={currentShipMilestones[key]}
-                        disabled={savingShipMilestone === key}
+                        disabled={savingShipMilestone !== null}
                         onChange={(event) =>
                           void updateShipMilestone(
                             key,
