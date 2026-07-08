@@ -50,6 +50,7 @@ export type CommentsPanelProps = {
   className?: string
   coordinateDependencyDropActive?: boolean
   draggingItemId?: string | null
+  editable?: boolean
   onAddDependency?: (fromId: string, toId: string) => Promise<void>
   onItemPatched?: (item: Item) => void
   onRemoveDependency?: (dependencyId: string) => Promise<void>
@@ -223,6 +224,7 @@ export function CommentsPanel({
   className,
   coordinateDependencyDropActive = false,
   draggingItemId = null,
+  editable = true,
   onAddDependency,
   onItemPatched,
   onRemoveDependency,
@@ -246,18 +248,27 @@ export function CommentsPanel({
   )
   const [editingHandoff, setEditingHandoff] = React.useState(
     () =>
+      editable &&
       item?.ball === 'person' &&
       !item.blocked_note &&
       !item.blocked_followup_date
   )
   const [editingRepoUrl, setEditingRepoUrl] = React.useState(() =>
-    Boolean(item && item.parent_id === null && !item.repo_url?.trim())
+    Boolean(
+      editable && item && item.parent_id === null && !item.repo_url?.trim()
+    )
   )
   const [editingDescription, setEditingDescription] = React.useState(
-    () => Boolean(item) && (item?.description ?? '').trim().length === 0
+    () =>
+      Boolean(editable && item) && (item?.description ?? '').trim().length === 0
   )
   const [editingUsage, setEditingUsage] = React.useState(() =>
-    Boolean(item && item.parent_id === null && item.usage.trim().length === 0)
+    Boolean(
+      editable &&
+      item &&
+      item.parent_id === null &&
+      item.usage.trim().length === 0
+    )
   )
   const [editingDependencies, setEditingDependencies] = React.useState(false)
   const [dependencyTargetId, setDependencyTargetId] = React.useState('')
@@ -372,13 +383,18 @@ export function CommentsPanel({
     setRepoDraft(currentRepoUrl ?? '')
     setUsageDraft(currentUsage)
     setEditingRepoUrl(
-      Boolean(hasSelectedItem && isRootItem && !currentRepoValue)
+      Boolean(editable && hasSelectedItem && isRootItem && !currentRepoValue)
     )
     setEditingDescription(
-      hasSelectedItem && currentDescription.trim().length === 0
+      editable && hasSelectedItem && currentDescription.trim().length === 0
     )
     setEditingUsage(
-      Boolean(hasSelectedItem && isRootItem && currentUsage.trim().length === 0)
+      Boolean(
+        editable &&
+        hasSelectedItem &&
+        isRootItem &&
+        currentUsage.trim().length === 0
+      )
     )
     setHandoffNoteDraft(
       item?.ball === 'person' ? (item.blocked_note ?? '') : ''
@@ -387,7 +403,8 @@ export function CommentsPanel({
       item?.ball === 'person' ? (item.blocked_followup_date ?? '') : ''
     )
     setEditingHandoff(
-      item?.ball === 'person' &&
+      editable &&
+        item?.ball === 'person' &&
         !item.blocked_note &&
         !item.blocked_followup_date
     )
@@ -405,6 +422,7 @@ export function CommentsPanel({
     currentRepoUrl,
     currentRepoValue,
     currentUsage,
+    editable,
     isRootItem,
     item,
     itemId,
@@ -417,13 +435,32 @@ export function CommentsPanel({
       setEditingHandoff(false)
       return
     }
-    setEditingHandoff(!hasSavedHandoffDetails)
+    setEditingHandoff(editable && !hasSavedHandoffDetails)
   }, [
     currentHandoffDate,
     currentHandoffNote,
+    editable,
     hasSavedHandoffDetails,
     isPersonHandoff,
   ])
+
+  React.useEffect(() => {
+    if (editable) {
+      return
+    }
+
+    setEditingDescription(false)
+    setEditingRepoUrl(false)
+    setEditingUsage(false)
+    setEditingHandoff(false)
+    setEditingDependencies(false)
+    setEditingId(null)
+    setEditingBody('')
+    setDependencyTargetId('')
+    setDependencyDropActive(false)
+    setPendingDeleteComment(null)
+    setPendingRemoveDependency(null)
+  }, [editable])
 
   const loadComments = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -496,7 +533,7 @@ export function CommentsPanel({
   }, [activityRefreshKey, loadActivity])
 
   function beginDetailEdit(field: DetailField) {
-    if (!item) {
+    if (!editable || !item) {
       return
     }
 
@@ -553,7 +590,13 @@ export function CommentsPanel({
   }
 
   function canAddDependencyTarget(targetId: string): boolean {
-    if (!item || !targetId || targetId === item.id || savingDependency) {
+    if (
+      !editable ||
+      !item ||
+      !targetId ||
+      targetId === item.id ||
+      savingDependency
+    ) {
       return false
     }
 
@@ -562,7 +605,12 @@ export function CommentsPanel({
   }
 
   async function addDependencyTarget(targetId: string) {
-    if (!item || !onAddDependency || !canAddDependencyTarget(targetId)) {
+    if (
+      !editable ||
+      !item ||
+      !onAddDependency ||
+      !canAddDependencyTarget(targetId)
+    ) {
       return
     }
 
@@ -587,7 +635,7 @@ export function CommentsPanel({
   }
 
   async function removeDependency(dependencyId: string) {
-    if (!item || !onRemoveDependency) {
+    if (!editable || !item || !onRemoveDependency) {
       return
     }
 
@@ -629,7 +677,7 @@ export function CommentsPanel({
     label: string
     slug: string
   }) {
-    if (!item || !onRemoveDependency) {
+    if (!editable || !item || !onRemoveDependency) {
       return
     }
 
@@ -646,6 +694,10 @@ export function CommentsPanel({
   }
 
   function handleDependencyDragOver(event: React.DragEvent<HTMLElement>) {
+    if (!editable) {
+      return
+    }
+
     if (!canAddDependencyTarget(draggedDependencyTargetId(event))) {
       return
     }
@@ -657,6 +709,10 @@ export function CommentsPanel({
 
   function handleDependencyDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault()
+    if (!editable) {
+      return
+    }
+
     const targetId = draggedDependencyTargetId(event)
     setDependencyDropActive(false)
     if (canAddDependencyTarget(targetId)) {
@@ -677,7 +733,7 @@ export function CommentsPanel({
   }
 
   async function saveDetailField(field: DetailField) {
-    if (!itemId || !item || !isDetailFieldDirty(field)) {
+    if (!editable || !itemId || !item || !isDetailFieldDirty(field)) {
       return
     }
 
@@ -732,7 +788,7 @@ export function CommentsPanel({
   }
 
   async function updateHandoffBall(ball: Ball) {
-    if (!itemId || !item || ball === item.ball || savingHandoff) {
+    if (!editable || !itemId || !item || ball === item.ball || savingHandoff) {
       return
     }
 
@@ -769,7 +825,7 @@ export function CommentsPanel({
 
   async function saveHandoffDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!itemId || !item || !isPersonHandoff || savingHandoff) {
+    if (!editable || !itemId || !item || !isPersonHandoff || savingHandoff) {
       return
     }
 
@@ -805,7 +861,7 @@ export function CommentsPanel({
     milestone: ShipMilestoneKey,
     checked: boolean
   ) {
-    if (!itemId || !item || isContainerItem) {
+    if (!editable || !itemId || !item || isContainerItem) {
       return
     }
 
@@ -846,7 +902,7 @@ export function CommentsPanel({
 
   async function addCurrentComment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!itemId || !draft.trim()) {
+    if (!editable || !itemId || !draft.trim()) {
       return
     }
 
@@ -867,7 +923,7 @@ export function CommentsPanel({
   }
 
   async function saveComment(commentId: string) {
-    if (!editingBody.trim()) {
+    if (!editable || !editingBody.trim()) {
       return
     }
 
@@ -883,6 +939,10 @@ export function CommentsPanel({
   }
 
   async function removeComment(commentId: string) {
+    if (!editable) {
+      return
+    }
+
     setError(null)
     await deleteComment(commentId)
     await loadComments()
@@ -931,6 +991,10 @@ export function CommentsPanel({
     saveLabel: string
     cancelLabel: string
   }) {
+    if (!editable) {
+      return null
+    }
+
     if (editing) {
       return (
         <div className="flex shrink-0 items-center gap-1">
@@ -959,6 +1023,10 @@ export function CommentsPanel({
   }
 
   function renderDependencyDropTarget(compact = false) {
+    if (!editable) {
+      return null
+    }
+
     const dependencyDropTargetActive =
       dependencyDropActive || coordinateDependencyDropActive
 
@@ -977,6 +1045,9 @@ export function CommentsPanel({
           (!item || savingDependency) && 'cursor-not-allowed opacity-60'
         )}
         onDragEnter={(event) => {
+          if (!editable) {
+            return
+          }
           if (canAddDependencyTarget(draggedDependencyTargetId(event))) {
             setDependencyDropActive(true)
           }
@@ -1005,7 +1076,7 @@ export function CommentsPanel({
   }
 
   function renderHandoffBallControls() {
-    if (!item) {
+    if (!editable || !item) {
       return null
     }
 
@@ -1133,17 +1204,19 @@ export function CommentsPanel({
               </div>
             ) : null}
           </div>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="size-7 shrink-0"
-            aria-label="Edit hand-off"
-            disabled={savingHandoff !== null}
-            onClick={() => setEditingHandoff(true)}
-          >
-            <Pencil className="size-3.5" aria-hidden="true" />
-          </Button>
+          {editable ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-7 shrink-0"
+              aria-label="Edit hand-off"
+              disabled={savingHandoff !== null}
+              onClick={() => setEditingHandoff(true)}
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+            </Button>
+          ) : null}
         </div>
       </div>
     )
@@ -1275,28 +1348,30 @@ export function CommentsPanel({
                 <GitBranch className="size-4 shrink-0" aria-hidden="true" />
                 <span className="truncate">Dependencies</span>
               </div>
-              <div className="flex min-w-0 items-center justify-end gap-1">
-                {dependencyTargets.length === 0
-                  ? renderDependencyDropTarget(true)
-                  : null}
-                {editingDependencies
-                  ? renderDetailControlButton({
-                      label: 'Done editing dependencies',
-                      disabled: !item || savingDependency,
-                      onClick: () => setEditingDependencies(false),
-                      children: (
-                        <Check className="size-3.5" aria-hidden="true" />
-                      ),
-                    })
-                  : renderDetailControlButton({
-                      label: 'Edit dependencies',
-                      disabled: !item || savingDependency,
-                      onClick: () => setEditingDependencies(true),
-                      children: (
-                        <Pencil className="size-3.5" aria-hidden="true" />
-                      ),
-                    })}
-              </div>
+              {editable ? (
+                <div className="flex min-w-0 items-center justify-end gap-1">
+                  {dependencyTargets.length === 0
+                    ? renderDependencyDropTarget(true)
+                    : null}
+                  {editingDependencies
+                    ? renderDetailControlButton({
+                        label: 'Done editing dependencies',
+                        disabled: !item || savingDependency,
+                        onClick: () => setEditingDependencies(false),
+                        children: (
+                          <Check className="size-3.5" aria-hidden="true" />
+                        ),
+                      })
+                    : renderDetailControlButton({
+                        label: 'Edit dependencies',
+                        disabled: !item || savingDependency,
+                        onClick: () => setEditingDependencies(true),
+                        children: (
+                          <Pencil className="size-3.5" aria-hidden="true" />
+                        ),
+                      })}
+                </div>
+              ) : null}
             </div>
             {dependencyTargets.length > 0 || editingDependencies ? (
               <div className="space-y-2">
@@ -1376,6 +1451,10 @@ export function CommentsPanel({
                   </div>
                 ) : null}
               </div>
+            ) : !editable ? (
+              <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
+                No explicit dependencies
+              </div>
             ) : null}
           </section>
           {renderHandoffSection()}
@@ -1415,7 +1494,7 @@ export function CommentsPanel({
                 <div className="text-muted-foreground border-border rounded-md border border-dashed p-3 text-sm">
                   No ship rollup
                 </div>
-              ) : (
+              ) : editable ? (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {SHIP_MILESTONES.map(({ key, label }) => (
                     <label
@@ -1439,6 +1518,22 @@ export function CommentsPanel({
                         {label}
                       </span>
                     </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {SHIP_MILESTONES.map(({ key, label }) => (
+                    <div
+                      key={key}
+                      className="border-border bg-muted/20 flex min-w-0 items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+                    >
+                      <span className="text-foreground min-w-0 truncate">
+                        {label}
+                      </span>
+                      <span className="text-muted-foreground shrink-0 text-xs">
+                        {currentShipMilestones[key] ? 'Done' : 'Open'}
+                      </span>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1568,63 +1663,65 @@ export function CommentsPanel({
                     {formatTimestamp(comment.created_at)}
                   </time>
                 </div>
-                <div className="flex items-center gap-1">
-                  {editingId === comment.id ? (
-                    <>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="size-7"
-                        aria-label="Save comment"
-                        onClick={() => void saveComment(comment.id)}
-                      >
-                        <Check className="size-3.5" aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="size-7"
-                        aria-label="Cancel comment edit"
-                        onClick={() => {
-                          setEditingId(null)
-                          setEditingBody('')
-                        }}
-                      >
-                        <X className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="size-7"
-                        aria-label="Edit comment"
-                        onClick={() => {
-                          setEditingId(comment.id)
-                          setEditingBody(comment.body)
-                        }}
-                      >
-                        <Pencil className="size-3.5" aria-hidden="true" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        className="size-7"
-                        aria-label="Delete comment"
-                        onClick={() => setPendingDeleteComment(comment)}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden="true" />
-                      </Button>
-                    </>
-                  )}
-                </div>
+                {editable ? (
+                  <div className="flex items-center gap-1">
+                    {editingId === comment.id ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          aria-label="Save comment"
+                          onClick={() => void saveComment(comment.id)}
+                        >
+                          <Check className="size-3.5" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          aria-label="Cancel comment edit"
+                          onClick={() => {
+                            setEditingId(null)
+                            setEditingBody('')
+                          }}
+                        >
+                          <X className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          aria-label="Edit comment"
+                          onClick={() => {
+                            setEditingId(comment.id)
+                            setEditingBody(comment.body)
+                          }}
+                        >
+                          <Pencil className="size-3.5" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-7"
+                          aria-label="Delete comment"
+                          onClick={() => setPendingDeleteComment(comment)}
+                        >
+                          <Trash2 className="size-3.5" aria-hidden="true" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
               </div>
-              {editingId === comment.id ? (
+              {editingId === comment.id && editable ? (
                 <Input
                   value={editingBody}
                   onChange={(event) => setEditingBody(event.target.value)}
@@ -1646,34 +1743,36 @@ export function CommentsPanel({
         </section>
       </div>
 
-      <form
-        className="mt-3 flex items-center gap-2"
-        onSubmit={addCurrentComment}
-      >
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          disabled={!item}
-          aria-label="New comment"
-          placeholder="Add comment"
-          className="h-8"
-        />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={!item || !draft.trim()}
-          aria-label="Add comment"
-          className="size-8"
+      {editable ? (
+        <form
+          className="mt-3 flex items-center gap-2"
+          onSubmit={addCurrentComment}
         >
-          <Send className="size-3.5" aria-hidden="true" />
-        </Button>
-      </form>
+          <Input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={!item}
+            aria-label="New comment"
+            placeholder="Add comment"
+            className="h-8"
+          />
+          <Button
+            type="submit"
+            size="icon"
+            disabled={!item || !draft.trim()}
+            aria-label="Add comment"
+            className="size-8"
+          >
+            <Send className="size-3.5" aria-hidden="true" />
+          </Button>
+        </form>
+      ) : null}
       {error ? (
         <div className="text-destructive mt-2 text-xs" role="alert">
           {error}
         </div>
       ) : null}
-      {pendingDeleteComment ? (
+      {editable && pendingDeleteComment ? (
         <DestructiveConfirmationDialog
           open
           title="Delete comment"
@@ -1694,7 +1793,7 @@ export function CommentsPanel({
           }}
         />
       ) : null}
-      {pendingRemoveDependency ? (
+      {editable && pendingRemoveDependency ? (
         <DestructiveConfirmationDialog
           open
           title="Remove dependency"

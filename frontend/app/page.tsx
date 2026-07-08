@@ -114,6 +114,7 @@ export default async function Home() {
           markers={markers}
           priorityItems={priorityItems}
           scratchpad={scratchpad}
+          editable={session?.role === 'owner'}
           scratchpadEditable={session?.role === 'owner'}
         />
       ) : (

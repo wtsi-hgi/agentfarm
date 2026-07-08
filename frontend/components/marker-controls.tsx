@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 type MarkerControlsProps = {
   initialMarkers?: readonly Marker[]
   onFilterChange: (itemIds: readonly string[] | null) => void
+  canCreateMarkers?: boolean
   refreshOnMount?: boolean
   className?: string
 }
@@ -34,6 +35,7 @@ function formatLocalDate(date: Date) {
 export function MarkerControls({
   initialMarkers = EMPTY_MARKERS,
   onFilterChange,
+  canCreateMarkers = true,
   refreshOnMount = true,
   className,
 }: MarkerControlsProps) {
@@ -74,7 +76,7 @@ export function MarkerControls({
 
   async function createNamedMarker(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!name.trim()) {
+    if (!canCreateMarkers || !name.trim()) {
       return
     }
 
@@ -128,38 +130,40 @@ export function MarkerControls({
       className={cn('flex flex-wrap items-center gap-1.5', className)}
       aria-label="Marker controls"
     >
-      <form
-        className="flex shrink-0 items-center gap-1.5"
-        onSubmit={createNamedMarker}
-      >
-        <Input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          aria-label="Marker name"
-          placeholder="Marker"
-          className="h-8 w-32"
-        />
-        <Button
-          type="button"
-          size="icon"
-          variant="outline"
-          className="size-8"
-          aria-label="Use today as marker name"
-          title="Use today"
-          onClick={() => setName(formatLocalDate(new Date()))}
+      {canCreateMarkers ? (
+        <form
+          className="flex shrink-0 items-center gap-1.5"
+          onSubmit={createNamedMarker}
         >
-          <Calendar className="size-3.5" aria-hidden="true" />
-        </Button>
-        <Button
-          type="submit"
-          size="icon"
-          className="size-8"
-          aria-label="Create marker"
-          disabled={!name.trim()}
-        >
-          <Flag className="size-3.5" aria-hidden="true" />
-        </Button>
-      </form>
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            aria-label="Marker name"
+            placeholder="Marker"
+            className="h-8 w-32"
+          />
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="size-8"
+            aria-label="Use today as marker name"
+            title="Use today"
+            onClick={() => setName(formatLocalDate(new Date()))}
+          >
+            <Calendar className="size-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            type="submit"
+            size="icon"
+            className="size-8"
+            aria-label="Create marker"
+            disabled={!name.trim()}
+          >
+            <Flag className="size-3.5" aria-hidden="true" />
+          </Button>
+        </form>
+      ) : null}
 
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <select

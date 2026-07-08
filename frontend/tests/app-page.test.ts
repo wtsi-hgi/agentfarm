@@ -289,7 +289,54 @@ describe('app page BFF wiring', () => {
     expect(header?.textContent).toContain('Priority')
     expect(header?.querySelectorAll('dd')[0]?.textContent).toBe('1')
     expect(header?.querySelectorAll('dd')[1]?.textContent).toBe('1')
-    expect(itemInputValues(document)).toContain('Alpha')
+    expect(document.body.textContent).toContain('Alpha')
+    expect(itemInputValues(document)).toEqual([])
+    expect(document.querySelector('button[aria-label="Drag item"]')).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Delete item"]')
+    ).toBeNull()
+    expect(document.querySelector('select[aria-label="Item state"]')).toBeNull()
+    expect(
+      document.querySelector('input[aria-label="First root title"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Create root"]')
+    ).toBeNull()
+    expect(document.querySelector('input[aria-label="Marker name"]')).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Create marker"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('select[aria-label="Since marker"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Apply marker filter"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Open notes"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector(
+        'button[aria-label="Open prompt/response timeline"]'
+      )
+    ).not.toBeNull()
+    expect(
+      document.querySelector('aside[aria-label="Item details"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Edit description"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Save description"]')
+    ).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Edit dependencies"]')
+    ).toBeNull()
+    expect(document.querySelector('input[aria-label="New comment"]')).toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Add comment"]')
+    ).toBeNull()
+    expect(document.querySelector('input[aria-label="Dev updated"]')).toBeNull()
     expect(document.body.textContent).toContain('All products')
     expect(document.body.textContent).toContain('Scratch pad')
     expect(document.body.textContent).toContain('Read only')
@@ -348,7 +395,7 @@ describe('app page BFF wiring', () => {
     expect(
       document.querySelector('[data-outliner-item-id="section"]')
     ).not.toBeNull()
-    expect(itemInputValues(document)).toContain('Section')
+    expect(document.body.textContent).toContain('Section')
   })
 
   it('passes markers into the refreshed default tree projection', async () => {
@@ -421,6 +468,39 @@ describe('app page BFF wiring', () => {
     expect(account?.textContent).toContain('alice')
     expect(account?.textContent).toContain('Primary user')
     expect(account?.textContent).toContain('Sign out')
+    expect(itemInputValues(document)).toContain('Alpha')
+    expect(
+      document.querySelector('button[aria-label="Drag item"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Delete item"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('select[aria-label="Item state"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('input[aria-label="First root title"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Create root"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('input[aria-label="Marker name"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Create marker"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector(
+        'button[aria-label="Edit description"], button[aria-label="Save description"]'
+      )
+    ).not.toBeNull()
+    expect(
+      document.querySelector('button[aria-label="Edit dependencies"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('input[aria-label="New comment"]')
+    ).not.toBeNull()
   })
 
   it('renders the account utility from backend-verified session claims', async () => {

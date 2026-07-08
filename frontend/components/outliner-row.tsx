@@ -17,6 +17,7 @@ import type { Ball, Mode, State, TreeItem } from '@/lib/contracts'
 import type { RowKeyboardCommand } from '@/lib/outliner-mutations'
 import {
   BALL_LABELS,
+  PHASE_LABELS,
   STATE_OPTIONS,
   ballHandoffKey,
 } from '@/lib/state-metadata'
@@ -121,6 +122,7 @@ type OutlinerRowProps = {
   onOpenNotes: (item: TreeItem) => void
   onOpenPromptTimeline: (item: TreeItem) => void
   draftResetRequest?: { requestId: number; text: string } | null
+  editable?: boolean
 }
 
 export function OutlinerRow({
@@ -143,6 +145,7 @@ export function OutlinerRow({
   onOpenNotes,
   onOpenPromptTimeline,
   draftResetRequest,
+  editable = true,
 }: OutlinerRowProps) {
   const [draft, setDraft] = React.useState(item.title)
   const [pending, setPending] = React.useState(false)
@@ -219,6 +222,10 @@ export function OutlinerRow({
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!editable) {
+      return
+    }
+
     if (event.key === 'Enter') {
       event.preventDefault()
       submitCurrentText()
@@ -244,6 +251,10 @@ export function OutlinerRow({
   function handleDragHandleKeyDown(
     event: React.KeyboardEvent<HTMLButtonElement>
   ) {
+    if (!editable) {
+      return
+    }
+
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
       return
     }
@@ -288,8 +299,8 @@ export function OutlinerRow({
     item.status === 'ready' && item.resume && readinessStatus === 'ready'
   const hasNotes = item.has_notes
   const hasPromptResponseEntries = item.has_prompt_response_entries
-  const showDoneCheckbox = item.parent_id !== null && isLeaf
-  const showAddSibling = item.parent_id !== null
+  const showDoneCheckbox = editable && item.parent_id !== null && isLeaf
+  const showAddSibling = editable && item.parent_id !== null
 
   return (
     <div
@@ -305,20 +316,24 @@ export function OutlinerRow({
       data-mode={item.mode}
       onClick={() => onSelect(item.id)}
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
-        aria-label="Drag item"
-        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        title="Drag"
-        disabled={pending}
-        draggable={false}
-        onKeyDown={handleDragHandleKeyDown}
-      >
-        {DRAG_ICON}
-      </Button>
+      {editable ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground size-7 cursor-grab active:cursor-grabbing"
+          aria-label="Drag item"
+          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+          title="Drag"
+          disabled={pending}
+          draggable={false}
+          onKeyDown={handleDragHandleKeyDown}
+        >
+          {DRAG_ICON}
+        </Button>
+      ) : (
+        <span className="size-7" aria-hidden="true" />
+      )}
       <div className="flex size-8 items-center justify-center">
         {showDoneCheckbox ? (
           <input
@@ -354,14 +369,20 @@ export function OutlinerRow({
 
       <div className="min-w-0 space-y-1">
         <div className="flex min-w-0 items-center gap-1.5">
-          <Input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={pending}
-            aria-label="Item text"
-            className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
-          />
+          {editable ? (
+            <Input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={pending}
+              aria-label="Item text"
+              className="focus-visible:border-border focus-visible:ring-ring h-8 min-w-0 border-transparent bg-transparent px-2 font-medium shadow-none focus-visible:ring-1 focus-visible:ring-offset-0"
+            />
+          ) : (
+            <div className="flex min-h-8 min-w-0 flex-1 items-center px-2 font-medium">
+              <span className="truncate">{item.title}</span>
+            </div>
+          )}
           {showAddSibling ? (
             <Button
               type="button"
@@ -387,7 +408,7 @@ export function OutlinerRow({
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-1">
-        {isLeaf ? (
+        {isLeaf && editable ? (
           <Button
             type="button"
             variant="outline"
@@ -404,8 +425,18 @@ export function OutlinerRow({
           >
             ~{item.ball}
           </Button>
+        ) : isLeaf ? (
+          <span
+            aria-label={`Ball: ${BALL_LABELS[item.ball]}`}
+            className={cn(
+              'border-border bg-background/70 text-muted-foreground inline-flex h-8 shrink-0 items-center rounded-md border px-2 font-mono text-xs',
+              displayDone && 'bg-muted text-muted-foreground'
+            )}
+          >
+            ~{item.ball}
+          </span>
         ) : null}
-        {isLeaf ? (
+        {isLeaf && editable ? (
           <select
             aria-label="Item state"
             className={cn(
@@ -418,6 +449,16 @@ export function OutlinerRow({
           >
             {STATE_OPTION_ELEMENTS}
           </select>
+        ) : isLeaf ? (
+          <span
+            aria-label={`Phase: ${PHASE_LABELS[item.state]}`}
+            className={cn(
+              'border-border bg-background/70 text-muted-foreground inline-flex h-8 w-32 shrink-0 items-center rounded-md border px-2 text-xs font-medium',
+              displayDone && 'bg-muted text-muted-foreground'
+            )}
+          >
+            {PHASE_LABELS[item.state]}
+          </span>
         ) : null}
         <Button
           type="button"
@@ -469,18 +510,20 @@ export function OutlinerRow({
             ? PROMPT_RESPONSE_AVAILABLE_ICON
             : PROMPT_RESPONSE_ICON}
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Delete item"
-          title="Delete"
-          disabled={pending}
-          onClick={() => void run(() => onDelete(item))}
-        >
-          {DELETE_ICON}
-        </Button>
+        {editable ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            aria-label="Delete item"
+            title="Delete"
+            disabled={pending}
+            onClick={() => void run(() => onDelete(item))}
+          >
+            {DELETE_ICON}
+          </Button>
+        ) : null}
         <span
           aria-label="Item readiness"
           className={cn(
