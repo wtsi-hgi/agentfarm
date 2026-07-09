@@ -161,6 +161,30 @@ function scheduleIdleCallback(callback: () => void): () => void {
   }
 }
 
+function clampScrollTop(value: number, maxScrollTop: number) {
+  return Math.min(maxScrollTop, Math.max(0, value))
+}
+
+function scrollDetailsAreaByWheel(
+  scrollArea: HTMLElement | null,
+  deltaY: number
+) {
+  if (!scrollArea || deltaY === 0) {
+    return false
+  }
+
+  const maxScrollTop = scrollArea.scrollHeight - scrollArea.clientHeight
+  if (maxScrollTop <= 0) {
+    return false
+  }
+
+  scrollArea.scrollTop = clampScrollTop(
+    scrollArea.scrollTop + deltaY,
+    maxScrollTop
+  )
+  return true
+}
+
 function formatTimestamp(timestamp: string) {
   const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(timestamp)
   if (!match) {
@@ -318,6 +342,8 @@ export function CommentsPanel({
   )
   const firstCommentsLoad = React.useRef(true)
   const firstActivityLoad = React.useRef(true)
+  const detailsPanelRef = React.useRef<HTMLElement | null>(null)
+  const detailsScrollAreaRef = React.useRef<HTMLDivElement | null>(null)
   currentItemId.current = itemId
 
   const detailOverride = itemId ? detailOverrides.get(itemId) : undefined
@@ -461,6 +487,34 @@ export function CommentsPanel({
     setPendingDeleteComment(null)
     setPendingRemoveDependency(null)
   }, [editable])
+
+  React.useEffect(() => {
+    const detailsPanel = detailsPanelRef.current
+    if (!detailsPanel) {
+      return
+    }
+
+    function handleDetailsWheel(event: WheelEvent) {
+      if (
+        !scrollDetailsAreaByWheel(detailsScrollAreaRef.current, event.deltaY)
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    detailsPanel.addEventListener('wheel', handleDetailsWheel, {
+      capture: true,
+      passive: false,
+    })
+    return () => {
+      detailsPanel.removeEventListener('wheel', handleDetailsWheel, {
+        capture: true,
+      })
+    }
+  }, [])
 
   const loadComments = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -1276,6 +1330,7 @@ export function CommentsPanel({
 
   return (
     <aside
+      ref={detailsPanelRef}
       className={cn(
         'border-border focus-within:ring-ring/30 flex min-h-0 scroll-mt-4 flex-col rounded-sm border-l pl-4 focus-within:ring-2 focus-within:ring-offset-2',
         className
@@ -1297,7 +1352,10 @@ export function CommentsPanel({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+      <div
+        ref={detailsScrollAreaRef}
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1"
+      >
         <div className="space-y-3">
           {isRootItem ? (
             <section className="space-y-2" aria-label="Repository">
