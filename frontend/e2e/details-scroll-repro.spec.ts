@@ -41,6 +41,9 @@ const viewport = { width: 1280, height: 720 }
 type SeededItem = Awaited<ReturnType<typeof createItem>>
 
 type ItemDetailsPatch = {
+  ball?: 'you' | 'agent' | 'person'
+  blocked_followup_date?: string | null
+  blocked_note?: string | null
   description?: string
   repo_url?: string | null
   usage?: string
@@ -63,6 +66,14 @@ type DetailsWheelSnapshot = {
   detailsScrollTop: number
   scrollY: number
   visibleRowTitles: string[]
+}
+
+type DetailsTextareaWheelSnapshot = {
+  detailsMaxScrollTop: number
+  detailsScrollTop: number
+  scrollY: number
+  textareaMaxScrollTop: number
+  textareaScrollTop: number
 }
 
 type DetailsBottomSnapshot = {
@@ -181,6 +192,53 @@ async function detailsWheelSnapshot(page: Page): Promise<DetailsWheelSnapshot> {
   })
 }
 
+async function handoffTextareaWheelSnapshot(
+  page: Page
+): Promise<DetailsTextareaWheelSnapshot> {
+  return page.evaluate(() => {
+    const details = document.querySelector<HTMLElement>(
+      'aside[aria-label="Item details"]'
+    )
+    if (!details) {
+      throw new Error('Expected Details panel to be rendered')
+    }
+
+    const scrollable = Array.from(details.children).find((child) => {
+      const element = child as HTMLElement
+      const style = getComputedStyle(element)
+      return (
+        style.overflowY === 'auto' &&
+        element.scrollHeight > element.clientHeight
+      )
+    }) as HTMLElement | undefined
+
+    if (!scrollable) {
+      throw new Error('Expected Details panel to have internal scrollable area')
+    }
+
+    const textarea = details.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Hand-off note"]'
+    )
+    if (!textarea) {
+      throw new Error('Expected hand-off note textarea to be rendered')
+    }
+
+    return {
+      detailsMaxScrollTop: Math.max(
+        0,
+        scrollable.scrollHeight - scrollable.clientHeight
+      ),
+      detailsScrollTop: scrollable.scrollTop,
+      scrollY: window.scrollY,
+      textareaMaxScrollTop: Math.max(
+        0,
+        textarea.scrollHeight - textarea.clientHeight
+      ),
+      textareaScrollTop: textarea.scrollTop,
+    }
+  })
+}
+
 async function captureDetailsWheelEvidence(
   testInfo: TestInfo,
   page: Page,
@@ -206,6 +264,19 @@ async function wheelOverDetailsHeader(page: Page) {
 
   await page.mouse.move(box!.x + box!.width / 2, box!.y + 24)
   await page.mouse.wheel(0, 900)
+}
+
+async function hoverHandoffNoteTextarea(page: Page) {
+  const detailsPanel = page.getByRole('complementary', {
+    name: 'Item details',
+  })
+  const textarea = detailsPanel.getByRole('textbox', { name: 'Hand-off note' })
+  await textarea.hover()
+}
+
+async function wheelOverHandoffNoteTextarea(page: Page) {
+  await hoverHandoffNoteTextarea(page)
+  await page.mouse.wheel(0, 480)
 }
 
 async function wheelVisibleDetailsTowardBottom(page: Page) {
@@ -493,6 +564,120 @@ test.describe('details panel scroll reproduction', () => {
           before
         )}, after=${JSON.stringify(after)}`
       ).toBeGreaterThan(before.detailsScrollTop)
+    } finally {
+      await deleteBackendItems(
+        request,
+        sessionToken,
+        seededItems.map((item) => item.id)
+      )
+    }
+  })
+
+  test('lets long editable hand-off notes consume wheel scrolling', async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize(viewport)
+    const sessionToken = await signInAs(page)
+    const titlePrefix = `Details textarea wheel ${Date.now()}`
+    const seededItems: SeededItem[] = []
+
+    try {
+      const selectedItem = await createItem(
+        request,
+        sessionToken,
+        `${titlePrefix} selected root`,
+        { ball: 'person' }
+      )
+      seededItems.push(selectedItem)
+      await patchItemDetails(request, sessionToken, selectedItem.id, {
+        blocked_followup_date: '2026-07-10',
+        blocked_note: longDetailsMarkdown('Hand-off note'),
+        description: longDetailsMarkdown('Description'),
+        repo_url: 'https://example.test/details-textarea-wheel-repro',
+        usage: longDetailsMarkdown('Usage'),
+      })
+
+      for (let index = 1; index <= 52; index += 1) {
+        seededItems.push(
+          await createItem(
+            request,
+            sessionToken,
+            `${titlePrefix} filler ${String(index).padStart(2, '0')}`
+          )
+        )
+      }
+
+      await gotoPath(page, '/')
+
+      const selectedRow = page.locator(
+        `[data-outliner-item-id="${selectedItem.id}"]`
+      )
+      await expect(
+        selectedRow.getByRole('textbox', { name: 'Item text' })
+      ).toHaveValue(selectedItem.title)
+      await selectedRow.getByRole('textbox', { name: 'Item text' }).click()
+
+      const detailsPanel = page.getByRole('complementary', {
+        name: 'Item details',
+      })
+      await expect(detailsPanel).toContainText(selectedItem.title)
+      await expect(detailsPanel.getByText('Loading')).toHaveCount(0)
+      await detailsPanel.getByRole('button', { name: 'Edit hand-off' }).click()
+
+      const handoffTextarea = detailsPanel.getByRole('textbox', {
+        name: 'Hand-off note',
+      })
+      await expect(handoffTextarea).toHaveValue(/Hand-off note line 72/)
+      await handoffTextarea.click()
+
+      await page.evaluate(() => {
+        window.scrollTo(0, 0)
+        document
+          .querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="Hand-off note"]'
+          )
+          ?.scrollTo(0, 0)
+      })
+      await hoverHandoffNoteTextarea(page)
+
+      const before = await handoffTextareaWheelSnapshot(page)
+      expect(before.scrollY).toBe(0)
+      expect(
+        before.detailsMaxScrollTop,
+        `Repro needs the outer Details area to be scrollable: ${JSON.stringify(
+          before
+        )}`
+      ).toBeGreaterThan(0)
+      expect(
+        before.textareaMaxScrollTop,
+        `Repro needs the hand-off textarea to be scrollable: ${JSON.stringify(
+          before
+        )}`
+      ).toBeGreaterThan(0)
+
+      await wheelOverHandoffNoteTextarea(page)
+      await page.waitForTimeout(100)
+
+      const after = await handoffTextareaWheelSnapshot(page)
+      expect(
+        after.textareaScrollTop,
+        `Wheel over an editable hand-off note should scroll the textarea itself: before=${JSON.stringify(
+          before
+        )}, after=${JSON.stringify(after)}`
+      ).toBeGreaterThan(before.textareaScrollTop)
+      expect(
+        after.detailsScrollTop,
+        `Wheel over a scrollable textarea should not move the outer Details area: before=${JSON.stringify(
+          before
+        )}, after=${JSON.stringify(after)}`
+      ).toBe(before.detailsScrollTop)
+      expect(
+        after.scrollY,
+        `Wheel over a scrollable textarea should not move the page: before=${JSON.stringify(
+          before
+        )}, after=${JSON.stringify(after)}`
+      ).toBe(before.scrollY)
     } finally {
       await deleteBackendItems(
         request,

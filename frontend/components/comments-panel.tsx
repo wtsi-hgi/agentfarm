@@ -168,6 +168,58 @@ function clampScrollTop(value: number, maxScrollTop: number) {
   return Math.min(maxScrollTop, Math.max(0, value))
 }
 
+function canElementScrollByWheel(element: HTMLElement, deltaY: number) {
+  const overflowY = window.getComputedStyle(element).overflowY
+  if (!['auto', 'overlay', 'scroll'].includes(overflowY)) {
+    return false
+  }
+
+  const maxScrollTop = element.scrollHeight - element.clientHeight
+  if (maxScrollTop <= 0) {
+    return false
+  }
+
+  if (deltaY > 0) {
+    return element.scrollTop < maxScrollTop
+  }
+  if (deltaY < 0) {
+    return element.scrollTop > 0
+  }
+  return false
+}
+
+function targetCanScrollWithinDetailsArea(
+  target: EventTarget | null,
+  scrollArea: HTMLElement | null,
+  deltaY: number
+) {
+  if (!scrollArea || deltaY === 0 || !(target instanceof Node)) {
+    return false
+  }
+
+  if (!scrollArea.contains(target)) {
+    return false
+  }
+
+  let current: Node | null = target
+  while (current) {
+    if (
+      current instanceof HTMLElement &&
+      canElementScrollByWheel(current, deltaY)
+    ) {
+      return true
+    }
+
+    if (current === scrollArea) {
+      return false
+    }
+
+    current = current.parentNode
+  }
+
+  return false
+}
+
 function scrollDetailsAreaByWheel(
   scrollArea: HTMLElement | null,
   deltaY: number
@@ -590,8 +642,14 @@ export function CommentsPanel({
     }
 
     function handleDetailsWheel(event: WheelEvent) {
+      const detailsScrollArea = detailsScrollAreaRef.current
       if (
-        !scrollDetailsAreaByWheel(detailsScrollAreaRef.current, event.deltaY)
+        targetCanScrollWithinDetailsArea(
+          event.target,
+          detailsScrollArea,
+          event.deltaY
+        ) ||
+        !scrollDetailsAreaByWheel(detailsScrollArea, event.deltaY)
       ) {
         return
       }
