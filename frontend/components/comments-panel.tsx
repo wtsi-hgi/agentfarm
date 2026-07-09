@@ -77,6 +77,9 @@ const HANDOFF_STATUS_LABELS = {
   person: 'Waiting on person',
 } satisfies Record<Ball, string>
 
+const DETAILS_STICKY_MEDIA_QUERY = '(min-width: 1024px)'
+const DETAILS_STICKY_EDGE_GAP_PX = 16
+
 type PendingDependencyRemoval = {
   dependencyId: string
   label: string
@@ -183,6 +186,24 @@ function scrollDetailsAreaByWheel(
     maxScrollTop
   )
   return true
+}
+
+function visibleDetailsMaxHeight(detailsPanel: HTMLElement) {
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  const panelTop = Math.max(
+    detailsPanel.getBoundingClientRect().top,
+    DETAILS_STICKY_EDGE_GAP_PX
+  )
+  return Math.max(0, viewportHeight - panelTop - DETAILS_STICKY_EDGE_GAP_PX)
+}
+
+function shouldCapDetailsToVisibleViewport(detailsPanel: HTMLElement) {
+  const itemColumn = detailsPanel.previousElementSibling
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  return (
+    itemColumn instanceof HTMLElement &&
+    itemColumn.scrollHeight > viewportHeight
+  )
 }
 
 function formatTimestamp(timestamp: string) {
@@ -487,6 +508,80 @@ export function CommentsPanel({
     setPendingDeleteComment(null)
     setPendingRemoveDependency(null)
   }, [editable])
+
+  React.useLayoutEffect(() => {
+    const detailsPanel = detailsPanelRef.current
+    if (!detailsPanel) {
+      return
+    }
+    if (typeof window.matchMedia !== 'function') {
+      return
+    }
+
+    const stickyMedia = window.matchMedia(DETAILS_STICKY_MEDIA_QUERY)
+    const visualViewport = window.visualViewport
+    let frame: number | null = null
+
+    function applyMaxHeight() {
+      frame = null
+
+      if (
+        !stickyMedia.matches ||
+        !shouldCapDetailsToVisibleViewport(detailsPanel)
+      ) {
+        detailsPanel.style.removeProperty('max-height')
+        return
+      }
+
+      const nextMaxHeight = `${visibleDetailsMaxHeight(detailsPanel)}px`
+      if (detailsPanel.style.maxHeight !== nextMaxHeight) {
+        detailsPanel.style.maxHeight = nextMaxHeight
+      }
+    }
+
+    function scheduleMaxHeightUpdate() {
+      if (frame !== null) {
+        return
+      }
+
+      frame = window.requestAnimationFrame(applyMaxHeight)
+    }
+
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(scheduleMaxHeightUpdate)
+      resizeObserver.observe(detailsPanel)
+      if (detailsPanel.parentElement) {
+        resizeObserver.observe(detailsPanel.parentElement)
+      }
+      if (detailsPanel.previousElementSibling) {
+        resizeObserver.observe(detailsPanel.previousElementSibling)
+      }
+      resizeObserver.observe(document.body)
+    }
+
+    applyMaxHeight()
+    window.addEventListener('scroll', scheduleMaxHeightUpdate, {
+      passive: true,
+    })
+    window.addEventListener('resize', scheduleMaxHeightUpdate)
+    visualViewport?.addEventListener('resize', scheduleMaxHeightUpdate)
+    visualViewport?.addEventListener('scroll', scheduleMaxHeightUpdate)
+    stickyMedia.addEventListener('change', scheduleMaxHeightUpdate)
+
+    return () => {
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame)
+      }
+      resizeObserver?.disconnect()
+      window.removeEventListener('scroll', scheduleMaxHeightUpdate)
+      window.removeEventListener('resize', scheduleMaxHeightUpdate)
+      visualViewport?.removeEventListener('resize', scheduleMaxHeightUpdate)
+      visualViewport?.removeEventListener('scroll', scheduleMaxHeightUpdate)
+      stickyMedia.removeEventListener('change', scheduleMaxHeightUpdate)
+      detailsPanel.style.removeProperty('max-height')
+    }
+  }, [])
 
   React.useEffect(() => {
     const detailsPanel = detailsPanelRef.current
