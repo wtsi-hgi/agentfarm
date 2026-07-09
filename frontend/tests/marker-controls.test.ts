@@ -66,11 +66,50 @@ function getSelect(container: ParentNode, ariaLabel: string) {
   return select
 }
 
+function getInput(container: ParentNode, ariaLabel: string) {
+  const input = container.querySelector(`input[aria-label="${ariaLabel}"]`)
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Missing input: ${ariaLabel}`)
+  }
+  return input
+}
+
+function getButton(container: ParentNode, ariaLabel: string) {
+  const button = container.querySelector(`button[aria-label="${ariaLabel}"]`)
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing button: ${ariaLabel}`)
+  }
+  return button
+}
+
 function selectOptions(select: HTMLSelectElement) {
   return Array.from(select.options).map((option) => ({
     label: option.textContent ?? '',
     value: option.value,
   }))
+}
+
+async function click(button: HTMLButtonElement) {
+  await act(async () => {
+    button.click()
+  })
+  await flushReact()
+}
+
+async function typeInto(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value'
+  )?.set
+  if (!valueSetter) {
+    throw new Error('Missing input value setter')
+  }
+
+  await act(async () => {
+    valueSetter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+  })
+  await flushReact()
 }
 
 function markerControls(
@@ -81,6 +120,7 @@ function markerControls(
 
 describe('MarkerControls', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     ;(
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean
@@ -124,5 +164,63 @@ describe('MarkerControls', () => {
         )
       )
     ).toBe(false)
+  })
+
+  it('creates markers from the default editable controls', async () => {
+    const createdMarker = {
+      id: 'marker-launch',
+      name: 'Launch',
+      at: '2026-06-30T00:00:00.000000Z',
+      created_at: '2026-06-30T00:00:00.000000Z',
+    } satisfies Marker
+    actionMocks.createMarker.mockResolvedValue(createdMarker)
+    const onFilterChange = vi.fn()
+
+    const container = await render(
+      React.createElement(MarkerControls, {
+        initialMarkers: [fetchedMarker],
+        onFilterChange,
+        refreshOnMount: false,
+      })
+    )
+
+    await typeInto(getInput(container, 'Marker name'), 'Launch')
+    await click(getButton(container, 'Create marker'))
+
+    expect(actionMocks.createMarker).toHaveBeenCalledWith({ name: 'Launch' })
+    expect(selectOptions(getSelect(container, 'Since marker'))).toEqual([
+      { label: 'Since', value: '' },
+      { label: 'Before', value: 'marker-before' },
+      { label: 'Launch', value: 'marker-launch' },
+    ])
+    expect(getSelect(container, 'Since marker').value).toBe('marker-launch')
+    expect(container.textContent).toContain('Launch marked')
+  })
+
+  it('hides marker creation in read-only controls while keeping marker filters', async () => {
+    const onFilterChange = vi.fn()
+
+    const container = await render(
+      React.createElement(MarkerControls, {
+        canCreateMarkers: false,
+        initialMarkers: [fetchedMarker],
+        onFilterChange,
+        refreshOnMount: false,
+      })
+    )
+
+    expect(
+      container.querySelector('input[aria-label="Marker name"]')
+    ).toBeNull()
+    expect(
+      container.querySelector('button[aria-label="Use today as marker name"]')
+    ).toBeNull()
+    expect(
+      container.querySelector('button[aria-label="Create marker"]')
+    ).toBeNull()
+    expect(getSelect(container, 'Since marker')).not.toBeNull()
+    expect(getSelect(container, 'Until marker')).not.toBeNull()
+    expect(getButton(container, 'Apply marker filter')).not.toBeNull()
+    expect(actionMocks.createMarker).not.toHaveBeenCalled()
   })
 })

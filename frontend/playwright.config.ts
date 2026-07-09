@@ -1,11 +1,14 @@
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 import { defineConfig } from '@playwright/test'
 
 import { resolveChromiumExecutablePath } from './lib/playwright-browser'
 
 const repoRoot = path.resolve(__dirname, '..')
-const runId = process.env.PLAYWRIGHT_RUN_ID?.trim() || 'local'
+const explicitRunId = process.env.PLAYWRIGHT_RUN_ID?.trim()
+const runId =
+  explicitRunId || `local-${Date.now()}-${process.pid}-${randomUUID()}`
 const scratchDir = path.join(repoRoot, '.tmp', 'agent', 'playwright', runId)
 const dataDir = path.join(scratchDir, 'data')
 const outputDir = path.join(scratchDir, 'test-results')

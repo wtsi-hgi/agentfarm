@@ -20,6 +20,10 @@ type ProductFixture = {
 
 const screenshotDir = path.resolve(__dirname, '..', '..', '.tmp', 'agent')
 const screenshotPaths = {
+  dropdownOrder: path.join(
+    screenshotDir,
+    'product-filter-dropdown-order-current.png'
+  ),
   followUp: path.join(screenshotDir, 'product-filter-current-follow-up.png'),
   tree: path.join(screenshotDir, 'product-filter-current-tree.png'),
   upNext: path.join(screenshotDir, 'product-filter-current-up-next.png'),
@@ -83,6 +87,31 @@ async function visibleFixtureTitles(
   return titles.filter((title) => title.startsWith(titlePrefix))
 }
 
+async function productOptionLabels(
+  page: Page,
+  titlePrefix: string
+): Promise<string[]> {
+  return page
+    .getByLabel('Filter by product')
+    .locator('option')
+    .evaluateAll(
+      (options, prefix) =>
+        options
+          .map((option) => (option as HTMLOptionElement).textContent ?? '')
+          .filter((label) => label.startsWith(prefix)),
+      titlePrefix
+    )
+}
+
+async function exposeProductDropdownOptions(page: Page) {
+  await page.getByLabel('Filter by product').evaluate((select) => {
+    const productSelect = select as HTMLSelectElement
+    productSelect.size = productSelect.options.length
+    productSelect.style.height = 'auto'
+    productSelect.style.minWidth = '32rem'
+  })
+}
+
 async function captureScreenshot(
   page: Page,
   pathName: string,
@@ -102,6 +131,78 @@ async function captureScreenshot(
 }
 
 test.describe('product dropdown filter reproduction', () => {
+  test('lists product filter dropdown roots alphabetically', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height: 760 })
+    const sessionToken = await signInAs(page)
+    const cleanupItemIds: string[] = []
+    const titlePrefix = `Product filter alpha ${Date.now()}`
+
+    try {
+      const zulu = await createItem(
+        request,
+        sessionToken,
+        `${titlePrefix} Zulu product`
+      )
+      cleanupItemIds.push(zulu.id)
+      const alpha = await createItem(
+        request,
+        sessionToken,
+        `${titlePrefix} Alpha product`
+      )
+      cleanupItemIds.push(alpha.id)
+      const mike = await createItem(
+        request,
+        sessionToken,
+        `${titlePrefix} Mike product`
+      )
+      cleanupItemIds.push(mike.id)
+
+      await gotoPath(page, '/')
+      await expect
+        .poll(async () => {
+          const labels = await productOptionLabels(page, titlePrefix)
+          return [zulu.title, alpha.title, mike.title].every((title) =>
+            labels.includes(title)
+          )
+        })
+        .toBe(true)
+
+      await exposeProductDropdownOptions(page)
+      await captureScreenshot(
+        page,
+        screenshotPaths.dropdownOrder,
+        'product-filter-dropdown-order-current',
+        testInfo
+      )
+
+      const currentOrder = await productOptionLabels(page, titlePrefix)
+      const alphabeticalOrder = [alpha.title, mike.title, zulu.title]
+      await testInfo.attach('product-filter-dropdown-order-evidence', {
+        body: JSON.stringify(
+          {
+            alphabeticalOrder,
+            currentOrder,
+            screenshotPath: screenshotPaths.dropdownOrder,
+            storedOrder: [zulu.title, alpha.title, mike.title],
+          },
+          null,
+          2
+        ),
+        contentType: 'application/json',
+      })
+
+      expect(
+        currentOrder,
+        'Product filter dropdown should list root products alphabetically; today it follows stored/manual order.'
+      ).toEqual(alphabeticalOrder)
+    } finally {
+      await deleteBackendItems(request, sessionToken, cleanupItemIds)
+    }
+  })
+
   test('filters the visible outliner to the selected product in every view mode and can clear back to all products', async ({
     page,
     request,

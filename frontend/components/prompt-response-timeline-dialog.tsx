@@ -11,7 +11,10 @@ import {
   ItemDialogHeading,
   type ItemDialogBreadcrumb,
 } from '@/components/item-dialog-heading'
-import { ITEM_DIALOG_HISTORY_CLASS } from '@/components/item-dialog-layout'
+import {
+  ITEM_DIALOG_HISTORY_CLASS,
+  useItemDialogPageScrollLock,
+} from '@/components/item-dialog-layout'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type {
@@ -23,6 +26,7 @@ import { cn } from '@/lib/utils'
 
 export type PromptResponseTimelineDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
+  editable?: boolean
   item: TreeItem | null
   onClose: () => void
   onAvailabilityChange?: (itemId: string, hasEntries: boolean) => void
@@ -59,6 +63,7 @@ function sortedEntries(entries: readonly PromptResponseEntry[]) {
 
 export function PromptResponseTimelineDialog({
   ancestors = [],
+  editable = true,
   item,
   onClose,
   onAvailabilityChange,
@@ -73,6 +78,7 @@ export function PromptResponseTimelineDialog({
   const [error, setError] = React.useState<string | null>(null)
   const currentItemId = React.useRef<string | null>(itemId)
   currentItemId.current = itemId
+  useItemDialogPageScrollLock()
 
   const loadEntries = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -109,6 +115,16 @@ export function PromptResponseTimelineDialog({
   }, [loadEntries])
 
   React.useEffect(() => {
+    if (editable) {
+      return
+    }
+
+    setDraft('')
+    setEntryKind('prompt')
+    setSaving(false)
+  }, [editable])
+
+  React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -122,7 +138,7 @@ export function PromptResponseTimelineDialog({
 
   async function addEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!itemId || !draft.trim() || saving) {
+    if (!editable || !itemId || !draft.trim() || saving) {
       return
     }
 
@@ -188,7 +204,13 @@ export function PromptResponseTimelineDialog({
           </Button>
         </header>
 
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div
+          className={
+            editable
+              ? 'grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]'
+              : 'min-h-0 flex-1'
+          }
+        >
           <div
             className={ITEM_DIALOG_HISTORY_CLASS}
             data-item-dialog-history="true"
@@ -251,68 +273,70 @@ export function PromptResponseTimelineDialog({
             </div>
           </div>
 
-          <form
-            data-item-dialog-entry-form="true"
-            className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
-            onSubmit={addEntry}
-          >
-            <div className="flex items-center gap-2">
-              <Bot
-                className="text-muted-foreground size-4"
-                aria-hidden="true"
-              />
-              <div className="text-foreground text-sm font-semibold">
-                New entry
-              </div>
-            </div>
-            <div
-              className="border-border bg-background grid grid-cols-2 rounded-md border p-1"
-              aria-label="Timeline entry type"
+          {editable ? (
+            <form
+              data-item-dialog-entry-form="true"
+              className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
+              onSubmit={addEntry}
             >
+              <div className="flex items-center gap-2">
+                <Bot
+                  className="text-muted-foreground size-4"
+                  aria-hidden="true"
+                />
+                <div className="text-foreground text-sm font-semibold">
+                  New entry
+                </div>
+              </div>
+              <div
+                className="border-border bg-background grid grid-cols-2 rounded-md border p-1"
+                aria-label="Timeline entry type"
+              >
+                <Button
+                  type="button"
+                  variant={entryKind === 'prompt' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  aria-label="Prompt entry type"
+                  aria-pressed={entryKind === 'prompt'}
+                  onClick={() => setEntryKind('prompt')}
+                >
+                  <Send className="size-3.5" aria-hidden="true" />
+                  Prompt
+                </Button>
+                <Button
+                  type="button"
+                  variant={entryKind === 'response' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  aria-label="Response entry type"
+                  aria-pressed={entryKind === 'response'}
+                  onClick={() => setEntryKind('response')}
+                >
+                  <Terminal className="size-3.5" aria-hidden="true" />
+                  Response
+                </Button>
+              </div>
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={saving}
+                aria-label="Prompt or response body"
+                className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+              />
               <Button
-                type="button"
-                variant={entryKind === 'prompt' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-label="Prompt entry type"
-                aria-pressed={entryKind === 'prompt'}
-                onClick={() => setEntryKind('prompt')}
+                type="submit"
+                disabled={!itemId || saving || !draft.trim()}
+                aria-label="Add timeline entry"
               >
                 <Send className="size-3.5" aria-hidden="true" />
-                Prompt
+                Add
               </Button>
-              <Button
-                type="button"
-                variant={entryKind === 'response' ? 'secondary' : 'ghost'}
-                size="sm"
-                aria-label="Response entry type"
-                aria-pressed={entryKind === 'response'}
-                onClick={() => setEntryKind('response')}
-              >
-                <Terminal className="size-3.5" aria-hidden="true" />
-                Response
-              </Button>
-            </div>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              disabled={saving}
-              aria-label="Prompt or response body"
-              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            <Button
-              type="submit"
-              disabled={!itemId || saving || !draft.trim()}
-              aria-label="Add timeline entry"
-            >
-              <Send className="size-3.5" aria-hidden="true" />
-              Add
-            </Button>
-            {error ? (
-              <div className="text-destructive text-sm" role="alert">
-                {error}
-              </div>
-            ) : null}
-          </form>
+              {error ? (
+                <div className="text-destructive text-sm" role="alert">
+                  {error}
+                </div>
+              ) : null}
+            </form>
+          ) : null}
         </div>
       </section>
     </div>

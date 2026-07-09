@@ -7,6 +7,7 @@ import {
   DependencyRemovalConfirmationRequiredError,
   NEW_ITEM_TITLE,
   applyRowKeyboardCommand,
+  createChild,
   createNextSibling,
   createFirstRoot,
   moveRowAfter,
@@ -280,6 +281,20 @@ describe('editable outliner behaviours', () => {
     })
   })
 
+  it('creates a child item inside the current row', async () => {
+    const current = item({ id: 'current', title: 'Current' })
+    const actions = mutationActions()
+
+    await createChild(current, actions)
+
+    expect(actions.createItem).toHaveBeenCalledWith({
+      title: NEW_ITEM_TITLE,
+      parent_id: 'current',
+    })
+    expect(actions.createItem.mock.calls[0]?.[0]).not.toHaveProperty('after_id')
+    expect(actions.createDependency).not.toHaveBeenCalled()
+  })
+
   it('moves a row after a sibling without mutating dependency edges', async () => {
     const current = item({ id: 'current', title: 'Current' })
     const actions = mutationActions()
@@ -330,13 +345,31 @@ describe('editable outliner behaviours', () => {
     expect(countOccurrences(markup, 'aria-label="Create root"')).toBe(1)
   })
 
-  it('renders one bottom root creator and hides Add sibling on root rows only', () => {
+  it('renders Add child on root and section rows while leaves keep Add sibling', () => {
     const items = [
       item({ id: 'root', title: 'Root', parent_id: null, sort_order: 1 }),
+      item({
+        id: 'empty-root',
+        title: 'Empty root',
+        parent_id: null,
+        sort_order: 2,
+      }),
       item({
         id: 'child',
         title: 'Child',
         parent_id: 'root',
+        sort_order: 1,
+      }),
+      item({
+        id: 'section',
+        title: 'Section',
+        parent_id: 'root',
+        sort_order: 2,
+      }),
+      item({
+        id: 'section-child',
+        title: 'Section child',
+        parent_id: 'section',
         sort_order: 1,
       }),
     ]
@@ -347,7 +380,8 @@ describe('editable outliner behaviours', () => {
 
     expect(countOccurrences(markup, 'aria-label="First root title"')).toBe(1)
     expect(countOccurrences(markup, 'aria-label="Create root"')).toBe(1)
-    expect(countOccurrences(markup, 'aria-label="Add sibling"')).toBe(1)
+    expect(countOccurrences(markup, 'aria-label="Add child"')).toBe(3)
+    expect(countOccurrences(markup, 'aria-label="Add sibling"')).toBe(2)
   })
 
   it('renders editable row, drag, delete, marker, and details controls from the primary surface', () => {

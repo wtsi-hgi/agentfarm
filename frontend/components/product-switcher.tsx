@@ -32,14 +32,17 @@ type FocusAndScrollOptions = {
   selectTitle?: boolean
 }
 
-function sortedByTreeOrder(items: TreeItem[]) {
-  return [...items].sort(
-    (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id)
-  )
+function compareProductOptions(a: TreeItem, b: TreeItem) {
+  const byTitle = a.title.localeCompare(b.title, undefined, {
+    sensitivity: 'base',
+  })
+  return byTitle !== 0 ? byTitle : a.id.localeCompare(b.id)
 }
 
 export function productRootOptions(items: TreeItem[]) {
-  return sortedByTreeOrder(items).filter((item) => item.parent_id === null)
+  return items
+    .filter((item) => item.parent_id === null)
+    .sort(compareProductOptions)
 }
 
 export function itemSearchOptions(items: TreeItem[]) {

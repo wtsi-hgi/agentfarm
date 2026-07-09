@@ -16,13 +16,17 @@ import {
   ItemDialogHeading,
   type ItemDialogBreadcrumb,
 } from '@/components/item-dialog-heading'
-import { ITEM_DIALOG_HISTORY_CLASS } from '@/components/item-dialog-layout'
+import {
+  ITEM_DIALOG_HISTORY_CLASS,
+  useItemDialogPageScrollLock,
+} from '@/components/item-dialog-layout'
 import { MarkdownContent } from '@/components/markdown-content'
 import { Button } from '@/components/ui/button'
 import type { Note, TreeItem } from '@/lib/contracts'
 
 export type ItemNotesDialogProps = {
   ancestors?: readonly ItemDialogBreadcrumb[]
+  editable?: boolean
   item: TreeItem | null
   onClose: () => void
   onAvailabilityChange?: (itemId: string, hasNotes: boolean) => void
@@ -47,6 +51,7 @@ function sortedNotes(notes: readonly Note[]) {
 
 export function ItemNotesDialog({
   ancestors = [],
+  editable = true,
   item,
   onClose,
   onAvailabilityChange,
@@ -63,6 +68,7 @@ export function ItemNotesDialog({
   const [error, setError] = React.useState<string | null>(null)
   const currentItemId = React.useRef<string | null>(itemId)
   currentItemId.current = itemId
+  useItemDialogPageScrollLock()
 
   const loadNotes = React.useCallback(async () => {
     const requestedItemId = itemId
@@ -102,6 +108,18 @@ export function ItemNotesDialog({
   }, [loadNotes])
 
   React.useEffect(() => {
+    if (editable) {
+      return
+    }
+
+    setDraft('')
+    setSaving(false)
+    setEditingId(null)
+    setEditingDraft('')
+    setSavingEditId(null)
+  }, [editable])
+
+  React.useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -115,7 +133,7 @@ export function ItemNotesDialog({
 
   async function addNote(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!itemId || !draft.trim() || saving) {
+    if (!editable || !itemId || !draft.trim() || saving) {
       return
     }
 
@@ -144,7 +162,7 @@ export function ItemNotesDialog({
   }
 
   async function saveNote(noteId: string) {
-    if (!itemId || !editingDraft.trim() || savingEditId) {
+    if (!editable || !itemId || !editingDraft.trim() || savingEditId) {
       return
     }
 
@@ -211,7 +229,13 @@ export function ItemNotesDialog({
           </Button>
         </header>
 
-        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div
+          className={
+            editable
+              ? 'grid min-h-0 flex-1 gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]'
+              : 'min-h-0 flex-1'
+          }
+        >
           <div
             className={ITEM_DIALOG_HISTORY_CLASS}
             data-item-dialog-history="true"
@@ -256,7 +280,7 @@ export function ItemNotesDialog({
                           <Clock3 className="size-3.5" aria-hidden="true" />
                           {formatTimestamp(note.created_at)}
                         </time>
-                        {editing ? (
+                        {editing && editable ? (
                           <>
                             <Button
                               type="button"
@@ -286,7 +310,7 @@ export function ItemNotesDialog({
                               <X className="size-3.5" aria-hidden="true" />
                             </Button>
                           </>
-                        ) : (
+                        ) : editable ? (
                           <Button
                             type="button"
                             variant="ghost"
@@ -300,10 +324,10 @@ export function ItemNotesDialog({
                           >
                             <Pencil className="size-3.5" aria-hidden="true" />
                           </Button>
-                        )}
+                        ) : null}
                       </div>
                     </div>
-                    {editing ? (
+                    {editing && editable ? (
                       <textarea
                         value={editingDraft}
                         onChange={(event) =>
@@ -329,41 +353,43 @@ export function ItemNotesDialog({
             </div>
           </div>
 
-          <form
-            data-item-dialog-entry-form="true"
-            className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
-            onSubmit={addNote}
-          >
-            <div className="flex items-center gap-2">
-              <NotebookPen
-                className="text-muted-foreground size-4"
-                aria-hidden="true"
-              />
-              <div className="text-foreground text-sm font-semibold">
-                New note
-              </div>
-            </div>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              disabled={saving}
-              aria-label="New note body"
-              className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            <Button
-              type="submit"
-              disabled={!itemId || saving || !draft.trim()}
-              aria-label="Add note"
+          {editable ? (
+            <form
+              data-item-dialog-entry-form="true"
+              className="border-border bg-muted/20 flex min-h-0 flex-col gap-3 overflow-y-auto border-t p-4 lg:border-t-0 lg:border-l"
+              onSubmit={addNote}
             >
-              <Plus className="size-3.5" aria-hidden="true" />
-              Add
-            </Button>
-            {error ? (
-              <div className="text-destructive text-sm" role="alert">
-                {error}
+              <div className="flex items-center gap-2">
+                <NotebookPen
+                  className="text-muted-foreground size-4"
+                  aria-hidden="true"
+                />
+                <div className="text-foreground text-sm font-semibold">
+                  New note
+                </div>
               </div>
-            ) : null}
-          </form>
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={saving}
+                aria-label="New note body"
+                className="border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 min-h-32 flex-1 resize-none rounded-md border px-3 py-2 font-mono text-sm leading-6 outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+              />
+              <Button
+                type="submit"
+                disabled={!itemId || saving || !draft.trim()}
+                aria-label="Add note"
+              >
+                <Plus className="size-3.5" aria-hidden="true" />
+                Add
+              </Button>
+              {error ? (
+                <div className="text-destructive text-sm" role="alert">
+                  {error}
+                </div>
+              ) : null}
+            </form>
+          ) : null}
         </div>
       </section>
     </div>

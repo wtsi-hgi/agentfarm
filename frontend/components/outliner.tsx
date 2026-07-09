@@ -57,6 +57,7 @@ import type {
 import {
   DependencyRemovalConfirmationRequiredError,
   applyRowKeyboardCommand,
+  createChild,
   createNextSibling,
   createFirstRoot,
   moveRowAfter,
@@ -110,6 +111,7 @@ type OutlinerProps = {
   newlyAddedIds?: IdCollection
   scratchpad?: ScratchpadState
   scratchpadEditable?: boolean
+  editable?: boolean
   initialView?: OutlinerView
 }
 
@@ -241,6 +243,12 @@ type PendingDependencyRemoval =
     }
   | {
       kind: 'create-sibling'
+      item: TreeItem
+      text: string
+      dependencies: RemovedDependency[]
+    }
+  | {
+      kind: 'create-child'
       item: TreeItem
       text: string
       dependencies: RemovedDependency[]
@@ -2524,6 +2532,7 @@ export function Outliner({
   newlyAddedIds,
   scratchpad = DEFAULT_SCRATCHPAD,
   scratchpadEditable = false,
+  editable = true,
   initialView = 'tree',
 }: OutlinerProps) {
   const markers = providedMarkers ?? EMPTY_MARKERS
@@ -2846,7 +2855,7 @@ export function Outliner({
     () => rootSectionBlocks(rows, itemsById),
     [itemsById, rows]
   )
-  const canCreateRootsInSelectedView = selectedView !== 'manager'
+  const canCreateRootsInSelectedView = editable && selectedView !== 'manager'
   const selectedItem = selectedItemId
     ? (itemsById.get(selectedItemId) ?? null)
     : null
@@ -3051,9 +3060,8 @@ export function Outliner({
     setSelectedItemId(item.id)
   }
 
-  function focusCreatedSibling(item: TreeItem, createdItemId: string) {
+  function focusCreatedItem(createdItemId: string, parentId: string | null) {
     setSessionNewlyAddedIds((current) => new Set(current).add(createdItemId))
-    const parentId = item.parent_id
     if (parentId) {
       setExpandedIds((current) => new Set(current).add(parentId))
     }
@@ -3086,7 +3094,18 @@ export function Outliner({
     await submitRowText(item, text, mutationActions, options)
     setDetailRefreshKey((current) => current + 1)
     const created = await createNextSibling(item, mutationActions)
-    focusCreatedSibling(item, created.id)
+    focusCreatedItem(created.id, item.parent_id)
+  }
+
+  async function performCreateChild(
+    item: TreeItem,
+    text: string,
+    options: SubmitRowTextOptions = {}
+  ) {
+    await submitRowText(item, text, mutationActions, options)
+    setDetailRefreshKey((current) => current + 1)
+    const created = await createChild(item, mutationActions)
+    focusCreatedItem(created.id, item.id)
   }
 
   async function createSibling(item: TreeItem, text: string) {
@@ -3096,6 +3115,23 @@ export function Outliner({
       if (caught instanceof DependencyRemovalConfirmationRequiredError) {
         setPendingDependencyRemoval({
           kind: 'create-sibling',
+          item,
+          text,
+          dependencies: caught.dependencies,
+        })
+        return
+      }
+      throw caught
+    }
+  }
+
+  async function createChildItem(item: TreeItem, text: string) {
+    try {
+      await performCreateChild(item, text)
+    } catch (caught) {
+      if (caught instanceof DependencyRemovalConfirmationRequiredError) {
+        setPendingDependencyRemoval({
+          kind: 'create-child',
           item,
           text,
           dependencies: caught.dependencies,
@@ -3129,7 +3165,7 @@ export function Outliner({
 
     const createdItemId = result.createdItemId
     if (createdItemId) {
-      focusCreatedSibling(item, createdItemId)
+      focusCreatedItem(createdItemId, item.parent_id)
     } else if (result.deletedItemId) {
       markItemSubtreeDeleted(item)
     } else if (result.handled) {
@@ -3225,8 +3261,10 @@ export function Outliner({
           pending.command,
           options
         )
-      } else {
+      } else if (pending.kind === 'create-sibling') {
         await performCreateSibling(pending.item, pending.text, options)
+      } else {
+        await performCreateChild(pending.item, pending.text, options)
       }
     } catch (caught) {
       confirmedDependencyRemovalRef.current = false
@@ -3881,7 +3919,7 @@ export function Outliner({
 
     return (
       <React.Fragment key={item.id}>
-        {dragOriginMarker?.nextItemId === item.id ? (
+        {editable && dragOriginMarker?.nextItemId === item.id ? (
           <DragOriginSlotMarker
             slot={dragOriginMarker}
             onDragOver={(event) =>
@@ -3895,67 +3933,84 @@ export function Outliner({
         <div
           data-outliner-item-id={item.id}
           tabIndex={-1}
-          draggable
-          onDragStart={(event) => {
-            handleNativeDragStart(item, event)
-          }}
-          onDragEnd={clearDragState}
-          onMouseDownCapture={(event) => {
-            const target = event.target
-            if (
-              target instanceof Element &&
-              target.closest('button[aria-label="Drag item"]')
-            ) {
-              beginCoordinateDrag(item, event)
-            }
-          }}
-          onDragOver={(event) => {
-            const draggedId =
-              draggingItemId || event.dataTransfer.getData('text/plain') || null
-            if (!draggedId || draggedId === item.id) {
-              if (draggedId && !returningDraggedItem) {
-                const acceptsPreviewDrop = updatePreviewFromDraggedRow(
-                  event,
-                  draggedId
-                )
-                if (acceptsPreviewDrop) {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'move'
+          draggable={editable}
+          onDragStart={
+            editable ? (event) => handleNativeDragStart(item, event) : undefined
+          }
+          onDragEnd={editable ? clearDragState : undefined}
+          onMouseDownCapture={
+            editable
+              ? (event) => {
+                  const target = event.target
+                  if (
+                    target instanceof Element &&
+                    target.closest('button[aria-label="Drag item"]')
+                  ) {
+                    beginCoordinateDrag(item, event)
+                  }
                 }
-              }
-              return
-            }
+              : undefined
+          }
+          onDragOver={
+            editable
+              ? (event) => {
+                  const draggedId =
+                    draggingItemId ||
+                    event.dataTransfer.getData('text/plain') ||
+                    null
+                  if (!draggedId || draggedId === item.id) {
+                    if (draggedId && !returningDraggedItem) {
+                      const acceptsPreviewDrop = updatePreviewFromDraggedRow(
+                        event,
+                        draggedId
+                      )
+                      if (acceptsPreviewDrop) {
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                      }
+                    }
+                    return
+                  }
 
-            const position = dropPosition(event)
-            if (updateDragPreview(draggedId, item.id, position)) {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'move'
-            }
-          }}
-          onDrop={(event) => {
-            event.preventDefault()
-            if (suppressNextNativeDropRef.current) {
-              suppressNextNativeDropRef.current = false
-              return
-            }
-            const draggedId =
-              draggingItemId || event.dataTransfer.getData('text/plain') || null
-            const currentDragPreview = dragPreviewRef.current
-            const returnsToOrigin =
-              currentDragPreview !== null &&
-              dragPreviewReturnsToOrigin(currentDragPreview)
-            const returningDrop = returnsToOrigin && item.id === draggedId
-            const previewDrop =
-              currentDragPreview?.draggedItemId === draggedId && !returningDrop
-                ? currentDragPreview
-                : null
-            const targetItemId = previewDrop?.targetItemId ?? item.id
-            const position = previewDrop?.position ?? dropPosition(event)
-            clearDragState()
-            if (draggedId && !returningDrop) {
-              void moveDragged(draggedId, targetItemId, position)
-            }
-          }}
+                  const position = dropPosition(event)
+                  if (updateDragPreview(draggedId, item.id, position)) {
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                  }
+                }
+              : undefined
+          }
+          onDrop={
+            editable
+              ? (event) => {
+                  event.preventDefault()
+                  if (suppressNextNativeDropRef.current) {
+                    suppressNextNativeDropRef.current = false
+                    return
+                  }
+                  const draggedId =
+                    draggingItemId ||
+                    event.dataTransfer.getData('text/plain') ||
+                    null
+                  const currentDragPreview = dragPreviewRef.current
+                  const returnsToOrigin =
+                    currentDragPreview !== null &&
+                    dragPreviewReturnsToOrigin(currentDragPreview)
+                  const returningDrop = returnsToOrigin && item.id === draggedId
+                  const previewDrop =
+                    currentDragPreview?.draggedItemId === draggedId &&
+                    !returningDrop
+                      ? currentDragPreview
+                      : null
+                  const targetItemId = previewDrop?.targetItemId ?? item.id
+                  const position = previewDrop?.position ?? dropPosition(event)
+                  clearDragState()
+                  if (draggedId && !returningDrop) {
+                    void moveDragged(draggedId, targetItemId, position)
+                  }
+                }
+              : undefined
+          }
           className={cn(
             'focus-visible:ring-ring transition-[background-color,box-shadow,opacity] outline-none focus-visible:ring-2 focus-visible:ring-inset',
             focusedItemId === item.id && 'ring-ring/30 ring-1 ring-inset',
@@ -3985,6 +4040,7 @@ export function Outliner({
             onSelect={(itemId) => setSelectedItemId(itemId)}
             onSubmitText={submitText}
             onCreateSibling={createSibling}
+            onCreateChild={createChildItem}
             onKeyboardCommand={runKeyboardCommand}
             onDelete={requestItemDelete}
             onKeyboardReorder={reorderFromDragHandleKeyboard}
@@ -3994,6 +4050,7 @@ export function Outliner({
             onOpenNotes={openNotes}
             onOpenPromptTimeline={openPromptTimeline}
             draftResetRequest={rowDraftResetRequest}
+            editable={editable}
           />
           {filteredOutNewlyAdded ? (
             <div
@@ -4025,6 +4082,7 @@ export function Outliner({
         <ViewControls view={selectedView} onViewChange={changeSelectedView} />
         <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
           <MarkerControls
+            canCreateMarkers={editable}
             initialMarkers={markers}
             onFilterChange={changeMarkerFilter}
             refreshOnMount={refreshMarkersOnMount}
@@ -4058,7 +4116,7 @@ export function Outliner({
               />
             </div>
           ) : null}
-          {dragOriginMarker?.nextItemId === null ? (
+          {editable && dragOriginMarker?.nextItemId === null ? (
             <DragOriginSlotMarker
               slot={dragOriginMarker}
               onDragOver={(event) =>
@@ -4079,12 +4137,15 @@ export function Outliner({
           item={selectedItem}
           allItems={activeItems}
           activityRefreshKey={detailRefreshKey}
-          coordinateDependencyDropActive={coordinateDependencyDropActive}
-          draggingItemId={draggingItemId}
+          coordinateDependencyDropActive={
+            editable && coordinateDependencyDropActive
+          }
+          draggingItemId={editable ? draggingItemId : null}
           className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start"
-          onAddDependency={addExplicitDependency}
+          editable={editable}
+          onAddDependency={editable ? addExplicitDependency : undefined}
           onItemPatched={mergeReturnedItem}
-          onRemoveDependency={removeExplicitDependency}
+          onRemoveDependency={editable ? removeExplicitDependency : undefined}
         />
       </div>
       {pendingDependencyRemoval ? (
@@ -4135,6 +4196,7 @@ export function Outliner({
       {timelineItem ? (
         <PromptResponseTimelineDialog
           ancestors={timelineItemAncestors}
+          editable={editable}
           item={timelineItem}
           onClose={() => setTimelineItemId(null)}
           onAvailabilityChange={updatePromptResponseAvailability}
@@ -4143,6 +4205,7 @@ export function Outliner({
       {notesItem ? (
         <ItemNotesDialog
           ancestors={notesItemAncestors}
+          editable={editable}
           item={notesItem}
           onClose={() => setNotesItemId(null)}
           onAvailabilityChange={updateNotesAvailability}

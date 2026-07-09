@@ -27,6 +27,15 @@ type DialogDockGeometry = {
   scratchpadText: BoundingBox
 }
 
+type DialogDockLayoutSnapshot = {
+  viewport: { width: number; height: number }
+  overlayPosition: string
+  dialog: BoundingBox | null
+  history: BoundingBox | null
+  form: BoundingBox | null
+  scratchpad: BoundingBox | null
+}
+
 async function boxFor(locator: Locator, label: string): Promise<BoundingBox> {
   await expect(locator, `${label} should be visible`).toBeVisible()
   const box = await locator.boundingBox()
@@ -91,6 +100,94 @@ async function expectDialogReservedAboveScratchpad(
   }
 }
 
+async function dialogDockLayoutSnapshot(
+  page: Page,
+  dialog: Locator,
+  history: Locator,
+  form: Locator,
+  scratchpad: Locator
+): Promise<DialogDockLayoutSnapshot> {
+  const viewport = page.viewportSize()
+  expect(viewport, 'viewport should be available').not.toBeNull()
+
+  const [dialogBox, historyBox, formBox, scratchpadBox, overlayPosition] =
+    await Promise.all([
+      dialog.boundingBox(),
+      history.boundingBox(),
+      form.boundingBox(),
+      scratchpad.boundingBox(),
+      dialog
+        .evaluate((element) => {
+          const overlay = element.parentElement
+          return overlay ? window.getComputedStyle(overlay).position : ''
+        })
+        .catch(() => ''),
+    ])
+
+  return {
+    viewport: viewport!,
+    overlayPosition,
+    dialog: dialogBox,
+    history: historyBox,
+    form: formBox,
+    scratchpad: scratchpadBox,
+  }
+}
+
+function isStyledDockedDesktopLayout(snapshot: DialogDockLayoutSnapshot) {
+  const { viewport, dialog, history, form, scratchpad } = snapshot
+  if (!dialog || !history || !form || !scratchpad) {
+    return false
+  }
+
+  const scratchpadRight = scratchpad.x + scratchpad.width
+  const scratchpadBottom = scratchpad.y + scratchpad.height
+
+  return (
+    snapshot.overlayPosition === 'fixed' &&
+    dialog.y >= 0 &&
+    dialog.y <= 32 &&
+    form.x > dialog.x + dialog.width / 2 &&
+    form.width < dialog.width / 2 &&
+    Math.abs(history.y - form.y) <= 2 &&
+    scratchpadBottom >= viewport.height - 1 &&
+    scratchpadBottom <= viewport.height + 1 &&
+    Math.abs(scratchpad.x - dialog.x) <= 1 &&
+    scratchpadRight <= form.x + 1 &&
+    scratchpad.width < viewport.width - 32
+  )
+}
+
+async function expectStyledDockedDesktopLayout(
+  page: Page,
+  dialog: Locator,
+  history: Locator,
+  form: Locator,
+  scratchpad: Locator
+) {
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await dialogDockLayoutSnapshot(
+          page,
+          dialog,
+          history,
+          form,
+          scratchpad
+        )
+        return isStyledDockedDesktopLayout(snapshot)
+          ? 'ready'
+          : JSON.stringify(snapshot)
+      },
+      {
+        message:
+          'styled desktop dialog layout should be active before measuring docked scratchpad geometry',
+        timeout: 10000,
+      }
+    )
+    .toBe('ready')
+}
+
 async function dialogDockGeometry(
   page: Page,
   dialog: Locator,
@@ -100,6 +197,8 @@ async function dialogDockGeometry(
 ): Promise<DialogDockGeometry> {
   const viewport = page.viewportSize()
   expect(viewport, 'viewport should be available').not.toBeNull()
+
+  await expectStyledDockedDesktopLayout(page, dialog, history, form, scratchpad)
 
   return {
     viewport: viewport!,

@@ -146,6 +146,117 @@ describe('Playwright browser resolution', () => {
     }
   })
 
+  it('isolates direct Playwright runs when no run id is provided', async () => {
+    const previousRunId = process.env.PLAYWRIGHT_RUN_ID
+    const previousDataDir = process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+    const repoRoot = path.resolve(frontendRoot, '..')
+
+    async function importConfigWithoutRunId(label: string) {
+      delete process.env.PLAYWRIGHT_RUN_ID
+      delete process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+
+      const configModule = (await import(
+        `${pathToFileURL(path.join(frontendRoot, 'playwright.config.ts')).href}?test=isolated-${label}-${Date.now()}`
+      )) as {
+        default: {
+          outputDir?: string
+        }
+      }
+
+      const generatedRunId = process.env.PLAYWRIGHT_RUN_ID
+      const generatedDataDir = process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+      expect(generatedRunId).toBeTruthy()
+      expect(generatedDataDir).toBeTruthy()
+      expect(generatedRunId).not.toBe('local')
+      expect(generatedDataDir).toBe(
+        path.join(
+          repoRoot,
+          '.tmp',
+          'agent',
+          'playwright',
+          generatedRunId!,
+          'data'
+        )
+      )
+      expect(configModule.default.outputDir).toBe(
+        path.join(
+          repoRoot,
+          '.tmp',
+          'agent',
+          'playwright',
+          generatedRunId!,
+          'test-results'
+        )
+      )
+
+      return generatedRunId
+    }
+
+    try {
+      const firstRunId = await importConfigWithoutRunId('first')
+      const secondRunId = await importConfigWithoutRunId('second')
+
+      expect(secondRunId).not.toBe(firstRunId)
+    } finally {
+      if (previousRunId === undefined) {
+        delete process.env.PLAYWRIGHT_RUN_ID
+      } else {
+        process.env.PLAYWRIGHT_RUN_ID = previousRunId
+      }
+      if (previousDataDir === undefined) {
+        delete process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+      } else {
+        process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR = previousDataDir
+      }
+    }
+  })
+
+  it('preserves an explicit Playwright run id', async () => {
+    const previousRunId = process.env.PLAYWRIGHT_RUN_ID
+    const previousDataDir = process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+    const repoRoot = path.resolve(frontendRoot, '..')
+    const runId = 'config-explicit-run'
+
+    process.env.PLAYWRIGHT_RUN_ID = runId
+    delete process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+
+    try {
+      const configModule = (await import(
+        `${pathToFileURL(path.join(frontendRoot, 'playwright.config.ts')).href}?test=explicit-${Date.now()}`
+      )) as {
+        default: {
+          outputDir?: string
+        }
+      }
+
+      expect(process.env.PLAYWRIGHT_RUN_ID).toBe(runId)
+      expect(process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR).toBe(
+        path.join(repoRoot, '.tmp', 'agent', 'playwright', runId, 'data')
+      )
+      expect(configModule.default.outputDir).toBe(
+        path.join(
+          repoRoot,
+          '.tmp',
+          'agent',
+          'playwright',
+          runId,
+          'test-results'
+        )
+      )
+    } finally {
+      if (previousRunId === undefined) {
+        delete process.env.PLAYWRIGHT_RUN_ID
+      } else {
+        process.env.PLAYWRIGHT_RUN_ID = previousRunId
+      }
+      if (previousDataDir === undefined) {
+        delete process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR
+      } else {
+        process.env.PLAYWRIGHT_AGENTFARM_DATA_DIR = previousDataDir
+      }
+    }
+  })
+
   it('loads the Playwright config without project path aliases', () => {
     const scratchParent = path.join(frontendRoot, '.tmp', 'agent')
     mkdirSync(scratchParent, { recursive: true })
