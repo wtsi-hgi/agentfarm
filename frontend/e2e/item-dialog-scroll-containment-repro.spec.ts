@@ -24,9 +24,25 @@ const screenshotPaths = {
     screenshotDir,
     'item-dialog-scroll-containment-notes-current.png'
   ),
+  notesRestorationAfter: path.join(
+    screenshotDir,
+    'item-dialog-scroll-restoration-notes-after-close-current.png'
+  ),
+  notesRestorationBefore: path.join(
+    screenshotDir,
+    'item-dialog-scroll-restoration-notes-before-open-current.png'
+  ),
   prompt: path.join(
     screenshotDir,
     'item-dialog-scroll-containment-prompt-current.png'
+  ),
+  promptRestorationAfter: path.join(
+    screenshotDir,
+    'item-dialog-scroll-restoration-prompt-after-close-current.png'
+  ),
+  promptRestorationBefore: path.join(
+    screenshotDir,
+    'item-dialog-scroll-restoration-prompt-before-open-current.png'
   ),
 }
 const viewport = { width: 1280, height: 720 }
@@ -92,6 +108,23 @@ async function captureDialogEvidence(
   await mkdir(screenshotDir, { recursive: true })
   await page.screenshot({ caret: 'initial', path: screenshotPaths[name] })
   await testInfo.attach(`item-dialog-scroll-containment-${name}-current`, {
+    contentType: 'image/png',
+    path: screenshotPaths[name],
+  })
+}
+
+async function capturePageEvidence(
+  testInfo: TestInfo,
+  page: Page,
+  name:
+    | 'notesRestorationAfter'
+    | 'notesRestorationBefore'
+    | 'promptRestorationAfter'
+    | 'promptRestorationBefore'
+) {
+  await mkdir(screenshotDir, { recursive: true })
+  await page.screenshot({ caret: 'initial', path: screenshotPaths[name] })
+  await testInfo.attach(`item-dialog-scroll-restoration-${name}-current`, {
     contentType: 'image/png',
     path: screenshotPaths[name],
   })
@@ -185,6 +218,41 @@ async function expectScrollableDialogContentContainsPageScroll(
     .toBeGreaterThan(beforeContent.scrollTop)
 }
 
+async function scrollTargetRowIntoLowerView(
+  page: Page,
+  row: Locator,
+  dialogName: string
+) {
+  await row.scrollIntoViewIfNeeded()
+  await expect(row).toBeInViewport()
+  const beforeDialog = await scrollSnapshot(page)
+  expect(
+    beforeDialog.scrollY,
+    `${dialogName} target row should be reached from a low page scroll position: ${JSON.stringify(
+      beforeDialog
+    )}`
+  ).toBeGreaterThan(200)
+
+  return beforeDialog
+}
+
+function expectScrollPositionPreserved(
+  before: ScrollSnapshot,
+  actual: ScrollSnapshot,
+  dialogName: string,
+  phase: string
+) {
+  const tolerancePx = 40
+  expect
+    .soft(
+      Math.abs(actual.scrollY - before.scrollY),
+      `${dialogName} should preserve the pre-dialog page position ${phase}: before=${JSON.stringify(
+        before
+      )}, actual=${JSON.stringify(actual)}`
+    )
+    .toBeLessThanOrEqual(tolerancePx)
+}
+
 test.describe('item dialog scroll containment', () => {
   test('contains mouse wheel scrolling inside notes and prompt dialogs', async ({
     page,
@@ -265,6 +333,114 @@ test.describe('item dialog scroll containment', () => {
         page,
         page.getByLabel('Prompt/response history'),
         'prompt/response dialog'
+      )
+    } finally {
+      await deleteBackendItems(request, sessionToken, createdItemIds)
+    }
+  })
+
+  test('keeps the lower page position after closing notes and prompt dialogs without wheel scrolling', async ({
+    page,
+    request,
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    const sessionToken = await signInAs(page)
+    const createdItemIds: string[] = []
+    const titlePrefix = `Dialog scroll restoration ${Date.now()}`
+
+    try {
+      for (let index = 1; index <= 48; index += 1) {
+        const filler = await createItem(
+          request,
+          sessionToken,
+          `${titlePrefix} filler ${String(index).padStart(2, '0')}`
+        )
+        createdItemIds.push(filler.id)
+      }
+
+      const item = await createItem(
+        request,
+        sessionToken,
+        `${titlePrefix} lower target`
+      )
+      createdItemIds.push(item.id)
+      await createNote(
+        request,
+        sessionToken,
+        item.id,
+        'Existing note used to verify closing the dialog keeps the lower item in view.'
+      )
+      await createPromptResponseEntry(
+        request,
+        sessionToken,
+        item.id,
+        'prompt',
+        'Existing prompt used to verify closing the dialog keeps the lower item in view.'
+      )
+
+      await gotoPath(page, '/')
+      const row = page.locator(`[data-outliner-item-id="${item.id}"]`)
+
+      const beforeNotes = await scrollTargetRowIntoLowerView(
+        page,
+        row,
+        'notes dialog'
+      )
+      await capturePageEvidence(testInfo, page, 'notesRestorationBefore')
+      await row.getByRole('button', { name: 'Open notes' }).click()
+      await expect(page.getByRole('dialog', { name: item.title })).toBeVisible()
+      expectScrollPositionPreserved(
+        beforeNotes,
+        await scrollSnapshot(page),
+        'notes dialog',
+        'while open'
+      )
+      await expect(page.getByLabel('Note history')).toContainText(
+        'Existing note used to verify'
+      )
+      await page.getByRole('button', { name: 'Close notes' }).click()
+      await expect(page.getByRole('dialog')).toBeHidden()
+      await page.waitForTimeout(100)
+      const afterNotes = await scrollSnapshot(page)
+      await capturePageEvidence(testInfo, page, 'notesRestorationAfter')
+      expectScrollPositionPreserved(
+        beforeNotes,
+        afterNotes,
+        'notes dialog',
+        'after close'
+      )
+
+      const beforePrompt = await scrollTargetRowIntoLowerView(
+        page,
+        row,
+        'prompt/response dialog'
+      )
+      await capturePageEvidence(testInfo, page, 'promptRestorationBefore')
+      await row
+        .getByRole('button', { name: 'Open prompt/response timeline' })
+        .click()
+      await expect(page.getByRole('dialog', { name: item.title })).toBeVisible()
+      expectScrollPositionPreserved(
+        beforePrompt,
+        await scrollSnapshot(page),
+        'prompt/response dialog',
+        'while open'
+      )
+      await expect(page.getByLabel('Prompt/response history')).toContainText(
+        'Existing prompt used to verify'
+      )
+      await page
+        .getByRole('button', { name: 'Close prompt/response timeline' })
+        .click()
+      await expect(page.getByRole('dialog')).toBeHidden()
+      await page.waitForTimeout(100)
+      const afterPrompt = await scrollSnapshot(page)
+      await capturePageEvidence(testInfo, page, 'promptRestorationAfter')
+      expectScrollPositionPreserved(
+        beforePrompt,
+        afterPrompt,
+        'prompt/response dialog',
+        'after close'
       )
     } finally {
       await deleteBackendItems(request, sessionToken, createdItemIds)

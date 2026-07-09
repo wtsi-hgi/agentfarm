@@ -375,88 +375,110 @@ export function Scratchpad({
     }
     return Object.keys(style).length > 0 ? style : undefined
   }, [docked, dockedFrame, height, minimized])
+  const dockSpacerStyle = React.useMemo<React.CSSProperties | undefined>(() => {
+    if (!docked || minimized) {
+      return undefined
+    }
+
+    return {
+      height: `${height}px`,
+      maxHeight: '45vh',
+    }
+  }, [docked, height, minimized])
   const saveStatusText = statusLabel(editable, saveStatus)
 
   return (
-    <section
-      ref={panelRef}
-      aria-label="Scratch pad"
-      data-scratchpad-docked={docked ? 'true' : 'false'}
-      data-scratchpad-panel="true"
-      data-scratchpad-minimized={minimized ? 'true' : 'false'}
-      className={cn(
-        'bg-background/95 border-border flex flex-col border-t shadow-lg backdrop-blur',
-        docked ? 'fixed inset-x-0 bottom-0 z-50' : 'sticky bottom-0 z-30',
-        minimized ? 'h-11' : 'min-h-30'
-      )}
-      style={panelStyle}
-    >
-      <header className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-2">
-        <button
-          ref={resizeHandleRef}
-          type="button"
-          aria-label="Resize scratch pad"
-          title="Resize"
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 w-9 cursor-ns-resize touch-none items-center justify-center rounded-md outline-none focus-visible:ring-2"
-          onPointerDown={beginResize}
-          onPointerMove={handleResizePointerMove}
-          onPointerUp={finishResize}
-          onPointerCancel={finishResize}
-          onLostPointerCapture={finishResize}
-        >
-          <GripHorizontal className="size-4" aria-hidden="true" />
-        </button>
-        <NotebookPen
-          className="text-muted-foreground size-4 shrink-0"
+    <>
+      {docked ? (
+        <div
           aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-foreground truncate text-sm font-semibold">
-            Scratch pad
-          </h2>
-        </div>
-        {saveStatusText ? (
-          <span
-            className={cn(
-              'text-muted-foreground shrink-0 text-xs transition-opacity',
-              saveStatus === 'error' && 'text-destructive'
-            )}
-            aria-live="polite"
-            role={saveStatus === 'error' ? 'alert' : undefined}
-          >
-            {saveStatusText}
-          </span>
-        ) : null}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 shrink-0"
-          aria-label={minimized ? 'Expand scratch pad' : 'Minimize scratch pad'}
-          title={minimized ? 'Expand' : 'Minimize'}
-          onClick={() => setMinimized((current) => !current)}
-        >
-          {minimized ? (
-            <ChevronUp className="size-4" aria-hidden="true" />
-          ) : (
-            <ChevronDown className="size-4" aria-hidden="true" />
-          )}
-        </Button>
-      </header>
-      {!minimized ? (
-        <textarea
-          aria-label="Scratch pad notes"
-          value={body}
-          readOnly={!editable}
-          onChange={(event) => {
-            if (editable) {
-              setBody(event.currentTarget.value)
-            }
-          }}
-          placeholder="Notes"
-          className="text-foreground placeholder:text-muted-foreground min-h-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-sm leading-6 outline-none read-only:cursor-default focus-visible:ring-0"
+          className={cn('shrink-0', minimized ? 'h-11' : 'min-h-30')}
+          data-scratchpad-dock-spacer="true"
+          style={dockSpacerStyle}
         />
       ) : null}
-    </section>
+      <section
+        ref={panelRef}
+        aria-label="Scratch pad"
+        data-scratchpad-docked={docked ? 'true' : 'false'}
+        data-scratchpad-panel="true"
+        data-scratchpad-minimized={minimized ? 'true' : 'false'}
+        className={cn(
+          'bg-background/95 border-border flex flex-col border-t shadow-lg backdrop-blur',
+          docked ? 'fixed inset-x-0 bottom-0 z-50' : 'sticky bottom-0 z-30',
+          minimized ? 'h-11' : 'min-h-30'
+        )}
+        style={panelStyle}
+      >
+        <header className="border-border flex h-11 shrink-0 items-center gap-2 border-b px-2">
+          <button
+            ref={resizeHandleRef}
+            type="button"
+            aria-label="Resize scratch pad"
+            title="Resize"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex h-7 w-9 cursor-ns-resize touch-none items-center justify-center rounded-md outline-none focus-visible:ring-2"
+            onPointerDown={beginResize}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={finishResize}
+            onPointerCancel={finishResize}
+            onLostPointerCapture={finishResize}
+          >
+            <GripHorizontal className="size-4" aria-hidden="true" />
+          </button>
+          <NotebookPen
+            className="text-muted-foreground size-4 shrink-0"
+            aria-hidden="true"
+          />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-foreground truncate text-sm font-semibold">
+              Scratch pad
+            </h2>
+          </div>
+          {saveStatusText ? (
+            <span
+              className={cn(
+                'text-muted-foreground shrink-0 text-xs transition-opacity',
+                saveStatus === 'error' && 'text-destructive'
+              )}
+              aria-live="polite"
+              role={saveStatus === 'error' ? 'alert' : undefined}
+            >
+              {saveStatusText}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label={
+              minimized ? 'Expand scratch pad' : 'Minimize scratch pad'
+            }
+            title={minimized ? 'Expand' : 'Minimize'}
+            onClick={() => setMinimized((current) => !current)}
+          >
+            {minimized ? (
+              <ChevronUp className="size-4" aria-hidden="true" />
+            ) : (
+              <ChevronDown className="size-4" aria-hidden="true" />
+            )}
+          </Button>
+        </header>
+        {!minimized ? (
+          <textarea
+            aria-label="Scratch pad notes"
+            value={body}
+            readOnly={!editable}
+            onChange={(event) => {
+              if (editable) {
+                setBody(event.currentTarget.value)
+              }
+            }}
+            placeholder="Notes"
+            className="text-foreground placeholder:text-muted-foreground min-h-0 flex-1 resize-none bg-transparent px-3 py-2 font-mono text-sm leading-6 outline-none read-only:cursor-default focus-visible:ring-0"
+          />
+        ) : null}
+      </section>
+    </>
   )
 }
