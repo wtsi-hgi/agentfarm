@@ -119,14 +119,13 @@ make run FRONTEND_HOST=127.0.0.1
 To listen on every interface, set `FRONTEND_HOST=0.0.0.0`. Keep using
 `https://localhost:3000` on the same machine, or replace `localhost` with the
 machine's hostname or LAN IP from another device. `0.0.0.0` is the bind address,
-not the browser URL. The URL uses a local self-signed certificate; use
-`AGENTFARM_TLS_CERT` and `AGENTFARM_TLS_KEY` if you need a certificate that
-already chains to a trusted local CA or matches a custom hostname.
+not the browser URL. The URL uses a local self-signed certificate; see
+[TLS Certificates](#tls-certificates) to use your own.
 
 Important runtime notes:
 
 - The frontend dev server and backend both serve HTTPS locally with a generated
-  self-signed certificate.
+  self-signed certificate unless you supply your own.
 - The frontend talks to the backend through server-side BFF calls.
 - The frontend binds to `FRONTEND_HOST` (default `0.0.0.0`).
 - `run-dev.sh` configures Next `allowedDevOrigins` for loopback, the machine
@@ -145,6 +144,46 @@ Important runtime notes:
 - Backend runtime state defaults to repo-root `data/`, which is ignored by git.
 - `backend/run_uvicorn.sh` uses reload by default. Set `UVICORN_RELOAD=0` for
   one-process startup, which CI/e2e uses.
+
+## TLS Certificates
+
+When `AGENTFARM_TLS_CERT` and `AGENTFARM_TLS_KEY` are unset, Agent Farm
+generates a self-signed pair at
+`$AGENTFARM_DATA_DIR/tls/agentfarm-self-signed.{crt,key}`. It is valid for
+`localhost`, `127.0.0.1`, `::1`, and the machine's short and fully-qualified
+hostnames. Each startup checks the generated pair and regenerates it if it
+misses a current hostname, expires within 30 days, or fails the macOS
+requirements below, so older installs heal on restart. After a regeneration,
+trust the new certificate again.
+
+To use your own certificate, for example one signed by a personal local CA, set
+both variables in `.env`:
+
+```bash
+AGENTFARM_TLS_CERT=$HOME/.config/devtls/farm22-wrstat01.crt
+AGENTFARM_TLS_KEY=$HOME/.config/devtls/farm22-wrstat01.key
+```
+
+The two must be set together and both files must exist. Agent Farm uses a
+supplied pair as-is: it never checks, regenerates, or writes to it, so renew it
+yourself.
+
+Browsers on macOS reject a TLS server certificate, even one trusted in
+Keychain, unless it:
+
+- lists every hostname or IP you browse to in subjectAltName (the CN is
+  ignored);
+- has `extendedKeyUsage=serverAuth`;
+- is valid for at most 825 days (398 days for publicly trusted CAs);
+- is signed with SHA-256 or stronger, with an RSA key of at least 2048 bits.
+
+The generated certificate also sets `basicConstraints=critical,CA:FALSE` and
+`keyUsage=critical,digitalSignature,keyEncipherment`, and is valid for 397 days.
+Check a certificate with:
+
+```bash
+openssl x509 -in cert.crt -noout -dates -ext basicConstraints,keyUsage,extendedKeyUsage,subjectAltName
+```
 
 ## Authentication
 
@@ -182,8 +221,8 @@ Common local settings:
 - `AGENTFARM_WHITELIST` (comma-separated viewer usernames)
 - `AGENTFARM_LDAP_SERVER`
 - `AGENTFARM_LDAP_DN_TEMPLATE`
-- `AGENTFARM_TLS_CERT`
-- `AGENTFARM_TLS_KEY`
+- `AGENTFARM_TLS_CERT` and `AGENTFARM_TLS_KEY` (optional certificate pair; see
+  [TLS Certificates](#tls-certificates))
 - `UVICORN_RELOAD` (`1` by default, set `0` for CI/e2e style startup)
 
 Example `.env`:
